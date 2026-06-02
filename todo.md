@@ -56,3 +56,7 @@
 - [x] Loading states, empty states, error handling across all pages
 - [x] Responsive design and accessibility review
 - [x] Final checkpoint and delivery
+
+## Bug Fixes & New Features (Post-Launch)
+- [x] Fix PDF extraction — LLM not receiving/reading PDF content correctly
+- [x] Add delete invoice feature (Admin only) with confirmation dialog

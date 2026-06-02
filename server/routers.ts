@@ -17,6 +17,7 @@ import {
   getInvoiceById,
   getAllInvoices,
   updateInvoice,
+  deleteInvoice,
   getDashboardMetrics,
   createLineItems,
   getLineItemsByInvoice,
@@ -527,6 +528,16 @@ export const appRouter = router({
         });
 
         return { success: true, xeroResult };
+      }),
+
+    // Delete invoice (admin only)
+    delete: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const invoice = await getInvoiceById(input.id);
+        if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+        await deleteInvoice(input.id);
+        return { success: true };
       }),
 
     // Dashboard metrics

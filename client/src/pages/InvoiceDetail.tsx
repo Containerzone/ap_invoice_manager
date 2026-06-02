@@ -16,7 +16,7 @@ import {
   ArrowLeft, FileText, RefreshCw, Send, CheckCircle2,
   MessageSquare, Mail, AlertTriangle, ExternalLink,
   Building2, Calendar, Hash, Container, DollarSign,
-  Loader2, Plus, ChevronDown, ChevronUp
+  Loader2, Plus, ChevronDown, ChevronUp, Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -42,10 +42,12 @@ export default function InvoiceDetail() {
   const sendQueryMutation = trpc.invoices.sendQuery.useMutation();
   const addNoteMutation = trpc.invoices.addNote.useMutation();
   const resolveMutation = trpc.invoices.resolve.useMutation();
+  const deleteMutation = trpc.invoices.delete.useMutation();
 
   const [noteContent, setNoteContent] = useState("");
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [showResolveDialog, setShowResolveDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [emailTo, setEmailTo] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
@@ -53,6 +55,18 @@ export default function InvoiceDetail() {
   const [showLineItems, setShowLineItems] = useState(false);
 
   const invalidate = () => utils.invoices.get.invalidate({ id: invoiceId });
+  const listUtils = trpc.useUtils();
+
+  const handleDelete = async () => {
+    try {
+      await deleteMutation.mutateAsync({ id: invoiceId });
+      await listUtils.invoices.list.invalidate();
+      toast.success("Invoice deleted");
+      setLocation("/invoices");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to delete invoice");
+    }
+  };
 
   const handleExtract = async () => {
     try {
@@ -263,6 +277,17 @@ export default function InvoiceDetail() {
             >
               <CheckCircle2 className="h-3.5 w-3.5" />
               Resolve
+            </Button>
+          )}
+          {user?.role === "admin" && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
             </Button>
           )}
         </div>
@@ -651,6 +676,44 @@ export default function InvoiceDetail() {
                 <CheckCircle2 className="h-3.5 w-3.5" />
               )}
               Resolve & Push to Xero
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-4 w-4 text-red-500" />
+              Delete Invoice
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            <p className="text-sm text-muted-foreground">
+              Are you sure you want to permanently delete{" "}
+              <strong className="text-foreground">
+                {data?.invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}
+              </strong>?
+              This will remove all associated notes, email logs, and line items and cannot be undone.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+              className="gap-2 bg-red-600 hover:bg-red-700 text-white"
+            >
+              {deleteMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+              Delete Invoice
             </Button>
           </DialogFooter>
         </DialogContent>

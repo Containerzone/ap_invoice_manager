@@ -198,6 +198,16 @@ export async function updateInvoice(id: number, data: Partial<InsertInvoice>): P
   await db.update(invoices).set(data).where(eq(invoices.id, id));
 }
 
+export async function deleteInvoice(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  // Delete child records first to respect foreign keys
+  await db.delete(conversationNotes).where(eq(conversationNotes.invoiceId, id));
+  await db.delete(emailLogs).where(eq(emailLogs.invoiceId, id));
+  await db.delete(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, id));
+  await db.delete(invoices).where(eq(invoices.id, id));
+}
+
 export async function getDashboardMetrics() {
   const db = await getDb();
   if (!db) return { total: 0, flagged: 0, openQueries: 0, resolvedThisMonth: 0 };
