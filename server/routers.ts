@@ -21,6 +21,7 @@ import {
   getDashboardMetrics,
   createLineItems,
   getLineItemsByInvoice,
+  updateLineItem,
   deleteLineItemsByInvoice,
   getEmailLogsByInvoice,
   createConversationNote,
@@ -272,6 +273,9 @@ export const appRouter = router({
           extractedPoNumber: z.string().optional().nullable(),
           extractedContainerNumbers: z.array(z.string()).optional(),
           extractedSupplierName: z.string().optional().nullable(),
+          extractedSupplierAbn: z.string().optional().nullable(),
+          extractedSupplierEmail: z.string().optional().nullable(),
+          extractedCurrency: z.string().optional().nullable(),
           extractedInvoiceDate: z.string().optional().nullable(),
           extractedDueDate: z.string().optional().nullable(),
           extractedSubtotal: z.string().optional().nullable(),
@@ -550,6 +554,24 @@ export const appRouter = router({
         });
 
         return { success: true, xeroResult };
+      }),
+
+    // Update a single line item
+    updateLineItem: protectedProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          description: z.string().optional().nullable(),
+          quantity: z.string().optional().nullable(),
+          unitPrice: z.string().optional().nullable(),
+          amount: z.string().optional().nullable(),
+          taxRate: z.string().optional().nullable(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await updateLineItem(id, data as any);
+        return { success: true };
       }),
 
     // Delete invoice (admin only)

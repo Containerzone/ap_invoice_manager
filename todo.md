@@ -63,3 +63,8 @@
 - [x] Auto-create full supplier profile from extracted invoice data when no match found
 - [x] Improve PO number extraction with regex pattern (AD/BD/DD/ED/single-letter + 7 digits) across reference and description fields
 - [x] Add invoice line items table and PDF preview panel side-by-side on invoice detail page
+- [x] Editable invoice fields on invoice detail page (all extracted data fields)
+- [x] Persistent "Send Query Again" button with last email body pre-filled
+- [x] Invoice navigation — prev/next buttons and collapsible sidebar invoice list
+- [x] Add supplier email and currency to editable fields on invoice detail
+- [x] Make line items editable (description, quantity, unit price, amount) with backend support

@@ -253,6 +253,15 @@ export async function getLineItemsByInvoice(invoiceId: number): Promise<InvoiceL
   return db.select().from(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, invoiceId));
 }
 
+export async function updateLineItem(
+  id: number,
+  data: Partial<Pick<InvoiceLineItem, "description" | "quantity" | "unitPrice" | "amount" | "taxRate">>
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(invoiceLineItems).set(data).where(eq(invoiceLineItems.id, id));
+}
+
 export async function deleteLineItemsByInvoice(invoiceId: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
