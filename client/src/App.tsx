@@ -4,35 +4,94 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import Home from "./pages/Home";
+import DashboardLayout from "./components/DashboardLayout";
+import { useAuth } from "./_core/hooks/useAuth";
+import { getLoginUrl } from "./const";
+import { Loader2 } from "lucide-react";
 
-function Router() {
-  // make sure to consider if you need authentication for certain routes
+// Pages
+import Dashboard from "./pages/Dashboard";
+import InvoiceList from "./pages/InvoiceList";
+import InvoiceDetail from "./pages/InvoiceDetail";
+import InvoiceUpload from "./pages/InvoiceUpload";
+import Suppliers from "./pages/Suppliers";
+import Users from "./pages/Users";
+import Settings from "./pages/Settings";
+import XeroCallback from "./pages/XeroCallback";
+
+function AuthGuard({ children }: { children: React.ReactNode }) {
+  const { loading, isAuthenticated } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    window.location.href = getLoginUrl();
+    return null;
+  }
+
+  return <>{children}</>;
+}
+
+function AdminGuard({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (user?.role !== "admin") {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <p className="text-base font-medium text-foreground">Access Denied</p>
+        <p className="text-sm text-muted-foreground mt-1">This page requires administrator access.</p>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+function AppRoutes() {
   return (
     <Switch>
-      <Route path={"/"} component={Home} />
-      <Route path={"/404"} component={NotFound} />
-      {/* Final fallback route */}
-      <Route component={NotFound} />
+      <Route path="/xero/callback" component={XeroCallback} />
+      <Route>
+        <AuthGuard>
+          <DashboardLayout>
+            <Switch>
+              <Route path="/" component={Dashboard} />
+              <Route path="/invoices" component={InvoiceList} />
+              <Route path="/invoices/upload" component={InvoiceUpload} />
+              <Route path="/invoices/:id" component={InvoiceDetail} />
+              <Route path="/suppliers">
+                <AdminGuard><Suppliers /></AdminGuard>
+              </Route>
+              <Route path="/users">
+                <AdminGuard><Users /></AdminGuard>
+              </Route>
+              <Route path="/settings">
+                <AdminGuard><Settings /></AdminGuard>
+              </Route>
+              <Route component={NotFound} />
+            </Switch>
+          </DashboardLayout>
+        </AuthGuard>
+      </Route>
     </Switch>
   );
 }
 
-// NOTE: About Theme
-// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
-//   to keep consistent foreground/background color across components
-// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
-
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-        // switchable
-      >
+      <ThemeProvider defaultTheme="light">
         <TooltipProvider>
-          <Toaster />
-          <Router />
+          <Toaster richColors position="top-right" />
+          <AppRoutes />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
