@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatCurrency, formatDate, formatRelativeTime, parseContainerNumbers } from "@/lib/invoiceUtils";
 import { toast } from "sonner";
@@ -16,7 +17,7 @@ import {
   ArrowLeft, FileText, RefreshCw, Send, CheckCircle2,
   MessageSquare, Mail, AlertTriangle, ExternalLink,
   Building2, Calendar, Hash, Container, DollarSign,
-  Loader2, Plus, ChevronDown, ChevronUp, Trash2
+  Loader2, Plus, Trash2, Phone, MapPin, User
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -52,7 +53,6 @@ export default function InvoiceDetail() {
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [resolutionNotes, setResolutionNotes] = useState("");
-  const [showLineItems, setShowLineItems] = useState(false);
 
   const invalidate = () => utils.invoices.get.invalidate({ id: invoiceId });
   const listUtils = trpc.useUtils();
@@ -153,14 +153,11 @@ export default function InvoiceDetail() {
 
   if (isLoading) {
     return (
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         <Skeleton className="h-8 w-48" />
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-4">
-            <Skeleton className="h-64 w-full" />
-            <Skeleton className="h-48 w-full" />
-          </div>
-          <Skeleton className="h-96 w-full" />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Skeleton className="h-[600px] w-full" />
+          <Skeleton className="h-[600px] w-full" />
         </div>
       </div>
     );
@@ -168,7 +165,7 @@ export default function InvoiceDetail() {
 
   if (!data) {
     return (
-      <div className="max-w-6xl mx-auto text-center py-20">
+      <div className="max-w-7xl mx-auto text-center py-20">
         <p className="text-muted-foreground">Invoice not found</p>
         <Button variant="outline" className="mt-4" onClick={() => setLocation("/invoices")}>
           Back to Invoices
@@ -192,100 +189,61 @@ export default function InvoiceDetail() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-7xl mx-auto space-y-5">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-2 text-muted-foreground"
-          onClick={() => setLocation("/invoices")}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Invoices
-        </Button>
-        <span className="text-muted-foreground">/</span>
-        <span className="text-sm font-medium text-foreground">
-          {invoice.extractedInvoiceNumber ?? `Invoice #${invoice.id}`}
-        </span>
-      </div>
-
-      <div className="flex items-start justify-between flex-wrap gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold text-foreground tracking-tight">
-              {invoice.extractedInvoiceNumber ?? `Invoice #${invoice.id}`}
-            </h1>
-            <StatusBadge status={invoice.status} />
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2"
+            onClick={() => setLocation("/invoices")}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Invoices
+          </Button>
+          <span className="text-muted-foreground/40">/</span>
+          <div>
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-xl font-semibold text-foreground tracking-tight">
+                {invoice.extractedInvoiceNumber ?? `Invoice #${invoice.id}`}
+              </h1>
+              <StatusBadge status={invoice.status} />
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {invoice.extractedSupplierName ?? "Unknown supplier"} · {invoice.originalFileName} · Uploaded {formatRelativeTime(invoice.createdAt)}
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground mt-1">
-            {invoice.extractedSupplierName ?? "Unknown supplier"} ·{" "}
-            {invoice.originalFileName} · Uploaded {formatRelativeTime(invoice.createdAt)}
-          </p>
         </div>
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">
           {["uploaded", "extracted"].includes(invoice.status) && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={handleExtract}
-              disabled={extractMutation.isPending}
-            >
-              {extractMutation.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
+            <Button variant="outline" size="sm" className="gap-2" onClick={handleExtract} disabled={extractMutation.isPending}>
+              {extractMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               Re-extract
             </Button>
           )}
           {canVerify && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={handleVerify}
-              disabled={verifyMutation.isPending}
-            >
-              {verifyMutation.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <CheckCircle2 className="h-3.5 w-3.5" />
-              )}
+            <Button variant="outline" size="sm" className="gap-2" onClick={handleVerify} disabled={verifyMutation.isPending}>
+              {verifyMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
               Verify with Xero
             </Button>
           )}
           {canQuery && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 border-purple-200 text-purple-700 hover:bg-purple-50"
-              onClick={openEmailDialog}
-            >
+            <Button variant="outline" size="sm" className="gap-2 border-purple-200 text-purple-700 hover:bg-purple-50" onClick={openEmailDialog}>
               <Send className="h-3.5 w-3.5" />
               Send Query
             </Button>
           )}
           {canResolve && (
-            <Button
-              size="sm"
-              className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-              onClick={() => setShowResolveDialog(true)}
-            >
+            <Button size="sm" className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setShowResolveDialog(true)}>
               <CheckCircle2 className="h-3.5 w-3.5" />
               Resolve
             </Button>
           )}
           {user?.role === "admin" && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
-              onClick={() => setShowDeleteDialog(true)}
-            >
+            <Button variant="outline" size="sm" className="gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300" onClick={() => setShowDeleteDialog(true)}>
               <Trash2 className="h-3.5 w-3.5" />
               Delete
             </Button>
@@ -293,26 +251,43 @@ export default function InvoiceDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left column — invoice data */}
-        <div className="lg:col-span-2 space-y-5">
+      {/* Discrepancy Alert */}
+      {invoice.hasDiscrepancy && (
+        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800">Amount Discrepancy Detected</p>
+            <p className="text-sm text-amber-700 mt-0.5">
+              Extracted total {formatCurrency(invoice.extractedTotal)} differs from Xero total{" "}
+              {formatCurrency(invoice.xeroTotal)} by{" "}
+              <strong>{formatCurrency(invoice.discrepancyAmount)}</strong>
+            </p>
+          </div>
+        </div>
+      )}
 
-          {/* Discrepancy Alert */}
-          {invoice.hasDiscrepancy && (
-            <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-              <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-amber-800">Amount Discrepancy Detected</p>
-                <p className="text-sm text-amber-700 mt-0.5">
-                  Extracted total {formatCurrency(invoice.extractedTotal)} differs from Xero total{" "}
-                  {formatCurrency(invoice.xeroTotal)} by{" "}
-                  <strong>{formatCurrency(invoice.discrepancyAmount)}</strong>
-                </p>
-              </div>
+      {/* Xero resolved banner */}
+      {invoice.xeroFinalBillId && (
+        <Card className="border border-emerald-200 bg-emerald-50/50 shadow-sm">
+          <CardContent className="p-4 flex items-center gap-3">
+            <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-emerald-800">Draft Bill Created in Xero</p>
+              <p className="text-xs text-emerald-700 mt-0.5">
+                Bill number: {invoice.xeroFinalBillNumber} — awaiting payment approval in Xero
+              </p>
             </div>
-          )}
+          </CardContent>
+        </Card>
+      )}
 
-          {/* Extracted Data */}
+      {/* Main two-column layout: extracted data left, PDF preview right */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+
+        {/* ── LEFT: Extracted data + line items ── */}
+        <div className="space-y-4">
+
+          {/* Key fields */}
           <Card className="border shadow-sm">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -323,11 +298,11 @@ export default function InvoiceDetail() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                 <DataRow icon={Hash} label="Invoice Number" value={invoice.extractedInvoiceNumber} />
-                <DataRow icon={Hash} label="PO Number" value={invoice.extractedPoNumber} />
+                <DataRow icon={Hash} label="PO Number" value={invoice.extractedPoNumber} highlight={!!invoice.extractedPoNumber} />
                 <DataRow icon={Calendar} label="Invoice Date" value={formatDate(invoice.extractedInvoiceDate)} />
                 <DataRow icon={Calendar} label="Due Date" value={formatDate(invoice.extractedDueDate)} />
                 <DataRow icon={Building2} label="Supplier" value={invoice.extractedSupplierName} />
-                <DataRow icon={Building2} label="ABN" value={invoice.extractedSupplierAbn} />
+                <DataRow icon={Hash} label="ABN" value={invoice.extractedSupplierAbn} />
               </div>
 
               {containers.length > 0 && (
@@ -340,9 +315,7 @@ export default function InvoiceDetail() {
                     </p>
                     <div className="flex flex-wrap gap-1.5">
                       {containers.map((cn) => (
-                        <Badge key={cn} variant="secondary" className="font-mono text-xs">
-                          {cn}
-                        </Badge>
+                        <Badge key={cn} variant="secondary" className="font-mono text-xs">{cn}</Badge>
                       ))}
                     </div>
                   </div>
@@ -362,31 +335,19 @@ export default function InvoiceDetail() {
                     <p className="text-xs font-medium text-muted-foreground">Extracted (Invoice)</p>
                     <AmountRow label="Subtotal" value={formatCurrency(invoice.extractedSubtotal)} />
                     <AmountRow label="GST" value={formatCurrency(invoice.extractedTax)} />
-                    <AmountRow
-                      label="Total"
-                      value={formatCurrency(invoice.extractedTotal)}
-                      highlight
-                    />
+                    <AmountRow label="Total" value={formatCurrency(invoice.extractedTotal)} highlight />
                   </div>
                   <div className="space-y-2">
                     <p className="text-xs font-medium text-muted-foreground">
-                      Xero{" "}
-                      {invoice.xeroVerifiedAt && (
-                        <span className="text-muted-foreground/60">
-                          · verified {formatRelativeTime(invoice.xeroVerifiedAt)}
-                        </span>
+                      Xero{invoice.xeroVerifiedAt && (
+                        <span className="text-muted-foreground/60"> · verified {formatRelativeTime(invoice.xeroVerifiedAt)}</span>
                       )}
                     </p>
                     {invoice.xeroTotal ? (
                       <>
                         <AmountRow label="Subtotal" value={formatCurrency(invoice.xeroSubtotal)} />
                         <AmountRow label="GST" value={formatCurrency(invoice.xeroTax)} />
-                        <AmountRow
-                          label="Total"
-                          value={formatCurrency(invoice.xeroTotal)}
-                          highlight
-                          discrepancy={invoice.hasDiscrepancy ?? false}
-                        />
+                        <AmountRow label="Total" value={formatCurrency(invoice.xeroTotal)} highlight discrepancy={invoice.hasDiscrepancy ?? false} />
                       </>
                     ) : (
                       <p className="text-xs text-muted-foreground italic">Not verified yet</p>
@@ -394,130 +355,177 @@ export default function InvoiceDetail() {
                   </div>
                 </div>
               </div>
+            </CardContent>
+          </Card>
 
-              {/* Line Items */}
-              {lineItems.length > 0 && (
-                <>
-                  <Separator />
-                  <div>
-                    <button
-                      className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
-                      onClick={() => setShowLineItems(!showLineItems)}
-                    >
-                      {showLineItems ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                      Line Items ({lineItems.length})
-                    </button>
-                    {showLineItems && (
-                      <div className="mt-3 overflow-x-auto">
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="border-b text-muted-foreground">
-                              <th className="text-left pb-2 font-medium">Description</th>
-                              <th className="text-right pb-2 font-medium">Qty</th>
-                              <th className="text-right pb-2 font-medium">Unit Price</th>
-                              <th className="text-right pb-2 font-medium">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-border">
-                            {lineItems.map((li) => (
-                              <tr key={li.id} className="text-foreground">
-                                <td className="py-2 pr-4">{li.description ?? "—"}</td>
-                                <td className="py-2 text-right tabular-nums">{li.quantity ?? "—"}</td>
-                                <td className="py-2 text-right tabular-nums">{formatCurrency(li.unitPrice)}</td>
-                                <td className="py-2 text-right tabular-nums font-medium">{formatCurrency(li.amount)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+          {/* Line Items — always visible */}
+          <Card className="border shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <FileText className="h-4 w-4 text-muted-foreground" />
+                Invoice Lines
+                {lineItems.length > 0 && (
+                  <Badge variant="secondary" className="text-xs font-normal ml-auto">{lineItems.length} items</Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {lineItems.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic text-center py-4">
+                  No line items extracted. Re-extract to populate.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b text-muted-foreground">
+                        <th className="text-left pb-2.5 font-medium pr-3">Description</th>
+                        <th className="text-right pb-2.5 font-medium w-12">Qty</th>
+                        <th className="text-right pb-2.5 font-medium w-24">Unit Price</th>
+                        <th className="text-right pb-2.5 font-medium w-24">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {lineItems.map((li) => (
+                        <tr key={li.id} className="text-foreground hover:bg-muted/30 transition-colors">
+                          <td className="py-2.5 pr-3 leading-relaxed">{li.description ?? "—"}</td>
+                          <td className="py-2.5 text-right tabular-nums text-muted-foreground">{li.quantity ?? "—"}</td>
+                          <td className="py-2.5 text-right tabular-nums text-muted-foreground">{formatCurrency(li.unitPrice)}</td>
+                          <td className="py-2.5 text-right tabular-nums font-medium">{formatCurrency(li.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    {(invoice.extractedSubtotal || invoice.extractedTax || invoice.extractedTotal) && (
+                      <tfoot>
+                        <tr className="border-t border-border/60">
+                          <td colSpan={3} className="pt-2.5 text-right text-xs text-muted-foreground font-medium pr-3">Subtotal</td>
+                          <td className="pt-2.5 text-right tabular-nums text-xs">{formatCurrency(invoice.extractedSubtotal)}</td>
+                        </tr>
+                        {invoice.extractedTax && (
+                          <tr>
+                            <td colSpan={3} className="pt-1 text-right text-xs text-muted-foreground pr-3">GST</td>
+                            <td className="pt-1 text-right tabular-nums text-xs">{formatCurrency(invoice.extractedTax)}</td>
+                          </tr>
+                        )}
+                        <tr>
+                          <td colSpan={3} className="pt-1.5 text-right text-xs font-semibold pr-3">Total</td>
+                          <td className="pt-1.5 text-right tabular-nums text-xs font-semibold">{formatCurrency(invoice.extractedTotal)}</td>
+                        </tr>
+                      </tfoot>
                     )}
-                  </div>
-                </>
+                  </table>
+                </div>
               )}
             </CardContent>
           </Card>
 
-          {/* Xero Result */}
-          {invoice.xeroFinalBillId && (
-            <Card className="border border-emerald-200 bg-emerald-50/50 shadow-sm">
-              <CardContent className="p-4 flex items-center gap-3">
-                <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
-                <div>
-                  <p className="text-sm font-semibold text-emerald-800">
-                    Draft Bill Created in Xero
-                  </p>
-                  <p className="text-xs text-emerald-700 mt-0.5">
-                    Bill number: {invoice.xeroFinalBillNumber} — awaiting payment approval in Xero
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* PDF Viewer link */}
-          <Card className="border shadow-sm">
-            <CardContent className="p-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center">
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-foreground">{invoice.originalFileName}</p>
-                  <p className="text-xs text-muted-foreground">Original PDF</p>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                onClick={() => window.open(invoice.fileUrl, "_blank")}
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-                View PDF
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Right column — conversation */}
-        <div className="space-y-5">
           {/* Supplier card */}
           {supplier && (
             <Card className="border shadow-sm">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Building2 className="h-4 w-4 text-muted-foreground" />
-                  Supplier
+                  Supplier Profile
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
-                <p className="text-sm font-medium text-foreground">{supplier.name}</p>
-                {supplier.email && (
-                  <p className="text-xs text-muted-foreground">{supplier.email}</p>
-                )}
-                {supplier.abn && (
-                  <p className="text-xs text-muted-foreground">ABN: {supplier.abn}</p>
-                )}
-                {supplier.phone && (
-                  <p className="text-xs text-muted-foreground">{supplier.phone}</p>
-                )}
+              <CardContent>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-foreground">{supplier.name}</p>
+                  {supplier.abn && <p className="text-xs text-muted-foreground">ABN: {supplier.abn}</p>}
+                  <div className="grid grid-cols-1 gap-1.5 mt-2">
+                    {supplier.contactName && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <User className="h-3 w-3 shrink-0" />
+                        {supplier.contactName}
+                      </div>
+                    )}
+                    {supplier.email && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Mail className="h-3 w-3 shrink-0" />
+                        {supplier.email}
+                      </div>
+                    )}
+                    {supplier.phone && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Phone className="h-3 w-3 shrink-0" />
+                        {supplier.phone}
+                      </div>
+                    )}
+                    {supplier.address && (
+                      <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                        <MapPin className="h-3 w-3 shrink-0 mt-0.5" />
+                        <span className="whitespace-pre-line">{supplier.address}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           )}
+        </div>
 
-          {/* Conversation thread */}
-          <Card className="border shadow-sm">
+        {/* ── RIGHT: PDF Preview ── */}
+        <div className="space-y-4">
+          <Card className="border shadow-sm h-full" style={{ minHeight: "600px" }}>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <MessageSquare className="h-4 w-4 text-muted-foreground" />
-                Activity & Notes
-              </CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  Invoice PDF
+                </CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-7 text-xs"
+                  onClick={() => window.open(invoice.fileUrl, "_blank")}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Open
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">{invoice.originalFileName}</p>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Notes list */}
-              <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+            <CardContent className="p-0 pb-4 px-4">
+              <div className="rounded-lg overflow-hidden border bg-muted/20" style={{ height: "560px" }}>
+                <iframe
+                  src={`${invoice.fileUrl}#toolbar=0&navpanes=0&scrollbar=1`}
+                  className="w-full h-full"
+                  title="Invoice PDF Preview"
+                  style={{ border: "none" }}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Activity & Notes — full width below */}
+      <Card className="border shadow-sm">
+        <CardHeader className="pb-0">
+          <Tabs defaultValue="activity">
+            <div className="flex items-center justify-between">
+              <TabsList className="h-8">
+                <TabsTrigger value="activity" className="text-xs gap-1.5">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  Activity & Notes
+                  {notes.length > 0 && (
+                    <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5">{notes.length}</Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="emails" className="text-xs gap-1.5">
+                  <Mail className="h-3.5 w-3.5" />
+                  Email Log
+                  {emails.length > 0 && (
+                    <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5">{emails.length}</Badge>
+                  )}
+                </TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="activity" className="mt-4">
+              <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                 {notes.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-4">No activity yet</p>
+                  <p className="text-xs text-muted-foreground text-center py-6">No activity yet</p>
                 ) : (
                   notes.map((note) => {
                     const config = noteTypeConfig[note.type] ?? noteTypeConfig.note;
@@ -532,19 +540,14 @@ export default function InvoiceDetail() {
                             <span className="text-xs font-medium text-foreground">{config.label}</span>
                             <span className="text-xs text-muted-foreground">{formatRelativeTime(note.createdAt)}</span>
                           </div>
-                          <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap break-words">
-                            {note.content}
-                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap break-words">{note.content}</p>
                         </div>
                       </div>
                     );
                   })
                 )}
               </div>
-
-              <Separator />
-
-              {/* Add note */}
+              <Separator className="my-3" />
               <div className="space-y-2">
                 <Textarea
                   placeholder="Add a note..."
@@ -555,22 +558,46 @@ export default function InvoiceDetail() {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="w-full gap-2"
+                  className="gap-2"
                   onClick={handleAddNote}
                   disabled={!noteContent.trim() || addNoteMutation.isPending}
                 >
-                  {addNoteMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Plus className="h-3.5 w-3.5" />
-                  )}
+                  {addNoteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                   Add Note
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+            </TabsContent>
+
+            <TabsContent value="emails" className="mt-4">
+              {emails.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-6">No emails sent yet</p>
+              ) : (
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                  {emails.map((email) => (
+                    <div key={email.id} className="border rounded-lg p-3 space-y-1.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-medium text-foreground">{email.subject}</p>
+                          <p className="text-xs text-muted-foreground">
+                            To: {email.toAddress} · {formatRelativeTime(email.sentAt)}
+                          </p>
+                        </div>
+                        <Badge variant={email.status === "sent" ? "default" : "destructive"} className="text-xs shrink-0">
+                          {email.status}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground whitespace-pre-wrap border-t pt-1.5 mt-1.5 leading-relaxed">
+                        {email.body}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </CardHeader>
+        <CardContent className="pt-0" />
+      </Card>
 
       {/* Email Dialog */}
       <Dialog open={showEmailDialog} onOpenChange={setShowEmailDialog}>
@@ -585,53 +612,26 @@ export default function InvoiceDetail() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">To</Label>
-                <Input
-                  value={emailTo}
-                  onChange={(e) => setEmailTo(e.target.value)}
-                  placeholder="supplier@example.com"
-                  className="h-9 text-sm"
-                />
+                <Input value={emailTo} onChange={(e) => setEmailTo(e.target.value)} placeholder="supplier@example.com" className="h-9 text-sm" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">From</Label>
-                <Input
-                  value="admin@containerzone.com.au"
-                  disabled
-                  className="h-9 text-sm bg-muted"
-                />
+                <Input value="admin@containerzone.com.au" disabled className="h-9 text-sm bg-muted" />
               </div>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Subject</Label>
-              <Input
-                value={emailSubject}
-                onChange={(e) => setEmailSubject(e.target.value)}
-                className="h-9 text-sm"
-              />
+              <Input value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} className="h-9 text-sm" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Message</Label>
-              <Textarea
-                value={emailBody}
-                onChange={(e) => setEmailBody(e.target.value)}
-                className="text-sm min-h-[200px] font-mono"
-              />
+              <Textarea value={emailBody} onChange={(e) => setEmailBody(e.target.value)} className="text-sm min-h-[200px] font-mono" />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowEmailDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSendEmail}
-              disabled={sendQueryMutation.isPending}
-              className="gap-2"
-            >
-              {sendQueryMutation.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Send className="h-3.5 w-3.5" />
-              )}
+            <Button variant="outline" onClick={() => setShowEmailDialog(false)}>Cancel</Button>
+            <Button onClick={handleSendEmail} disabled={sendQueryMutation.isPending} className="gap-2">
+              {sendQueryMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               Send Email
             </Button>
           </DialogFooter>
@@ -662,19 +662,9 @@ export default function InvoiceDetail() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowResolveDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleResolve}
-              disabled={resolveMutation.isPending}
-              className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-            >
-              {resolveMutation.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <CheckCircle2 className="h-3.5 w-3.5" />
-              )}
+            <Button variant="outline" onClick={() => setShowResolveDialog(false)}>Cancel</Button>
+            <Button onClick={handleResolve} disabled={resolveMutation.isPending} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
+              {resolveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
               Resolve & Push to Xero
             </Button>
           </DialogFooter>
@@ -694,25 +684,15 @@ export default function InvoiceDetail() {
             <p className="text-sm text-muted-foreground">
               Are you sure you want to permanently delete{" "}
               <strong className="text-foreground">
-                {data?.invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}
+                {invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}
               </strong>?
               This will remove all associated notes, email logs, and line items and cannot be undone.
             </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleDelete}
-              disabled={deleteMutation.isPending}
-              className="gap-2 bg-red-600 hover:bg-red-700 text-white"
-            >
-              {deleteMutation.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Trash2 className="h-3.5 w-3.5" />
-              )}
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+            <Button onClick={handleDelete} disabled={deleteMutation.isPending} className="gap-2 bg-red-600 hover:bg-red-700 text-white">
+              {deleteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
               Delete Invoice
             </Button>
           </DialogFooter>
@@ -726,10 +706,12 @@ function DataRow({
   icon: Icon,
   label,
   value,
+  highlight,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value?: string | null;
+  highlight?: boolean;
 }) {
   return (
     <div>
@@ -737,7 +719,12 @@ function DataRow({
         <Icon className="h-3 w-3" />
         {label}
       </p>
-      <p className="text-sm font-medium text-foreground">{value ?? "—"}</p>
+      <p className={cn(
+        "text-sm font-medium truncate",
+        value ? (highlight ? "text-primary" : "text-foreground") : "text-muted-foreground/50 italic text-xs font-normal"
+      )}>
+        {value ?? "Not found"}
+      </p>
     </div>
   );
 }
@@ -754,17 +741,13 @@ function AmountRow({
   discrepancy?: boolean;
 }) {
   return (
-    <div className={cn("flex items-center justify-between", highlight && "font-semibold")}>
-      <span className={cn("text-xs", highlight ? "text-foreground" : "text-muted-foreground")}>
-        {label}
-      </span>
-      <span
-        className={cn(
-          "text-sm tabular-nums",
-          highlight ? "text-foreground" : "text-muted-foreground",
-          discrepancy && "text-amber-600"
-        )}
-      >
+    <div className="flex items-center justify-between">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className={cn(
+        "text-xs tabular-nums",
+        highlight ? "font-semibold text-foreground" : "text-muted-foreground",
+        discrepancy && "text-red-600 font-semibold"
+      )}>
         {value}
       </span>
     </div>

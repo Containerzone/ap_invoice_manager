@@ -188,12 +188,28 @@ export const appRouter = router({
         // Use the storage URL directly for LLM extraction
         const extracted = await extractInvoiceData(invoice.fileUrl);
 
-        // Try to match supplier
-        const matchedSupplier = await findMatchingSupplier(
+        // Try to match existing supplier
+        let matchedSupplier = await findMatchingSupplier(
           extracted.supplierName ?? undefined,
           extracted.supplierAbn ?? undefined,
           extracted.supplierEmail ?? undefined
         );
+
+        let supplierCreated = false;
+        // Auto-create supplier profile if no match found and we have a name
+        if (!matchedSupplier && extracted.supplierName) {
+          const newSupplierId = await createSupplier({
+            name: extracted.supplierName,
+            abn: extracted.supplierAbn ?? undefined,
+            email: extracted.supplierEmail ?? undefined,
+            phone: extracted.supplierPhone ?? undefined,
+            address: extracted.supplierAddress ?? undefined,
+            contactName: (extracted as any).supplierContactName ?? undefined,
+            createdBy: ctx.user.id,
+          });
+          matchedSupplier = await getSupplierById(newSupplierId);
+          supplierCreated = true;
+        }
 
         // Update invoice with extracted data
         await updateInvoice(input.invoiceId, {
@@ -231,14 +247,20 @@ export const appRouter = router({
           );
         }
 
+        const supplierMsg = supplierCreated
+          ? `New supplier profile created: "${matchedSupplier?.name}".`
+          : matchedSupplier
+            ? `Matched to existing supplier: "${matchedSupplier.name}".`
+            : "Supplier not identified — review required.";
+
         await createConversationNote({
           invoiceId: input.invoiceId,
           authorId: ctx.user.id,
           type: "system",
-          content: `Data extracted (confidence: ${extracted.confidence}). Supplier ${matchedSupplier ? `matched to "${matchedSupplier.name}"` : "not matched — review required"}.`,
+          content: `Data extracted (confidence: ${extracted.confidence}). ${supplierMsg}${extracted.poNumber ? ` PO: ${extracted.poNumber}.` : ""}`,
         });
 
-        return { extracted, matchedSupplier };
+        return { extracted, matchedSupplier, supplierCreated };
       }),
 
     // Update extracted fields manually

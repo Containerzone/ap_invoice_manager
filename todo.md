@@ -60,3 +60,6 @@
 ## Bug Fixes & New Features (Post-Launch)
 - [x] Fix PDF extraction — LLM not receiving/reading PDF content correctly
 - [x] Add delete invoice feature (Admin only) with confirmation dialog
+- [x] Auto-create full supplier profile from extracted invoice data when no match found
+- [x] Improve PO number extraction with regex pattern (AD/BD/DD/ED/single-letter + 7 digits) across reference and description fields
+- [x] Add invoice line items table and PDF preview panel side-by-side on invoice detail page

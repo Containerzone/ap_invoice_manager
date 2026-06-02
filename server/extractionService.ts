@@ -10,6 +10,7 @@ export interface ExtractedInvoiceData {
   supplierEmail: string | null;
   supplierPhone: string | null;
   supplierAddress: string | null;
+  supplierContactName: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
   subtotal: number | null;
@@ -36,6 +37,7 @@ const FALLBACK: ExtractedInvoiceData = {
   supplierEmail: null,
   supplierPhone: null,
   supplierAddress: null,
+  supplierContactName: null,
   invoiceDate: null,
   dueDate: null,
   subtotal: null,
@@ -67,6 +69,49 @@ async function fetchPdfAsBase64(fileKey: string): Promise<string> {
   return Buffer.from(arrayBuffer).toString("base64");
 }
 
+/**
+ * Post-process extracted data to apply PO number regex pattern matching.
+ * PO numbers follow the pattern: 1-2 uppercase letters (commonly AD, BD, DD, ED)
+ * followed by exactly 7 digits. E.g. AD1234567, BD0012345, A1234567.
+ * Searches the poNumber field, all line item descriptions, and a combined text blob.
+ */
+export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string): string | null {
+  // Pattern: 1-2 uppercase letters + exactly 7 digits, as a whole word/token
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{7})\b/g;
+
+  // Priority 1: if LLM already found a poNumber, validate it matches pattern
+  if (data.poNumber) {
+    const match = data.poNumber.match(/^[A-Z]{1,2}\d{7}$/);
+    if (match) return data.poNumber;
+    // LLM found something but it doesn't match — still search below
+  }
+
+  // Priority 2: search line item descriptions for PO pattern
+  for (const li of data.lineItems) {
+    const m = li.description.match(PO_PATTERN);
+    if (m && m.length > 0) return m[0];
+  }
+
+  // Priority 3: build a combined text blob from ALL string fields on the extracted data
+  // This covers invoiceNumber, notes, supplierName, and any reference text the LLM captured
+  const combinedFields = [
+    data.invoiceNumber,
+    data.notes,
+    data.supplierName,
+    data.supplierAddress,
+    rawText,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (combinedFields) {
+    const matches = combinedFields.match(PO_PATTERN);
+    if (matches && matches.length > 0) return matches[0];
+  }
+
+  return data.poNumber;
+}
+
 const JSON_SCHEMA = {
   type: "object",
   properties: {
@@ -78,6 +123,7 @@ const JSON_SCHEMA = {
     supplierEmail: { type: ["string", "null"] },
     supplierPhone: { type: ["string", "null"] },
     supplierAddress: { type: ["string", "null"] },
+    supplierContactName: { type: ["string", "null"] },
     invoiceDate: { type: ["string", "null"] },
     dueDate: { type: ["string", "null"] },
     subtotal: { type: ["number", "null"] },
@@ -105,8 +151,8 @@ const JSON_SCHEMA = {
   required: [
     "invoiceNumber", "poNumber", "containerNumbers", "supplierName",
     "supplierAbn", "supplierEmail", "supplierPhone", "supplierAddress",
-    "invoiceDate", "dueDate", "subtotal", "tax", "total", "currency",
-    "lineItems", "confidence", "notes",
+    "supplierContactName", "invoiceDate", "dueDate", "subtotal", "tax",
+    "total", "currency", "lineItems", "confidence", "notes",
   ],
   additionalProperties: false,
 };
@@ -114,40 +160,39 @@ const JSON_SCHEMA = {
 const EXTRACTION_PROMPT = `Extract all data from this invoice PDF and return it as JSON with this exact structure:
 {
   "invoiceNumber": "string or null",
-  "poNumber": "string or null - Purchase Order number",
-  "containerNumbers": ["array of container numbers like MSCU1234567"],
-  "supplierName": "string or null",
-  "supplierAbn": "string or null - Australian Business Number (11 digits)",
-  "supplierEmail": "string or null",
-  "supplierPhone": "string or null",
-  "supplierAddress": "string or null",
+  "poNumber": "Purchase Order number or null. IMPORTANT: Look for patterns like 'PO#', 'PO:', 'Purchase Order', 'Order No', or in the reference/description fields. The PO number is typically 1-2 uppercase letters followed by 7 digits (e.g. AD1234567, BD0012345, A1234567). Common prefixes are AD, BD, DD, ED.",
+  "containerNumbers": ["array of container numbers like MSCU1234567 — ISO 6346 format: 4 letters + 7 digits"],
+  "supplierName": "full legal company name or null",
+  "supplierAbn": "Australian Business Number (11 digits) or null",
+  "supplierEmail": "supplier email address or null",
+  "supplierPhone": "supplier phone number or null",
+  "supplierAddress": "full supplier address or null",
+  "supplierContactName": "name of the contact person at the supplier (e.g. accounts person, salesperson) or null",
   "invoiceDate": "YYYY-MM-DD or null",
   "dueDate": "YYYY-MM-DD or null",
-  "subtotal": number or null,
-  "tax": number or null (GST amount),
-  "total": number or null,
-  "currency": "AUD",
-  "lineItems": [{ "description": "string", "quantity": number|null, "unitPrice": number|null, "amount": number|null, "taxRate": number|null }],
-  "confidence": "high|medium|low",
-  "notes": "any additional observations or null"
+  "subtotal": number or null (before tax),
+  "tax": number or null (GST/VAT amount),
+  "total": number or null (final amount due),
+  "currency": "3-letter currency code, default AUD",
+  "lineItems": [{ "description": "full line item description", "quantity": number|null, "unitPrice": number|null, "amount": number|null, "taxRate": number|null }],
+  "confidence": "high if all key fields found, medium if some missing, low if very little data",
+  "notes": "any additional observations, warnings, or context — or null"
 }
 Rules:
 - Container numbers: ISO 6346 format (4 letters + 7 digits, e.g. MSCU1234567)
-- ABN: 11 digits, often formatted as XX XXX XXX XXX
+- ABN: 11 digits, often formatted as XX XXX XXX XXX — normalise to digits only
 - All monetary values must be numbers (not strings)
+- PO number: search ALL text including reference fields, description, and line items
 - Use null for any field not found
-- confidence = "high" if all key fields found, "medium" if some missing, "low" if very little data
 Return ONLY valid JSON. No markdown, no explanation.`;
 
 function parseJsonFromContent(content: string): ExtractedInvoiceData | null {
   try {
-    // Try direct parse first
     const parsed = JSON.parse(content.trim());
     if (parsed && typeof parsed === "object" && "invoiceNumber" in parsed) {
       return parsed as ExtractedInvoiceData;
     }
   } catch {
-    // Try extracting JSON from markdown code blocks
     const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) {
       try {
@@ -155,7 +200,6 @@ function parseJsonFromContent(content: string): ExtractedInvoiceData | null {
         if (parsed && typeof parsed === "object") return parsed as ExtractedInvoiceData;
       } catch {}
     }
-    // Try finding raw JSON object in the response
     const objMatch = content.match(/\{[\s\S]*\}/);
     if (objMatch) {
       try {
@@ -208,7 +252,8 @@ export async function extractInvoiceData(
     if (content && typeof content === "string") {
       const parsed = parseJsonFromContent(content);
       if (parsed) {
-        console.log(`[Extraction] Attempt 1 succeeded. Confidence: ${parsed.confidence}`);
+        parsed.poNumber = applyPoNumberRegex(parsed);
+        console.log(`[Extraction] Attempt 1 succeeded. Confidence: ${parsed.confidence}, PO: ${parsed.poNumber}`);
         return parsed;
       }
     }
@@ -242,7 +287,8 @@ export async function extractInvoiceData(
     if (content && typeof content === "string") {
       const parsed = parseJsonFromContent(content);
       if (parsed) {
-        console.log(`[Extraction] Attempt 2 succeeded. Confidence: ${parsed.confidence}`);
+        parsed.poNumber = applyPoNumberRegex(parsed);
+        console.log(`[Extraction] Attempt 2 succeeded. Confidence: ${parsed.confidence}, PO: ${parsed.poNumber}`);
         return parsed;
       }
     }
@@ -271,7 +317,8 @@ export async function extractInvoiceData(
     if (content && typeof content === "string") {
       const parsed = parseJsonFromContent(content);
       if (parsed) {
-        console.log(`[Extraction] Attempt 3 succeeded. Confidence: ${parsed.confidence}`);
+        parsed.poNumber = applyPoNumberRegex(parsed);
+        console.log(`[Extraction] Attempt 3 succeeded. Confidence: ${parsed.confidence}, PO: ${parsed.poNumber}`);
         return parsed;
       }
     }
