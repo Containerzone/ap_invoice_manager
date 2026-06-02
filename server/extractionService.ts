@@ -77,11 +77,11 @@ async function fetchPdfAsBase64(fileKey: string): Promise<string> {
  */
 export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string): string | null {
   // Pattern: 1-2 uppercase letters + exactly 7 digits, as a whole word/token
-  const PO_PATTERN = /\b([A-Z]{1,2}\d{7})\b/g;
+  const PO_PATTERN = /\b([A-Z]{2}\d{6})\b/g;
 
   // Priority 1: if LLM already found a poNumber, validate it matches pattern
   if (data.poNumber) {
-    const match = data.poNumber.match(/^[A-Z]{1,2}\d{7}$/);
+    const match = data.poNumber.match(/^[A-Z]{2}\d{6}$/);
     if (match) return data.poNumber;
     // LLM found something but it doesn't match — still search below
   }
@@ -109,7 +109,8 @@ export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string)
     if (matches && matches.length > 0) return matches[0];
   }
 
-  return data.poNumber;
+  // If we reach here, nothing matched the valid pattern — return null
+  return null;
 }
 
 const JSON_SCHEMA = {
@@ -160,7 +161,7 @@ const JSON_SCHEMA = {
 const EXTRACTION_PROMPT = `Extract all data from this invoice PDF and return it as JSON with this exact structure:
 {
   "invoiceNumber": "string or null",
-  "poNumber": "Purchase Order number or null. IMPORTANT: Look for patterns like 'PO#', 'PO:', 'Purchase Order', 'Order No', or in the reference/description fields. The PO number is typically 1-2 uppercase letters followed by 7 digits (e.g. AD1234567, BD0012345, A1234567). Common prefixes are AD, BD, DD, ED.",
+  "poNumber": "Purchase Order number or null. IMPORTANT: Look for patterns like 'PO#', 'PO:', 'Purchase Order', 'Order No', or in the reference/description fields. The PO number is exactly 2 uppercase letters followed by 6 digits (e.g. AD123456, BD001234, DD987654). Common prefixes are AD, BD, DD, ED. Search ALL text including reference fields, descriptions, and line items.",
   "containerNumbers": ["array of container numbers like MSCU1234567 — ISO 6346 format: 4 letters + 7 digits"],
   "supplierName": "full legal company name or null",
   "supplierAbn": "Australian Business Number (11 digits) or null",
