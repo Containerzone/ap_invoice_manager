@@ -32,7 +32,7 @@ import {
   logEmailReply,
 } from "./db";
 import { storagePut } from "./storage";
-import { extractInvoiceData } from "./extractionService";
+import { extractInvoiceData, extractAllPoNumbers } from "./extractionService";
 import {
   getXeroAuthUrl,
   exchangeXeroCode,
@@ -214,6 +214,9 @@ export const appRouter = router({
           supplierCreated = true;
         }
 
+        // Collect all PO numbers found across the invoice text
+        const allPoNumbers = extractAllPoNumbers(extracted as any);
+
         // Update invoice with extracted data
         await updateInvoice(input.invoiceId, {
           status: "extracted",
@@ -297,8 +300,8 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    // Verify against Xero — looks up the Purchase Order by PO number and compares
-    // the PO total against the invoice total to detect discrepancies.
+    // Verify against Xero — looks up ALL Purchase Orders found on the invoice by PO number,
+    // compares each PO total against the invoice total, and stores per-PO results with line items.
     verifyWithXero: protectedProcedure
       .input(z.object({ invoiceId: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -311,70 +314,87 @@ export const appRouter = router({
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Xero not configured" });
         }
 
-        const poNumber = invoice.extractedPoNumber;
-        if (!poNumber) {
+        // Collect all PO numbers: primary field + any extras found in raw data
+        const primaryPo = invoice.extractedPoNumber;
+        const rawData = invoice.extractedRawData as any;
+        const allPoNumbers: string[] = primaryPo
+          ? Array.from(new Set([
+              primaryPo,
+              ...extractAllPoNumbers(rawData ?? {}),
+            ]))
+          : extractAllPoNumbers(rawData ?? {});
+
+        if (allPoNumbers.length === 0) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "No PO number found on this invoice. Cannot verify against Xero.",
           });
         }
 
-        const xeroPO = await findXeroPurchaseOrderByNumber(poNumber, clientId, clientSecret);
-
-        if (!xeroPO) {
-          // PO not found in Xero — flag as discrepancy (unrecognised PO)
-          // Clear any previously stored PO/bill data so stale values don't persist
-          await updateInvoice(input.invoiceId, {
-            status: "flagged",
-            xeroVerifiedAt: new Date(),
-            hasDiscrepancy: true,
-            xeroStatus: "NOT_FOUND",
-            xeroInvoiceId: null,
-            xeroInvoiceNumber: null,
-            xeroTotal: null,
-            xeroSubtotal: null,
-            xeroTax: null,
-            discrepancyAmount: null,
-          });
-          await createConversationNote({
-            invoiceId: input.invoiceId,
-            authorId: ctx.user.id,
-            type: "status_change",
-            content: `Xero verification: Purchase Order ${poNumber} not found in Xero. Invoice flagged — PO number may be incorrect or the PO has not been raised yet.`,
-          });
-          return { matched: false, discrepancy: true, poNumber };
-        }
-
         const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
-        const xeroPoTotal = xeroPO.total;
-        const diff = Math.abs(extractedTotal - xeroPoTotal);
-        const hasDiscrepancy = diff > 0.01;
+
+        // Look up each PO in Xero in parallel
+        const poLookups = await Promise.all(
+          allPoNumbers.map(async (poNum) => {
+            const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
+            if (!po) {
+              return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, diff: extractedTotal, lineItems: [] };
+            }
+            const diff = Math.abs(extractedTotal - po.total);
+            return {
+              poNumber: poNum,
+              found: true,
+              status: po.status,
+              poTotal: po.total,
+              poSubtotal: po.subTotal,
+              poTax: po.totalTax,
+              discrepancy: diff > 0.01,
+              diff,
+              contact: po.contact,
+              currencyCode: po.currencyCode,
+              lineItems: po.lineItems,
+            };
+          })
+        );
+
+        const anyDiscrepancy = poLookups.some((r) => r.discrepancy);
+        const allFound = poLookups.every((r) => r.found);
+
+        // Use the first found PO for the legacy single-PO summary fields (backwards compat)
+        const firstFound = poLookups.find((r) => r.found);
 
         await updateInvoice(input.invoiceId, {
-          // Re-use the xeroInvoiceId/Number fields to store the PO ID/Number for reference
-          xeroInvoiceId: xeroPO.purchaseOrderId,
-          xeroInvoiceNumber: xeroPO.purchaseOrderNumber,
-          xeroTotal: xeroPoTotal.toString(),
-          xeroSubtotal: xeroPO.subTotal.toString(),
-          xeroTax: xeroPO.totalTax.toString(),
-          xeroStatus: xeroPO.status,
+          xeroInvoiceId: firstFound ? (firstFound as any).poNumber : null,
+          xeroInvoiceNumber: firstFound ? firstFound.poNumber : null,
+          xeroTotal: firstFound ? firstFound.poTotal.toString() : null,
+          xeroSubtotal: firstFound ? firstFound.poSubtotal.toString() : null,
+          xeroTax: firstFound ? firstFound.poTax.toString() : null,
+          xeroStatus: firstFound ? firstFound.status : "NOT_FOUND",
           xeroVerifiedAt: new Date(),
-          hasDiscrepancy,
-          discrepancyAmount: hasDiscrepancy ? diff.toString() : null,
-          status: hasDiscrepancy ? "flagged" : "verified",
+          hasDiscrepancy: anyDiscrepancy,
+          discrepancyAmount: anyDiscrepancy && firstFound ? firstFound.diff.toString() : null,
+          status: anyDiscrepancy ? "flagged" : "verified",
+          xeroPoResults: poLookups as any,
         });
+
+        // Build a human-readable summary for the conversation note
+        const summaryLines = poLookups.map((r) =>
+          r.found
+            ? `PO ${r.poNumber}: ${r.status} — PO total $${r.poTotal.toFixed(2)} vs invoice $${extractedTotal.toFixed(2)}${r.discrepancy ? ` (DIFF $${r.diff.toFixed(2)})` : " (match)"}`
+            : `PO ${r.poNumber}: NOT FOUND in Xero`
+        );
 
         await createConversationNote({
           invoiceId: input.invoiceId,
           authorId: ctx.user.id,
           type: "status_change",
-          content: hasDiscrepancy
-            ? `Discrepancy detected: Invoice total $${extractedTotal.toFixed(2)} vs Xero PO ${poNumber} total $${xeroPoTotal.toFixed(2)} (diff: $${diff.toFixed(2)}). Invoice flagged.`
-            : `Xero PO verification passed. Invoice total $${extractedTotal.toFixed(2)} matches PO ${poNumber} total $${xeroPoTotal.toFixed(2)}. Invoice verified.`,
-          metadata: { xeroPoTotal, extractedTotal, diff, hasDiscrepancy, poNumber },
+          content: anyDiscrepancy
+            ? `Xero PO verification — discrepancy detected:\n${summaryLines.join("\n")}. Invoice flagged.`
+            : `Xero PO verification passed — all POs matched:\n${summaryLines.join("\n")}. Invoice verified.`,
+          metadata: { poLookups, extractedTotal, anyDiscrepancy, allFound },
         });
 
-        return { matched: true, discrepancy: hasDiscrepancy, xeroPO };
+        return { matched: allFound, discrepancy: anyDiscrepancy, poResults: poLookups };
       }),
 
     // Send dispute email

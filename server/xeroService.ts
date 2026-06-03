@@ -130,6 +130,17 @@ export interface XeroBill {
   currencyCode: string;
 }
 
+export interface XeroPOLineItem {
+  lineItemId: string;
+  description: string;
+  quantity: number;
+  unitAmount: number;
+  lineAmount: number;
+  taxAmount: number;
+  accountCode: string;
+  itemCode: string;
+}
+
 export interface XeroPurchaseOrder {
   purchaseOrderId: string;
   purchaseOrderNumber: string;
@@ -142,6 +153,7 @@ export interface XeroPurchaseOrder {
   total: number;
   status: string;
   currencyCode: string;
+  lineItems: XeroPOLineItem[];
 }
 
 export async function findXeroBillByInvoiceNumber(
@@ -213,6 +225,16 @@ export async function findXeroPurchaseOrderByNumber(
     if (poList.length === 0) return null;
 
     const po = poList[0];
+    const lineItems: XeroPOLineItem[] = (po.LineItems ?? []).map((li: any) => ({
+      lineItemId: li.LineItemID ?? "",
+      description: li.Description ?? "",
+      quantity: parseFloat(li.Quantity ?? "0"),
+      unitAmount: parseFloat(li.UnitAmount ?? "0"),
+      lineAmount: parseFloat(li.LineAmount ?? "0"),
+      taxAmount: parseFloat(li.TaxAmount ?? "0"),
+      accountCode: li.AccountCode ?? "",
+      itemCode: li.ItemCode ?? "",
+    }));
     return {
       purchaseOrderId: po.PurchaseOrderID,
       purchaseOrderNumber: po.PurchaseOrderNumber,
@@ -225,6 +247,7 @@ export async function findXeroPurchaseOrderByNumber(
       total: parseFloat(po.Total ?? "0"),
       status: po.Status,
       currencyCode: po.CurrencyCode ?? "AUD",
+      lineItems,
     };
   } catch (err: any) {
     // 404 means no PO found with that number — not an error worth logging loudly

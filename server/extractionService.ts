@@ -113,6 +113,45 @@ export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string)
   return null;
 }
 
+/**
+ * Extracts ALL unique PO numbers from the invoice data (not just the first one).
+ * Uses the same PO_PATTERN and searches all text sources.
+ */
+export function extractAllPoNumbers(data: ExtractedInvoiceData | null | undefined, rawText?: string): string[] {
+  if (!data) return [];
+  const PO_PATTERN = /\b([A-Z]{2}\d{6})\b/g;
+  const found = new Set<string>();
+
+  // From LLM-identified poNumber
+  if (data.poNumber && /^[A-Z]{2}\d{6}$/.test(data.poNumber)) {
+    found.add(data.poNumber);
+  }
+
+  // From all line item descriptions
+  for (const li of (data.lineItems ?? [])) {
+    const matches = li.description.match(PO_PATTERN);
+    if (matches) matches.forEach((m) => found.add(m));
+  }
+
+  // From combined text fields
+  const combinedFields = [
+    data.invoiceNumber,
+    data.notes,
+    data.supplierName,
+    data.supplierAddress,
+    rawText,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (combinedFields) {
+    const matches = combinedFields.match(PO_PATTERN);
+    if (matches) matches.forEach((m) => found.add(m));
+  }
+
+  return Array.from(found);
+}
+
 const JSON_SCHEMA = {
   type: "object",
   properties: {

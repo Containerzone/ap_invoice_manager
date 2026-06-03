@@ -44,6 +44,7 @@ vi.mock("./storage", () => ({
 }));
 
 vi.mock("./extractionService", () => ({
+  extractAllPoNumbers: vi.fn().mockReturnValue([]),
   extractInvoiceData: vi.fn().mockResolvedValue({
     invoiceNumber: "INV-001",
     poNumber: "PO-123",
@@ -375,6 +376,7 @@ describe("invoices.verifyWithXero", () => {
       extractedPoNumber: "AD123456",
       extractedTotal: "1100.00",
       extractedInvoiceNumber: "INV-001",
+      extractedRawData: null,
     } as any);
     vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
       purchaseOrderId: "po-uuid-1",
@@ -388,11 +390,15 @@ describe("invoices.verifyWithXero", () => {
       total: 1100.00,
       status: "AUTHORISED",
       currencyCode: "AUD",
+      lineItems: [{ lineItemId: "li1", description: "Freight", quantity: 1, unitAmount: 1000, lineAmount: 1000, taxAmount: 100, accountCode: "300", itemCode: "" }],
     });
     const caller = appRouter.createCaller(makeAdminCtx());
     const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
     expect(result.matched).toBe(true);
     expect(result.discrepancy).toBe(false);
+    expect(result.poResults).toHaveLength(1);
+    expect(result.poResults[0].lineItems).toHaveLength(1);
+    expect(result.poResults[0].status).toBe("AUTHORISED");
     expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
       99,
       expect.objectContaining({ status: "verified", hasDiscrepancy: false })
@@ -407,6 +413,7 @@ describe("invoices.verifyWithXero", () => {
       extractedPoNumber: "AD123456",
       extractedTotal: "1250.00",
       extractedInvoiceNumber: "INV-001",
+      extractedRawData: null,
     } as any);
     vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
       purchaseOrderId: "po-uuid-1",
@@ -420,11 +427,95 @@ describe("invoices.verifyWithXero", () => {
       total: 1100.00,
       status: "AUTHORISED",
       currencyCode: "AUD",
+      lineItems: [],
     });
     const caller = appRouter.createCaller(makeAdminCtx());
     const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
     expect(result.matched).toBe(true);
     expect(result.discrepancy).toBe(true);
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({ status: "flagged", hasDiscrepancy: true })
+    );
+  });
+
+  it("handles multiple PO numbers — all found and matching", async () => {
+    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    const { extractAllPoNumbers } = await import("./extractionService");
+    // Override to return two PO numbers from the raw data
+    vi.mocked(extractAllPoNumbers).mockReturnValueOnce(["AD123456", "BD654321"]);
+    // Invoice raw data contains two PO numbers in line item descriptions
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: "AD123456",
+      extractedTotal: "2200.00",
+      extractedInvoiceNumber: "INV-002",
+      extractedRawData: {
+        poNumber: "AD123456",
+        lineItems: [
+          { description: "Freight AD123456", quantity: 1, unitPrice: 1100, amount: 1100, taxRate: 10 },
+          { description: "Handling BD654321", quantity: 1, unitPrice: 1100, amount: 1100, taxRate: 10 },
+        ],
+      },
+    } as any);
+    // First call for AD123456, second for BD654321
+    vi.mocked(findXeroPurchaseOrderByNumber)
+      .mockResolvedValueOnce({
+        purchaseOrderId: "po-1", purchaseOrderNumber: "AD123456", reference: "",
+        contact: { contactId: "c1", name: "Supplier" }, date: "", deliveryDate: "",
+        subTotal: 2000, totalTax: 200, total: 2200, status: "AUTHORISED", currencyCode: "AUD",
+        lineItems: [],
+      })
+      .mockResolvedValueOnce({
+        purchaseOrderId: "po-2", purchaseOrderNumber: "BD654321", reference: "",
+        contact: { contactId: "c1", name: "Supplier" }, date: "", deliveryDate: "",
+        subTotal: 2000, totalTax: 200, total: 2200, status: "AUTHORISED", currencyCode: "AUD",
+        lineItems: [],
+      });
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
+    expect(result.matched).toBe(true);
+    expect(result.discrepancy).toBe(false);
+    expect(result.poResults).toHaveLength(2);
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({ status: "verified", hasDiscrepancy: false })
+    );
+  });
+
+  it("flags invoice when one of multiple POs is not found", async () => {
+    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    const { extractAllPoNumbers } = await import("./extractionService");
+    vi.mocked(extractAllPoNumbers).mockReturnValueOnce(["AD123456", "BD654321"]);
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: "AD123456",
+      extractedTotal: "2200.00",
+      extractedInvoiceNumber: "INV-003",
+      extractedRawData: {
+        poNumber: "AD123456",
+        lineItems: [
+          { description: "Freight AD123456", quantity: 1, unitPrice: 1100, amount: 1100, taxRate: 10 },
+          { description: "Handling BD654321", quantity: 1, unitPrice: 1100, amount: 1100, taxRate: 10 },
+        ],
+      },
+    } as any);
+    vi.mocked(findXeroPurchaseOrderByNumber)
+      .mockResolvedValueOnce({
+        purchaseOrderId: "po-1", purchaseOrderNumber: "AD123456", reference: "",
+        contact: { contactId: "c1", name: "Supplier" }, date: "", deliveryDate: "",
+        subTotal: 2000, totalTax: 200, total: 2200, status: "AUTHORISED", currencyCode: "AUD",
+        lineItems: [],
+      })
+      .mockResolvedValueOnce(null); // BD654321 not found
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
+    expect(result.matched).toBe(false); // not all found
+    expect(result.discrepancy).toBe(true);
+    expect(result.poResults).toHaveLength(2);
+    expect(result.poResults.find((r: any) => r.poNumber === "BD654321")?.found).toBe(false);
     expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
       99,
       expect.objectContaining({ status: "flagged", hasDiscrepancy: true })

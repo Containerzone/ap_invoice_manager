@@ -78,3 +78,6 @@
 - [x] Delete supplier button on Suppliers page (Admin only) with confirmation dialog
 - [x] Quick-add dispute templates in Query Points panel — dropdown with common pre-written reasons
 - [x] Rework Verify with Xero to look up Purchase Orders by PO number instead of matching bills by invoice number — compare PO amount vs invoice total to flag discrepancies
+- [x] Multi-PO verification — verify all PO numbers found on the invoice against Xero, flag if any PO is missing or mismatched
+- [x] PO line item comparison — fetch Xero PO line items and display them alongside invoice line items in the Amount Comparison section
+- [x] Xero PO status display — show PO status (DRAFT/AUTHORISED/BILLED) badge in the Amount Comparison card

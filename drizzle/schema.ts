@@ -101,6 +101,8 @@ export const invoices = mysqlTable("invoices", {
   xeroTax: decimal("xeroTax", { precision: 15, scale: 2 }),
   xeroStatus: varchar("xeroStatus", { length: 50 }),
   xeroVerifiedAt: timestamp("xeroVerifiedAt"),
+  // Multi-PO verification results: array of { poNumber, found, status, poTotal, discrepancy, diff, lineItems[] }
+  xeroPoResults: json("xeroPoResults"),
 
   // Discrepancy
   hasDiscrepancy: boolean("hasDiscrepancy").default(false),

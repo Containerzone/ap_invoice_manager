@@ -34,6 +34,49 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
+// ── Xero PO types (mirrors server XeroPurchaseOrder/XeroPOLineItem) ─────────
+interface XeroPOLineItem {
+  lineItemId: string;
+  description: string;
+  quantity: number;
+  unitAmount: number;
+  lineAmount: number;
+  taxAmount: number;
+  accountCode: string;
+  itemCode: string;
+}
+
+interface XeroPoResult {
+  poNumber: string;
+  found: boolean;
+  status: string;
+  poTotal: number;
+  poSubtotal: number;
+  poTax: number;
+  discrepancy: boolean;
+  diff: number;
+  lineItems: XeroPOLineItem[];
+  contact?: { contactId: string; name: string };
+  currencyCode?: string;
+}
+
+const XERO_PO_STATUS_CONFIG: Record<string, { label: string; className: string }> = {
+  DRAFT:       { label: "Draft",      className: "bg-gray-100 text-gray-700 border-gray-200" },
+  AUTHORISED:  { label: "Authorised", className: "bg-blue-100 text-blue-700 border-blue-200" },
+  BILLED:      { label: "Billed",     className: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+  DELETED:     { label: "Deleted",    className: "bg-red-100 text-red-700 border-red-200" },
+  NOT_FOUND:   { label: "Not Found",  className: "bg-red-100 text-red-700 border-red-200" },
+};
+
+function XeroPoStatusBadge({ status }: { status: string }) {
+  const cfg = XERO_PO_STATUS_CONFIG[status] ?? { label: status, className: "bg-gray-100 text-gray-600 border-gray-200" };
+  return (
+    <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border", cfg.className)}>
+      {cfg.label}
+    </span>
+  );
+}
+
 const DISPUTE_TEMPLATES = [
   "Amount does not match the Purchase Order",
   "Invoice is a duplicate of a previously received invoice",
@@ -315,14 +358,16 @@ export default function InvoiceDetail() {
     try {
       const result = await verifyMutation.mutateAsync({ invoiceId });
       await invalidate();
+      const poCount = result.poResults?.length ?? 0;
+      const missingCount = result.poResults?.filter((r: any) => !r.found).length ?? 0;
+      const diffCount = result.poResults?.filter((r: any) => r.found && r.discrepancy).length ?? 0;
       if (result.discrepancy) {
-        toast.warning(
-          result.matched
-            ? "Discrepancy detected — invoice total differs from PO total. Invoice flagged."
-            : "PO not found in Xero — invoice flagged."
-        );
+        const parts: string[] = [];
+        if (missingCount > 0) parts.push(`${missingCount} PO${missingCount > 1 ? "s" : ""} not found in Xero`);
+        if (diffCount > 0) parts.push(`${diffCount} PO${diffCount > 1 ? "s" : ""} with amount mismatch`);
+        toast.warning(`Discrepancy detected — ${parts.join(", ")}. Invoice flagged.`);
       } else {
-        toast.success("PO verified — invoice total matches Xero Purchase Order.");
+        toast.success(`All ${poCount} PO${poCount !== 1 ? "s" : ""} verified — amounts match.`);
       }
     } catch (e: any) {
       toast.error(e?.message ?? "Verification failed");
@@ -787,8 +832,15 @@ export default function InvoiceDetail() {
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
                       <DollarSign className="h-3.5 w-3.5" />
                       Amount Comparison
+                      {invoice.xeroVerifiedAt && (
+                        <span className="text-muted-foreground/60 font-normal normal-case tracking-normal ml-auto">
+                          verified {formatRelativeTime(invoice.xeroVerifiedAt)}
+                        </span>
+                      )}
                     </p>
-                    <div className="grid grid-cols-2 gap-4">
+
+                    {/* Invoice totals row */}
+                    <div className="grid grid-cols-2 gap-4 mb-4">
                       <div className="space-y-2">
                         <p className="text-xs font-medium text-muted-foreground">Extracted (Invoice)</p>
                         <AmountRow label="Subtotal" value={formatCurrency(invoice.extractedSubtotal)} />
@@ -797,11 +849,12 @@ export default function InvoiceDetail() {
                       </div>
                       <div className="space-y-2">
                         <p className="text-xs font-medium text-muted-foreground">
-                          Xero PO{invoice.xeroInvoiceNumber && (
-                            <span className="font-semibold text-foreground"> {invoice.xeroInvoiceNumber}</span>
-                          )}{invoice.xeroVerifiedAt && (
-                            <span className="text-muted-foreground/60"> · verified {formatRelativeTime(invoice.xeroVerifiedAt)}</span>
-                          )}
+                          {(() => {
+                            const poResults = (invoice as any).xeroPoResults as XeroPoResult[] | null;
+                            if (!poResults || poResults.length === 0) return "Xero PO";
+                            if (poResults.length === 1) return `Xero PO ${poResults[0].poNumber}`;
+                            return `Xero POs (${poResults.length})`;
+                          })()}
                         </p>
                         {invoice.xeroTotal ? (
                           <>
@@ -816,6 +869,75 @@ export default function InvoiceDetail() {
                         )}
                       </div>
                     </div>
+
+                    {/* Multi-PO results table */}
+                    {(() => {
+                      const poResults = (invoice as any).xeroPoResults as XeroPoResult[] | null;
+                      if (!poResults || poResults.length === 0) return null;
+                      return (
+                        <div className="space-y-3">
+                          {poResults.map((po) => (
+                            <div key={po.poNumber} className={cn(
+                              "rounded-lg border p-3 text-xs",
+                              !po.found ? "border-red-200 bg-red-50/50" :
+                              po.discrepancy ? "border-amber-200 bg-amber-50/50" :
+                              "border-emerald-200 bg-emerald-50/50"
+                            )}>
+                              {/* PO header row */}
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono font-semibold text-sm">{po.poNumber}</span>
+                                  <XeroPoStatusBadge status={po.status} />
+                                </div>
+                                {po.found && (
+                                  <div className="flex items-center gap-3 text-muted-foreground">
+                                    <span>PO total: <strong className={cn(po.discrepancy ? "text-amber-700" : "text-emerald-700")}>{formatCurrency(po.poTotal)}</strong></span>
+                                    {po.discrepancy && (
+                                      <span className="text-red-600 font-medium">Diff: {formatCurrency(po.diff)}</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* PO line items */}
+                              {po.found && po.lineItems && po.lineItems.length > 0 && (
+                                <div className="mt-2">
+                                  <p className="text-xs text-muted-foreground font-medium mb-1.5">PO Line Items</p>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr className="text-muted-foreground border-b">
+                                          <th className="text-left pb-1 font-medium pr-3">Description</th>
+                                          <th className="text-right pb-1 font-medium pr-3">Qty</th>
+                                          <th className="text-right pb-1 font-medium pr-3">Unit</th>
+                                          <th className="text-right pb-1 font-medium">Amount</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {po.lineItems.map((li: XeroPOLineItem, idx: number) => (
+                                          <tr key={li.lineItemId || idx} className="border-b border-border/40 last:border-0">
+                                            <td className="py-1 pr-3 text-foreground max-w-[200px] truncate" title={li.description}>
+                                              {li.description || <span className="italic text-muted-foreground">No description</span>}
+                                            </td>
+                                            <td className="py-1 pr-3 text-right tabular-nums">{li.quantity}</td>
+                                            <td className="py-1 pr-3 text-right tabular-nums">{formatCurrency(li.unitAmount)}</td>
+                                            <td className="py-1 text-right tabular-nums font-medium">{formatCurrency(li.lineAmount)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              )}
+
+                              {!po.found && (
+                                <p className="text-red-600 mt-1">This PO was not found in Xero. The PO number may be incorrect or the PO has not been raised yet.</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </>
               )}
