@@ -36,6 +36,13 @@
       "when": 1780460226970,
       "tag": "0004_good_zaladane",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1780508813176,
+      "tag": "0005_lowly_wild_child",
+      "breakpoints": true
     }
   ]
 }

@@ -74,6 +74,7 @@ vi.mock("./xeroService", () => ({
   createXeroDraftBill: vi.fn().mockResolvedValue({ invoiceId: "x1", invoiceNumber: "BILL-001" }),
   findOrCreateXeroContact: vi.fn().mockResolvedValue("contact-id"),
   refreshXeroTokenIfNeeded: vi.fn().mockResolvedValue("fresh-token"),
+  markXeroPOAsBilled: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("./emailService", () => ({
@@ -405,13 +406,13 @@ describe("invoices.verifyWithXero", () => {
     );
   });
 
-  it("flags invoice when PO total differs from invoice total", async () => {
+  it("flags invoice (over-billed) when invoice total exceeds PO total", async () => {
     const { getInvoiceById, updateInvoice } = await import("./db");
     const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
     vi.mocked(getInvoiceById).mockResolvedValueOnce({
       id: 99,
       extractedPoNumber: "AD123456",
-      extractedTotal: "1250.00",
+      extractedTotal: "1250.00", // billed MORE than PO
       extractedInvoiceNumber: "INV-001",
       extractedRawData: null,
     } as any);
@@ -433,9 +434,47 @@ describe("invoices.verifyWithXero", () => {
     const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
     expect(result.matched).toBe(true);
     expect(result.discrepancy).toBe(true);
+    expect(result.poResults[0].overBilled).toBe(true);
+    expect(result.poResults[0].underBilled).toBeFalsy();
     expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
       99,
       expect.objectContaining({ status: "flagged", hasDiscrepancy: true })
+    );
+  });
+
+  it("sets under_budget status when invoice total is less than PO total", async () => {
+    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: "AD123456",
+      extractedTotal: "950.00", // billed LESS than PO
+      extractedInvoiceNumber: "INV-001",
+      extractedRawData: null,
+    } as any);
+    vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
+      purchaseOrderId: "po-uuid-1",
+      purchaseOrderNumber: "AD123456",
+      reference: "",
+      contact: { contactId: "c1", name: "Supplier Co" },
+      date: "2024-01-15",
+      deliveryDate: "",
+      subTotal: 1000.00,
+      totalTax: 100.00,
+      total: 1100.00,
+      status: "AUTHORISED",
+      currencyCode: "AUD",
+      lineItems: [],
+    });
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
+    expect(result.matched).toBe(true);
+    expect(result.discrepancy).toBe(false);
+    expect(result.poResults[0].underBilled).toBe(true);
+    expect(result.poResults[0].overBilled).toBeFalsy();
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({ status: "under_budget", hasDiscrepancy: false })
     );
   });
 
@@ -520,5 +559,44 @@ describe("invoices.verifyWithXero", () => {
       99,
       expect.objectContaining({ status: "flagged", hasDiscrepancy: true })
     );
+  });
+});
+
+describe("invoices.adminApprove", () => {
+  it("sets status to approved and creates a conversation note", async () => {
+    const { getInvoiceById, updateInvoice, createConversationNote } = await import("./db");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: null,
+      extractedTotal: "500.00",
+      extractedInvoiceNumber: "INV-NO-PO",
+      status: "extracted",
+    } as any);
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.adminApprove({ invoiceId: 99, notes: "No PO raised — approved by manager" });
+    expect(result.success).toBe(true);
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({ status: "approved" })
+    );
+    expect(vi.mocked(createConversationNote)).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("approved") })
+    );
+  });
+
+  it("throws NOT_FOUND when invoice does not exist", async () => {
+    const { getInvoiceById } = await import("./db");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce(null as any);
+    const caller = appRouter.createCaller(makeAdminCtx());
+    await expect(
+      caller.invoices.adminApprove({ invoiceId: 999 })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("throws FORBIDDEN when called by non-admin user", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    await expect(
+      caller.invoices.adminApprove({ invoiceId: 99 })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

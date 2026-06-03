@@ -41,6 +41,7 @@ import {
   findXeroPurchaseOrderByNumber,
   createXeroDraftBill,
   findOrCreateXeroContact,
+  markXeroPOAsBilled,
 } from "./xeroService";
 import { sendDisputeEmail, generateDisputeEmailTemplate } from "./emailService";
 import { ENV } from "./_core/env";
@@ -340,7 +341,8 @@ export const appRouter = router({
             if (!po) {
               return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, diff: extractedTotal, lineItems: [] };
             }
-            const diff = Math.abs(extractedTotal - po.total);
+            const rawDiff = extractedTotal - po.total; // positive = billed more than PO, negative = billed less
+            const absDiff = Math.abs(rawDiff);
             return {
               poNumber: poNum,
               found: true,
@@ -348,8 +350,11 @@ export const appRouter = router({
               poTotal: po.total,
               poSubtotal: po.subTotal,
               poTax: po.totalTax,
-              discrepancy: diff > 0.01,
-              diff,
+              discrepancy: absDiff > 0.01,
+              overBilled: rawDiff > 0.01,   // billed > PO → flag
+              underBilled: rawDiff < -0.01, // billed < PO → under budget (ok)
+              diff: absDiff,
+              rawDiff,
               contact: po.contact,
               currencyCode: po.currencyCode,
               lineItems: po.lineItems,
@@ -357,8 +362,24 @@ export const appRouter = router({
           })
         );
 
-        const anyDiscrepancy = poLookups.some((r) => r.discrepancy);
+        const anyOverBilled = poLookups.some((r) => (r as any).overBilled);
+        const anyNotFound = poLookups.some((r) => !r.found);
+        const anyDiscrepancy = anyOverBilled || anyNotFound;
+        const allUnderBilled = poLookups.every((r) => r.found && (r as any).underBilled);
         const allFound = poLookups.every((r) => r.found);
+
+        // Determine invoice status:
+        // - any PO not found OR billed > PO → flagged
+        // - all POs found AND billed < PO → under_budget (safe to approve)
+        // - all POs found AND amounts match → verified
+        let newStatus: string;
+        if (anyDiscrepancy) {
+          newStatus = "flagged";
+        } else if (allUnderBilled) {
+          newStatus = "under_budget";
+        } else {
+          newStatus = "verified";
+        }
 
         // Use the first found PO for the legacy single-PO summary fields (backwards compat)
         const firstFound = poLookups.find((r) => r.found);
@@ -373,7 +394,7 @@ export const appRouter = router({
           xeroVerifiedAt: new Date(),
           hasDiscrepancy: anyDiscrepancy,
           discrepancyAmount: anyDiscrepancy && firstFound ? firstFound.diff.toString() : null,
-          status: anyDiscrepancy ? "flagged" : "verified",
+          status: newStatus as any,
           xeroPoResults: poLookups as any,
         });
 
@@ -390,11 +411,30 @@ export const appRouter = router({
           type: "status_change",
           content: anyDiscrepancy
             ? `Xero PO verification — discrepancy detected:\n${summaryLines.join("\n")}. Invoice flagged.`
-            : `Xero PO verification passed — all POs matched:\n${summaryLines.join("\n")}. Invoice verified.`,
-          metadata: { poLookups, extractedTotal, anyDiscrepancy, allFound },
+            : allUnderBilled
+              ? `Xero PO verification — billed amount is under PO budget:\n${summaryLines.join("\n")}. Invoice marked as Under Budget (safe to approve).`
+              : `Xero PO verification passed — all POs matched:\n${summaryLines.join("\n")}. Invoice verified.`,
+          metadata: { poLookups, extractedTotal, anyDiscrepancy, allFound, allUnderBilled },
         });
 
-        return { matched: allFound, discrepancy: anyDiscrepancy, poResults: poLookups };
+        return { matched: allFound, discrepancy: anyDiscrepancy, underBudget: allUnderBilled, poResults: poLookups };
+      }),
+
+    // Admin approve — for invoices without PO numbers that cannot be verified via Xero
+    adminApprove: adminProcedure
+      .input(z.object({ invoiceId: z.number(), notes: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const invoice = await getInvoiceById(input.invoiceId);
+        if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
+        await updateInvoice(input.invoiceId, { status: "approved" as any });
+        await createConversationNote({
+          invoiceId: input.invoiceId,
+          authorId: ctx.user.id,
+          type: "status_change",
+          content: `Invoice manually approved by admin.${input.notes ? ` Notes: ${input.notes}` : ""}`,
+          metadata: { approvedBy: ctx.user.id, approvedAt: new Date().toISOString() },
+        });
+        return { success: true };
       }),
 
     // Send dispute email
@@ -628,6 +668,11 @@ export const appRouter = router({
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
 
         let xeroResult: { invoiceId: string; invoiceNumber: string } | null = null;
+        // Collect all PO numbers up front (used for reference field and marking as Billed)
+        const rawData = invoice.extractedRawData as any;
+        const allPoNumbers: string[] = invoice.extractedPoNumber
+          ? Array.from(new Set([invoice.extractedPoNumber, ...extractAllPoNumbers(rawData ?? {})]))
+          : extractAllPoNumbers(rawData ?? {});
 
         if (input.pushToXero) {
           const clientId = process.env.XERO_CLIENT_ID;
@@ -668,12 +713,20 @@ export const appRouter = router({
                 invoiceDate: invoice.extractedInvoiceDate ?? new Date().toISOString().split("T")[0],
                 dueDate: invoice.extractedDueDate ?? undefined,
                 lineItems: xeroLineItems,
-                reference: invoice.extractedPoNumber ?? undefined,
+                // Include all PO numbers in the reference field
+                reference: allPoNumbers.length > 0 ? allPoNumbers.join(", ") : undefined,
                 currencyCode: invoice.extractedCurrency ?? "AUD",
               },
               clientId,
               clientSecret
             );
+
+            // Mark each linked PO as BILLED in Xero
+            if (xeroResult && allPoNumbers.length > 0) {
+              await Promise.allSettled(
+                allPoNumbers.map((poNum) => markXeroPOAsBilled(poNum, clientId, clientSecret))
+              );
+            }
           }
         }
 
@@ -691,9 +744,9 @@ export const appRouter = router({
           authorId: ctx.user.id,
           type: "status_change",
           content: xeroResult
-            ? `Invoice resolved. Draft bill created in Xero: ${xeroResult.invoiceNumber}. ${input.resolutionNotes ?? ""}`
+            ? `Invoice resolved. Draft bill created in Xero: ${xeroResult.invoiceNumber}${allPoNumbers.length > 0 ? `. POs marked as Billed: ${allPoNumbers.join(", ")}` : ""}. ${input.resolutionNotes ?? ""}`
             : `Invoice resolved. ${input.resolutionNotes ?? ""}`,
-          metadata: { xeroResult },
+          metadata: { xeroResult, poNumbers: allPoNumbers },
         });
 
         return { success: true, xeroResult };

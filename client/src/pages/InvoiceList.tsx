@@ -18,6 +18,8 @@ const STATUS_OPTIONS = [
   { value: "extracting", label: "Extracting" },
   { value: "extracted", label: "Extracted" },
   { value: "verified", label: "Verified" },
+  { value: "under_budget", label: "Under Budget" },
+  { value: "approved", label: "Approved" },
   { value: "flagged", label: "Flagged" },
   { value: "queried", label: "1st Query Sent" },
   { value: "queried_2nd", label: "2nd Query Sent" },

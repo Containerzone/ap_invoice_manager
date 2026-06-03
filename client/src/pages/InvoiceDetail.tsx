@@ -54,6 +54,9 @@ interface XeroPoResult {
   poSubtotal: number;
   poTax: number;
   discrepancy: boolean;
+  overBilled?: boolean;   // billed > PO → flag
+  underBilled?: boolean; // billed < PO → under budget
+  rawDiff?: number;
   diff: number;
   lineItems: XeroPOLineItem[];
   contact?: { contactId: string; name: string };
@@ -118,6 +121,7 @@ export default function InvoiceDetail() {
   const deleteLineItemMutation = trpc.invoices.deleteLineItem.useMutation();
   const saveQueryPointsMutation = trpc.invoices.saveQueryPoints.useMutation();
   const logReplyMutation = trpc.invoices.logReply.useMutation();
+  const adminApproveMutation = trpc.invoices.adminApprove.useMutation();
 
   // ── Reply state ───────────────────────────────────────────────────────────
   const [replyEmailLogId, setReplyEmailLogId] = useState<number | null>(null);
@@ -213,6 +217,8 @@ export default function InvoiceDetail() {
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [showResolveDialog, setShowResolveDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showApproveDialog, setShowApproveDialog] = useState(false);
+  const [approveNotes, setApproveNotes] = useState("");
   const [emailTo, setEmailTo] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
@@ -374,6 +380,18 @@ export default function InvoiceDetail() {
     }
   };
 
+  const handleAdminApprove = async () => {
+    try {
+      await adminApproveMutation.mutateAsync({ invoiceId, notes: approveNotes || undefined });
+      await utils.invoices.get.invalidate({ id: invoiceId });
+      setShowApproveDialog(false);
+      setApproveNotes("");
+      toast.success("Invoice approved");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to approve invoice");
+    }
+  };
+
   // Opens the email dialog — optionally pre-fill with last sent email body
   const openEmailDialog = (prefillLastEmail = false) => {
     const supplier = data?.supplier;
@@ -470,11 +488,13 @@ export default function InvoiceDetail() {
 
   const { invoice, lineItems, notes, emails, supplier } = data;
   const containers = parseContainerNumbers(invoice.extractedContainerNumbers);
-  const canVerify = ["extracted", "verified", "flagged"].includes(invoice.status);
-  const canQuery = ["flagged", "verified", "extracted"].includes(invoice.status);
-  const canResolve = ["flagged", "queried", "verified"].includes(invoice.status);
+  const canVerify = ["extracted", "verified", "flagged", "under_budget", "approved"].includes(invoice.status);
+  const canQuery = ["flagged", "verified", "extracted", "under_budget", "approved"].includes(invoice.status);
+  const canResolve = ["flagged", "queried", "verified", "under_budget", "approved"].includes(invoice.status);
   const isQueried = invoice.status === "queried";
   const hasEmails = emails.length > 0;
+  // Admin can approve invoices that have no PO and cannot be Xero-verified
+  const canAdminApprove = user?.role === "admin" && ["extracted", "flagged", "verified", "under_budget"].includes(invoice.status);
 
   const noteTypeConfig: Record<string, { icon: React.ComponentType<any>; color: string; label: string }> = {
     note:           { icon: MessageSquare, color: "text-blue-500",   label: "Note" },
@@ -655,6 +675,17 @@ export default function InvoiceDetail() {
               Resolve
             </Button>
           )}
+          {canAdminApprove && !editMode && (
+            <Button
+              size="sm"
+              className="gap-2 bg-sky-600 hover:bg-sky-700 text-white"
+              onClick={() => setShowApproveDialog(true)}
+              disabled={adminApproveMutation.isPending}
+            >
+              {adminApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              Admin Approve
+            </Button>
+          )}
           {user?.role === "admin" && !editMode && (
             <Button variant="outline" size="sm" className="gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300" onClick={() => setShowDeleteDialog(true)}>
               <Trash2 className="h-3.5 w-3.5" />
@@ -677,17 +708,45 @@ export default function InvoiceDetail() {
         </p>
       </div>
 
-      {/* Discrepancy Alert */}
-      {invoice.hasDiscrepancy && (
+      {/* Under-budget banner — billed < PO, safe to approve */}
+      {invoice.status === "under_budget" && (
+        <div className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+          <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-emerald-800">Billed Amount is Lower than PO — Safe to Approve</p>
+            <p className="text-sm text-emerald-700 mt-0.5">
+              Invoice total {formatCurrency(invoice.extractedTotal)} is lower than the Xero PO total{" "}
+              {formatCurrency(invoice.xeroTotal)}. The billed amount is within the approved PO budget.
+              You may proceed to approve and push to Xero.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Approved banner */}
+      {invoice.status === "approved" && (
+        <div className="flex items-start gap-3 p-4 bg-sky-50 border border-sky-200 rounded-xl">
+          <CheckCircle2 className="h-5 w-5 text-sky-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-sky-800">Manually Approved by Admin</p>
+            <p className="text-sm text-sky-700 mt-0.5">
+              This invoice has been approved by an administrator and is ready to push to Xero.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Discrepancy Alert — billed > PO */}
+      {invoice.hasDiscrepancy && invoice.status === "flagged" && (
         <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
           <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-semibold text-amber-800">Amount Discrepancy Detected</p>
+            <p className="text-sm font-semibold text-amber-800">Amount Discrepancy Detected — Invoice Exceeds PO</p>
             <p className="text-sm text-amber-700 mt-0.5">
               {invoice.xeroTotal
-                ? <>Invoice total {formatCurrency(invoice.extractedTotal)} differs from Xero PO total{" "}
+                ? <>Invoice total {formatCurrency(invoice.extractedTotal)} exceeds Xero PO total{" "}
                     {formatCurrency(invoice.xeroTotal)} by{" "}
-                    <strong>{formatCurrency((invoice as any).discrepancyAmount)}</strong></>
+                    <strong>{formatCurrency((invoice as any).discrepancyAmount)}</strong>. Please query the supplier or obtain a PO amendment.</>
                 : <>Purchase Order {invoice.extractedPoNumber} was not found in Xero. PO number may be incorrect or the PO has not been raised yet.</>
               }
             </p>
@@ -880,6 +939,8 @@ export default function InvoiceDetail() {
                             <div key={po.poNumber} className={cn(
                               "rounded-lg border p-3 text-xs",
                               !po.found ? "border-red-200 bg-red-50/50" :
+                              po.overBilled ? "border-amber-200 bg-amber-50/50" :
+                              po.underBilled ? "border-emerald-200 bg-emerald-50/50" :
                               po.discrepancy ? "border-amber-200 bg-amber-50/50" :
                               "border-emerald-200 bg-emerald-50/50"
                             )}>
@@ -891,9 +952,16 @@ export default function InvoiceDetail() {
                                 </div>
                                 {po.found && (
                                   <div className="flex items-center gap-3 text-muted-foreground">
-                                    <span>PO total: <strong className={cn(po.discrepancy ? "text-amber-700" : "text-emerald-700")}>{formatCurrency(po.poTotal)}</strong></span>
-                                    {po.discrepancy && (
-                                      <span className="text-red-600 font-medium">Diff: {formatCurrency(po.diff)}</span>
+                                    <span>PO total: <strong className={cn(
+                                      po.overBilled ? "text-amber-700" :
+                                      po.underBilled ? "text-emerald-700" :
+                                      "text-emerald-700"
+                                    )}>{formatCurrency(po.poTotal)}</strong></span>
+                                    {po.overBilled && (
+                                      <span className="text-amber-700 font-medium">⚠️ Over by {formatCurrency(po.diff)}</span>
+                                    )}
+                                    {po.underBilled && (
+                                      <span className="text-emerald-700 font-medium">✓ Under by {formatCurrency(Math.abs(po.diff))}</span>
                                     )}
                                   </div>
                                 )}
@@ -1547,6 +1615,48 @@ export default function InvoiceDetail() {
             <Button onClick={handleDelete} disabled={deleteMutation.isPending} className="gap-2 bg-red-600 hover:bg-red-700 text-white">
               {deleteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
               Delete Invoice
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Admin Approve Dialog ── */}
+      <Dialog open={showApproveDialog} onOpenChange={setShowApproveDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-sky-500" />
+              Admin Approve Invoice
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground">
+              You are manually approving{" "}
+              <strong className="text-foreground">
+                {invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}
+              </strong>{" "}
+              without Xero PO verification. Use this for invoices that have no purchase order or where
+              the PO cannot be matched in Xero.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Approval Notes (optional)</Label>
+              <Textarea
+                placeholder="Reason for manual approval..."
+                value={approveNotes}
+                onChange={(e) => setApproveNotes(e.target.value)}
+                className="text-sm min-h-[80px]"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowApproveDialog(false)}>Cancel</Button>
+            <Button
+              onClick={handleAdminApprove}
+              disabled={adminApproveMutation.isPending}
+              className="gap-2 bg-sky-600 hover:bg-sky-700 text-white"
+            >
+              {adminApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              Approve Invoice
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -3,6 +3,8 @@ export type InvoiceStatus =
   | "extracting"
   | "extracted"
   | "verified"
+  | "under_budget"
+  | "approved"
   | "flagged"
   | "queried"
   | "queried_2nd"
@@ -16,8 +18,10 @@ export const STATUS_CONFIG: Record<
   uploaded:   { label: "Uploaded",   color: "text-blue-700",   bg: "bg-blue-50 border-blue-200",   icon: "Upload",       step: 1 },
   extracting: { label: "Extracting", color: "text-cyan-700",   bg: "bg-cyan-50 border-cyan-200",   icon: "Loader2",      step: 2 },
   extracted:  { label: "Extracted",  color: "text-teal-700",   bg: "bg-teal-50 border-teal-200",   icon: "FileText",     step: 3 },
-  verified:   { label: "Verified",   color: "text-green-700",  bg: "bg-green-50 border-green-200", icon: "CheckCircle",  step: 4 },
-  flagged:    { label: "Flagged",    color: "text-amber-700",  bg: "bg-amber-50 border-amber-200", icon: "AlertTriangle",step: 4 },
+  verified:     { label: "Verified",     color: "text-green-700",   bg: "bg-green-50 border-green-200",   icon: "CheckCircle",  step: 4 },
+  under_budget: { label: "Under Budget", color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", icon: "CheckCircle2", step: 4 },
+  approved:     { label: "Approved",     color: "text-sky-700",     bg: "bg-sky-50 border-sky-200",         icon: "CheckCircle2", step: 4 },
+  flagged:      { label: "Flagged",      color: "text-amber-700",   bg: "bg-amber-50 border-amber-200",     icon: "AlertTriangle",step: 4 },
   queried:     { label: "1st Query Sent", color: "text-purple-700",  bg: "bg-purple-50 border-purple-200",  icon: "MessageSquare", step: 5 },
   queried_2nd: { label: "2nd Query Sent", color: "text-orange-700",  bg: "bg-orange-50 border-orange-200",  icon: "MessageSquare", step: 5 },
   queried_3rd: { label: "3rd Query Sent", color: "text-red-700",     bg: "bg-red-50 border-red-200",        icon: "MessageSquare", step: 5 },

@@ -381,3 +381,54 @@ export async function findOrCreateXeroContact(
     return null;
   }
 }
+
+/**
+ * Mark a Xero Purchase Order as BILLED by updating its status.
+ * Xero requires the PO to be in AUTHORISED status before it can be set to BILLED.
+ * We use the PurchaseOrderNumber to look up the PO ID first, then update it.
+ */
+export async function markXeroPOAsBilled(
+  poNumber: string,
+  clientId: string,
+  clientSecret: string
+): Promise<boolean> {
+  const auth = await getValidAccessToken(clientId, clientSecret);
+  if (!auth) return false;
+
+  try {
+    // First look up the PO to get its ID
+    const getResponse = await axios.get(
+      `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+      }
+    );
+    const poList = getResponse.data?.PurchaseOrders ?? [];
+    if (poList.length === 0) return false;
+
+    const po = poList[0];
+    const poId = po.PurchaseOrderID;
+
+    // Update the PO status to BILLED
+    await axios.post(
+      `${XERO_API_BASE}/PurchaseOrders/${poId}`,
+      { PurchaseOrders: [{ PurchaseOrderID: poId, Status: "BILLED" }] },
+      {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+      }
+    );
+    return true;
+  } catch (err: any) {
+    console.error(`[Xero] Mark PO ${poNumber} as BILLED error:`, err?.response?.data ?? err.message);
+    return false;
+  }
+}

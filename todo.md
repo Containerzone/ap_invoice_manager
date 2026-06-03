@@ -81,3 +81,11 @@
 - [x] Multi-PO verification — verify all PO numbers found on the invoice against Xero, flag if any PO is missing or mismatched
 - [x] PO line item comparison — fetch Xero PO line items and display them alongside invoice line items in the Amount Comparison section
 - [x] Xero PO status display — show PO status (DRAFT/AUTHORISED/BILLED) badge in the Amount Comparison card
+- [ ] Inbound email invoice submission — Mailgun webhook receives forwarded emails with PDF attachments and auto-processes them through the extraction pipeline
+- [ ] Show dedicated forwarding email address on Settings page
+- [ ] Email submission log — list of invoices submitted via email with sender, subject, timestamp
+- [x] Green banner when billed amount is less than PO amount — show "Billed amount is under PO, safe to approve" message
+- [x] Flag discrepancy when billed amount exceeds PO amount
+- [x] Admin Approve button for invoices without PO numbers that cannot be verified via Xero
+- [x] Push to Xero creates draft bill linked to PO numbers (or standalone bill if no PO)
+- [x] Mark linked Purchase Orders as Billed in Xero after pushing draft bill

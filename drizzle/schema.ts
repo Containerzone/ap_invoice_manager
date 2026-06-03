@@ -63,6 +63,8 @@ export const invoices = mysqlTable("invoices", {
     "extracting",
     "extracted",
     "verified",
+    "under_budget",
+    "approved",
     "flagged",
     "queried",
     "queried_2nd",
