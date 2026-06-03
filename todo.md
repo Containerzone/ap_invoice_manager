@@ -71,3 +71,6 @@
 - [x] Add "New Line Item" button in edit mode to manually add missing invoice lines
 - [x] Add numbered query points section on invoice detail — staff can type/add multiple query points that are reflected in the dispute email
 - [x] Add delete line item button (trash icon) on each editable row in edit mode
+- [x] Multi-invoice supplier query — select multiple invoices from same supplier and send one consolidated email
+- [x] Progressive query status — 1st Query Sent → 2nd Query Sent → 3rd Query Sent as follow-ups progress
+- [x] Log email reply — button on each email log entry to paste/type supplier's reply and attach it to the invoice thread

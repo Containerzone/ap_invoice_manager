@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatCurrency, formatRelativeTime } from "@/lib/invoiceUtils";
-import { Upload, Search, FileText, Filter } from "lucide-react";
+import { Upload, Search, FileText, Filter, Users } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -19,7 +19,9 @@ const STATUS_OPTIONS = [
   { value: "extracted", label: "Extracted" },
   { value: "verified", label: "Verified" },
   { value: "flagged", label: "Flagged" },
-  { value: "queried", label: "Queried" },
+  { value: "queried", label: "1st Query Sent" },
+  { value: "queried_2nd", label: "2nd Query Sent" },
+  { value: "queried_3rd", label: "3rd Query Sent" },
   { value: "resolved", label: "Resolved" },
 ];
 
@@ -43,10 +45,20 @@ export default function InvoiceList() {
             {invoices?.length ?? 0} invoice{invoices?.length !== 1 ? "s" : ""} total
           </p>
         </div>
-        <Button onClick={() => setLocation("/invoices/upload")} className="gap-2 shadow-sm">
-          <Upload className="h-4 w-4" />
-          Upload Invoice
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setLocation("/invoices/bulk-query")}
+            className="gap-2 shadow-sm"
+          >
+            <Users className="h-4 w-4" />
+            Bulk Query
+          </Button>
+          <Button onClick={() => setLocation("/invoices/upload")} className="gap-2 shadow-sm">
+            <Upload className="h-4 w-4" />
+            Upload Invoice
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}

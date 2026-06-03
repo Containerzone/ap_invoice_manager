@@ -65,10 +65,15 @@ export const invoices = mysqlTable("invoices", {
     "verified",
     "flagged",
     "queried",
+    "queried_2nd",
+    "queried_3rd",
     "resolved",
   ])
     .default("uploaded")
     .notNull(),
+
+  // Query tracking
+  queryCount: int("queryCount").default(0).notNull(),
 
   // Extracted fields (from LLM/OCR)
   extractedInvoiceNumber: varchar("extractedInvoiceNumber", { length: 100 }),
@@ -152,6 +157,10 @@ export const emailLogs = mysqlTable("email_logs", {
   status: mysqlEnum("status", ["sent", "failed", "pending"]).default("pending").notNull(),
   errorMessage: text("errorMessage"),
   sentAt: timestamp("sentAt"),
+  // Reply tracking
+  replyBody: text("replyBody"),
+  repliedAt: timestamp("repliedAt"),
+  repliedBy: int("repliedBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

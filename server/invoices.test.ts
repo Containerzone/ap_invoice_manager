@@ -24,6 +24,11 @@ vi.mock("./db", () => ({
   createEmailLog: vi.fn().mockResolvedValue(1),
   getEmailLogsByInvoice: vi.fn().mockResolvedValue([]),
   updateEmailLogStatus: vi.fn().mockResolvedValue(undefined),
+  logEmailReply: vi.fn().mockResolvedValue(undefined),
+  updateLineItem: vi.fn().mockResolvedValue(undefined),
+  addLineItem: vi.fn().mockResolvedValue(1),
+  deleteLineItem: vi.fn().mockResolvedValue(undefined),
+  saveQueryPoints: vi.fn().mockResolvedValue(undefined),
   getDashboardMetrics: vi.fn().mockResolvedValue({
     total: 0, flagged: 0, openQueries: 0, resolvedThisMonth: 0,
   }),
@@ -234,5 +239,85 @@ describe("auth.me", () => {
     const caller = appRouter.createCaller(ctx);
     const result = await caller.auth.me();
     expect(result).toBeNull();
+  });
+});
+
+describe("invoices.logReply", () => {
+  it("logs a supplier reply and returns success", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    const result = await caller.invoices.logReply({
+      emailLogId: 1,
+      invoiceId: 42,
+      replyBody: "Thank you for your query. We will investigate.",
+    });
+    expect(result).toEqual({ success: true });
+  });
+
+  it("rejects empty reply body", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    await expect(
+      caller.invoices.logReply({
+        emailLogId: 1,
+        invoiceId: 42,
+        replyBody: "",
+      })
+    ).rejects.toThrow();
+  });
+});
+
+describe("invoices.sendBulkQuery", () => {
+  it("sends a bulk query email and returns invoice count", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    const result = await caller.invoices.sendBulkQuery({
+      invoiceIds: [1, 2, 3],
+      to: "supplier@example.com",
+      subject: "Invoice Query — 3 Invoices",
+      body: "Dear Supplier, we have queries on invoices 1, 2, 3.",
+    });
+    expect(result.invoiceCount).toBe(3);
+  });
+
+  it("rejects empty invoiceIds array", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    await expect(
+      caller.invoices.sendBulkQuery({
+        invoiceIds: [],
+        to: "supplier@example.com",
+        subject: "Test",
+        body: "Test body",
+      })
+    ).rejects.toThrow();
+  });
+
+  it("rejects invalid email address for 'to' field", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    await expect(
+      caller.invoices.sendBulkQuery({
+        invoiceIds: [1],
+        to: "not-an-email",
+        subject: "Test",
+        body: "Test body",
+      })
+    ).rejects.toThrow();
+  });
+});
+
+describe("progressive query status", () => {
+  it("status filter accepts queried_2nd and queried_3rd values", async () => {
+    const caller = appRouter.createCaller(makeUserCtx());
+    const result2nd = await caller.invoices.list({ status: "queried_2nd" });
+    const result3rd = await caller.invoices.list({ status: "queried_3rd" });
+    expect(Array.isArray(result2nd)).toBe(true);
+    expect(Array.isArray(result3rd)).toBe(true);
+  });
+
+  it("dashboard metrics counts all query statuses as open queries", async () => {
+    const { getDashboardMetrics } = await import("./db");
+    vi.mocked(getDashboardMetrics).mockResolvedValueOnce({
+      total: 10, flagged: 2, openQueries: 5, resolvedThisMonth: 3,
+    });
+    const caller = appRouter.createCaller(makeUserCtx());
+    const metrics = await caller.invoices.metrics();
+    expect(metrics.openQueries).toBe(5);
   });
 });

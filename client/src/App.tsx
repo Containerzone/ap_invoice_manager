@@ -18,6 +18,7 @@ import Suppliers from "./pages/Suppliers";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import XeroCallback from "./pages/XeroCallback";
+import BulkQuery from "./pages/BulkQuery";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -66,6 +67,7 @@ function AppRoutes() {
               <Route path="/" component={Dashboard} />
               <Route path="/invoices" component={InvoiceList} />
               <Route path="/invoices/upload" component={InvoiceUpload} />
+              <Route path="/invoices/bulk-query" component={BulkQuery} />
               <Route path="/invoices/:id" component={InvoiceDetail} />
               <Route path="/suppliers">
                 <AdminGuard><Suppliers /></AdminGuard>

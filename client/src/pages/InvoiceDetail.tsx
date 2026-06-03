@@ -55,6 +55,32 @@ export default function InvoiceDetail() {
   const addLineItemMutation = trpc.invoices.addLineItem.useMutation();
   const deleteLineItemMutation = trpc.invoices.deleteLineItem.useMutation();
   const saveQueryPointsMutation = trpc.invoices.saveQueryPoints.useMutation();
+  const logReplyMutation = trpc.invoices.logReply.useMutation();
+
+  // ── Reply state ───────────────────────────────────────────────────────────
+  const [replyEmailLogId, setReplyEmailLogId] = useState<number | null>(null);
+  const [replyBody, setReplyBody] = useState("");
+  const [showReplyDialog, setShowReplyDialog] = useState(false);
+
+  const handleOpenReplyDialog = (emailLogId: number) => {
+    setReplyEmailLogId(emailLogId);
+    setReplyBody("");
+    setShowReplyDialog(true);
+  };
+
+  const handleLogReply = async () => {
+    if (!replyEmailLogId || !replyBody.trim()) return;
+    await logReplyMutation.mutateAsync({
+      emailLogId: replyEmailLogId,
+      invoiceId,
+      replyBody: replyBody.trim(),
+    });
+    await utils.invoices.get.invalidate({ id: invoiceId });
+    setShowReplyDialog(false);
+    setReplyBody("");
+    setReplyEmailLogId(null);
+    toast.success("Supplier reply logged");
+  };
 
   // ── Query points state ────────────────────────────────────────────────────
   const [queryPoints, setQueryPoints] = useState<string[]>([]);
@@ -1131,21 +1157,54 @@ export default function InvoiceDetail() {
               ) : (
                 <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
                   {emails.map((email) => (
-                    <div key={email.id} className="border rounded-lg p-3 space-y-1.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-medium text-foreground">{email.subject}</p>
-                          <p className="text-xs text-muted-foreground">
-                            To: {email.toAddress} · {formatRelativeTime(email.sentAt)}
+                    <div key={email.id} className="border rounded-lg overflow-hidden">
+                      {/* Outgoing email */}
+                      <div className="p-3 space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-medium text-foreground">{email.subject}</p>
+                            <p className="text-xs text-muted-foreground">
+                              To: {email.toAddress} · {formatRelativeTime(email.sentAt)}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Badge variant={email.status === "sent" ? "default" : "destructive"} className="text-xs">
+                              {email.status}
+                            </Badge>
+                            {!(email as any).replyBody && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 text-xs px-2 gap-1 border-blue-200 text-blue-700 hover:bg-blue-50"
+                                onClick={() => handleOpenReplyDialog(email.id)}
+                              >
+                                <Mail className="h-3 w-3" />
+                                Log Reply
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground whitespace-pre-wrap border-t pt-1.5 mt-1.5 leading-relaxed line-clamp-4">
+                          {email.body}
+                        </p>
+                      </div>
+                      {/* Supplier reply (if logged) */}
+                      {(email as any).replyBody && (
+                        <div className="bg-blue-50/50 border-t border-blue-100 p-3">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <p className="text-xs font-medium text-blue-700 flex items-center gap-1">
+                              <Mail className="h-3 w-3" />
+                              Supplier Reply
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatRelativeTime((email as any).repliedAt)}
+                            </p>
+                          </div>
+                          <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">
+                            {(email as any).replyBody}
                           </p>
                         </div>
-                        <Badge variant={email.status === "sent" ? "default" : "destructive"} className="text-xs shrink-0">
-                          {email.status}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground whitespace-pre-wrap border-t pt-1.5 mt-1.5 leading-relaxed">
-                        {email.body}
-                      </p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1237,6 +1296,40 @@ export default function InvoiceDetail() {
             <Button onClick={handleResolve} disabled={resolveMutation.isPending} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
               {resolveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
               Resolve & Push to Xero
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Log Reply Dialog ── */}
+      <Dialog open={showReplyDialog} onOpenChange={setShowReplyDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="h-4 w-4 text-blue-500" />
+              Log Supplier Reply
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground">
+              Paste or type the supplier's reply below. It will be saved against this email and added to the activity log.
+            </p>
+            <Textarea
+              placeholder="Paste the supplier's reply here..."
+              value={replyBody}
+              onChange={(e) => setReplyBody(e.target.value)}
+              className="text-sm min-h-[140px]"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowReplyDialog(false)}>Cancel</Button>
+            <Button
+              onClick={handleLogReply}
+              disabled={!replyBody.trim() || logReplyMutation.isPending}
+              className="gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {logReplyMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+              Save Reply
             </Button>
           </DialogFooter>
         </DialogContent>

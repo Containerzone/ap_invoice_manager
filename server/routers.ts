@@ -29,6 +29,7 @@ import {
   getXeroToken,
   upsertXeroToken,
   deleteXeroToken,
+  logEmailReply,
 } from "./db";
 import { storagePut } from "./storage";
 import { extractInvoiceData } from "./extractionService";
@@ -380,9 +381,19 @@ export const appRouter = router({
         const smtpUser = process.env.SMTP_USER ?? "";
         const smtpPass = process.env.SMTP_PASS ?? "";
 
+        // Determine progressive status based on current queryCount
+        const currentInvoice = await getInvoiceById(input.invoiceId);
+        if (!currentInvoice) throw new TRPCError({ code: "NOT_FOUND" });
+        const newQueryCount = (currentInvoice.queryCount ?? 0) + 1;
+        const newStatus =
+          newQueryCount === 1 ? "queried" :
+          newQueryCount === 2 ? "queried_2nd" :
+          "queried_3rd";
+
+        const { createEmailLog, createConversationNote: addNote } = await import("./db");
+
         if (!smtpHost) {
           // Log the email without actually sending (demo mode)
-          const { createEmailLog, updateEmailLogStatus, createConversationNote: addNote } = await import("./db");
           const emailLogId = await createEmailLog({
             invoiceId: input.invoiceId,
             sentBy: ctx.user.id,
@@ -398,11 +409,11 @@ export const appRouter = router({
             invoiceId: input.invoiceId,
             authorId: ctx.user.id,
             type: "email_sent",
-            content: `[Demo mode] Email logged to ${input.to}: "${input.subject}"`,
+            content: `[Demo mode] Query #${newQueryCount} logged to ${input.to}: "${input.subject}"`,
             emailLogId,
           });
-          await updateInvoice(input.invoiceId, { status: "queried" });
-          return { success: true, emailLogId, demo: true };
+          await updateInvoice(input.invoiceId, { status: newStatus, queryCount: newQueryCount });
+          return { success: true, emailLogId, demo: true, queryCount: newQueryCount };
         }
 
         const result = await sendDisputeEmail({
@@ -419,10 +430,104 @@ export const appRouter = router({
         });
 
         if (result.success) {
-          await updateInvoice(input.invoiceId, { status: "queried" });
+          await updateInvoice(input.invoiceId, { status: newStatus, queryCount: newQueryCount });
         }
 
-        return result;
+        return { ...result, queryCount: newQueryCount };
+      }),
+
+    // Log a reply received from supplier against an email log entry
+    logReply: protectedProcedure
+      .input(
+        z.object({
+          emailLogId: z.number(),
+          invoiceId: z.number(),
+          replyBody: z.string().min(1),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        await logEmailReply(input.emailLogId, input.replyBody, ctx.user.id);
+        await createConversationNote({
+          invoiceId: input.invoiceId,
+          authorId: ctx.user.id,
+          type: "email_received",
+          content: `Supplier reply logged: ${input.replyBody.substring(0, 120)}${input.replyBody.length > 120 ? "..." : ""}`,
+          emailLogId: input.emailLogId,
+        });
+        return { success: true };
+      }),
+
+    // Send a single consolidated query email covering multiple invoices from the same supplier
+    sendBulkQuery: protectedProcedure
+      .input(
+        z.object({
+          invoiceIds: z.array(z.number()).min(1),
+          to: z.string().email(),
+          cc: z.string().optional(),
+          subject: z.string().min(1),
+          body: z.string().min(1),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const smtpHost = process.env.SMTP_HOST;
+        const smtpPort = parseInt(process.env.SMTP_PORT ?? "587");
+        const smtpUser = process.env.SMTP_USER ?? "";
+        const smtpPass = process.env.SMTP_PASS ?? "";
+
+        const { createEmailLog, createConversationNote: addNote } = await import("./db");
+
+        let emailLogId: number | null = null;
+
+        if (!smtpHost) {
+          // Demo mode — log without sending
+          emailLogId = await createEmailLog({
+            invoiceId: input.invoiceIds[0]!,
+            sentBy: ctx.user.id,
+            fromAddress: "admin@containerzone.com.au",
+            toAddress: input.to,
+            ccAddress: input.cc ?? null,
+            subject: input.subject,
+            body: input.body,
+            status: "sent",
+            sentAt: new Date(),
+          });
+        } else {
+          const result = await sendDisputeEmail({
+            invoiceId: input.invoiceIds[0]!,
+            sentBy: ctx.user.id,
+            to: input.to,
+            cc: input.cc,
+            subject: input.subject,
+            body: input.body,
+            smtpHost,
+            smtpPort,
+            smtpUser,
+            smtpPass,
+          });
+          if (!result.success) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error ?? "Email send failed" });
+          emailLogId = result.emailLogId ?? null;
+        }
+
+        // Update all selected invoices — increment queryCount and set progressive status
+        for (const invoiceId of input.invoiceIds) {
+          const inv = await getInvoiceById(invoiceId);
+          if (!inv) continue;
+          const newQueryCount = (inv.queryCount ?? 0) + 1;
+          const newStatus =
+            newQueryCount === 1 ? "queried" :
+            newQueryCount === 2 ? "queried_2nd" :
+            "queried_3rd";
+          await updateInvoice(invoiceId, { status: newStatus, queryCount: newQueryCount });
+          await addNote({
+            invoiceId,
+            authorId: ctx.user.id,
+            type: "email_sent",
+            content: `Bulk query #${newQueryCount} sent to ${input.to} covering ${input.invoiceIds.length} invoice(s): "${input.subject}"`,
+            emailLogId: emailLogId ?? undefined,
+          });
+        }
+
+        return { success: true, emailLogId, invoiceCount: input.invoiceIds.length };
       }),
 
     // Generate email template

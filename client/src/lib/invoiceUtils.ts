@@ -5,6 +5,8 @@ export type InvoiceStatus =
   | "verified"
   | "flagged"
   | "queried"
+  | "queried_2nd"
+  | "queried_3rd"
   | "resolved";
 
 export const STATUS_CONFIG: Record<
@@ -16,8 +18,10 @@ export const STATUS_CONFIG: Record<
   extracted:  { label: "Extracted",  color: "text-teal-700",   bg: "bg-teal-50 border-teal-200",   icon: "FileText",     step: 3 },
   verified:   { label: "Verified",   color: "text-green-700",  bg: "bg-green-50 border-green-200", icon: "CheckCircle",  step: 4 },
   flagged:    { label: "Flagged",    color: "text-amber-700",  bg: "bg-amber-50 border-amber-200", icon: "AlertTriangle",step: 4 },
-  queried:    { label: "Queried",    color: "text-purple-700", bg: "bg-purple-50 border-purple-200",icon: "MessageSquare",step: 5 },
-  resolved:   { label: "Resolved",   color: "text-emerald-700",bg: "bg-emerald-50 border-emerald-200",icon: "CheckCircle2",step: 6 },
+  queried:     { label: "1st Query Sent", color: "text-purple-700",  bg: "bg-purple-50 border-purple-200",  icon: "MessageSquare", step: 5 },
+  queried_2nd: { label: "2nd Query Sent", color: "text-orange-700",  bg: "bg-orange-50 border-orange-200",  icon: "MessageSquare", step: 5 },
+  queried_3rd: { label: "3rd Query Sent", color: "text-red-700",     bg: "bg-red-50 border-red-200",        icon: "MessageSquare", step: 5 },
+  resolved:    { label: "Resolved",       color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", icon: "CheckCircle2",  step: 6 },
 };
 
 export function formatCurrency(amount: number | string | null | undefined, currency = "AUD"): string {

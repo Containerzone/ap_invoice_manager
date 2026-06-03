@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, like, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   ConversationNote,
@@ -224,7 +224,7 @@ export async function getDashboardMetrics() {
     db
       .select({ count: sql<number>`count(*)` })
       .from(invoices)
-      .where(eq(invoices.status, "queried")),
+      .where(inArray(invoices.status, ["queried", "queried_2nd", "queried_3rd"])),
     db
       .select({ count: sql<number>`count(*)` })
       .from(invoices)
@@ -298,6 +298,19 @@ export async function updateEmailLogStatus(
     .update(emailLogs)
     .set({ status, errorMessage: errorMessage ?? null, sentAt: status === "sent" ? new Date() : null })
     .where(eq(emailLogs.id, id));
+}
+
+export async function logEmailReply(
+  emailLogId: number,
+  replyBody: string,
+  repliedBy: number
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(emailLogs)
+    .set({ replyBody, repliedAt: new Date(), repliedBy })
+    .where(eq(emailLogs.id, emailLogId));
 }
 
 // ─── Conversation Notes ───────────────────────────────────────────────────────
