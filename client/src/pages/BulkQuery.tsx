@@ -105,15 +105,45 @@ export default function BulkQuery() {
         if (inv.extractedPoNumber) lines.push(`     PO: ${inv.extractedPoNumber}`);
         if (inv.extractedTotal) lines.push(`     Amount: ${formatCurrency(inv.extractedTotal, inv.extractedCurrency ?? "AUD")}`);
         if (inv.hasDiscrepancy) lines.push(`     ⚠ Discrepancy: ${formatCurrency(inv.discrepancyAmount)}`);
+        // Include query points for this invoice if present
+        const rawQueryPoints = (inv as any).queryPoints;
+        const qPoints: string[] = Array.isArray(rawQueryPoints)
+          ? rawQueryPoints
+          : typeof rawQueryPoints === "string" && rawQueryPoints
+          ? (() => { try { return JSON.parse(rawQueryPoints); } catch { return []; } })()
+          : [];
+        if (qPoints.length > 0) {
+          lines.push(`     Queries:`);
+          qPoints.forEach((pt, qIdx) => lines.push(`       ${qIdx + 1}. ${pt}`));
+        }
         return lines.join("\n");
       })
       .join("\n\n");
+
+    // Collect all query points across all selected invoices for a consolidated section
+    const allQueryPoints: string[] = [];
+    selectedInvoices.forEach((inv) => {
+      const rawQP = (inv as any).queryPoints;
+      const pts: string[] = Array.isArray(rawQP)
+        ? rawQP
+        : typeof rawQP === "string" && rawQP
+        ? (() => { try { return JSON.parse(rawQP); } catch { return []; } })()
+        : [];
+      pts.forEach((pt) => {
+        if (!allQueryPoints.includes(pt)) allQueryPoints.push(pt);
+      });
+    });
+
+    const querySection = allQueryPoints.length > 0
+      ? `We have the following specific queries:\n${allQueryPoints.map((pt, i) => `  ${i + 1}. ${pt}`).join("\n")}\n\n`
+      : "";
 
     setEmailBody(
       `Dear ${selectedSupplier?.contactName ?? selectedSupplier?.name ?? "Sir/Madam"},\n\n` +
       `We are writing to raise queries regarding the following invoice${selectedInvoices.length > 1 ? "s" : ""} ` +
       `totalling ${formatCurrency(totalAmount, selectedInvoices[0]?.extractedCurrency ?? "AUD")}:\n\n` +
       `${invoiceList}\n\n` +
+      `${querySection}` +
       `We would appreciate your prompt response to resolve these matters.\n\n` +
       `Please do not hesitate to contact us if you require any further information.\n\n` +
       `Kind regards,\n` +
