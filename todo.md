@@ -74,3 +74,5 @@
 - [x] Multi-invoice supplier query — select multiple invoices from same supplier and send one consolidated email
 - [x] Progressive query status — 1st Query Sent → 2nd Query Sent → 3rd Query Sent as follow-ups progress
 - [x] Log email reply — button on each email log entry to paste/type supplier's reply and attach it to the invoice thread
+- [x] Supplier name field in invoice edit mode becomes a combobox — search existing suppliers, prompt to create new if no match
+- [x] Delete supplier button on Suppliers page (Admin only) with confirmation dialog

@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/StatusBadge";
+import { SupplierCombobox } from "@/components/SupplierCombobox";
 import { formatCurrency, formatDate, formatRelativeTime, parseContainerNumbers } from "@/lib/invoiceUtils";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -159,6 +160,7 @@ export default function InvoiceDetail() {
 
   // ── Edit mode state ───────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
+  const [editSupplierId, setEditSupplierId] = useState<number | undefined>(undefined);
   const [editFields, setEditFields] = useState({
     extractedInvoiceNumber: "",
     extractedPoNumber: "",
@@ -187,6 +189,7 @@ export default function InvoiceDetail() {
     if (data?.invoice && editMode) {
       const inv = data.invoice;
       const containers = parseContainerNumbers(inv.extractedContainerNumbers);
+      setEditSupplierId((inv as any).supplierId ?? undefined);
       setEditFields({
         extractedInvoiceNumber: inv.extractedInvoiceNumber ?? "",
         extractedPoNumber: inv.extractedPoNumber ?? "",
@@ -221,6 +224,7 @@ export default function InvoiceDetail() {
         .filter(Boolean);
       await updateExtractedMutation.mutateAsync({
         id: invoiceId,
+        supplierId: editSupplierId ?? null,
         extractedInvoiceNumber: editFields.extractedInvoiceNumber || null,
         extractedPoNumber: editFields.extractedPoNumber || null,
         extractedSupplierName: editFields.extractedSupplierName || null,
@@ -677,9 +681,19 @@ export default function InvoiceDetail() {
                     value={editFields.extractedDueDate}
                     onChange={(v) => setEditFields(f => ({ ...f, extractedDueDate: v }))}
                     placeholder="YYYY-MM-DD" />
-                  <EditField label="Supplier Name" icon={Building2}
-                    value={editFields.extractedSupplierName}
-                    onChange={(v) => setEditFields(f => ({ ...f, extractedSupplierName: v }))} />
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <Building2 className="h-3.5 w-3.5" />
+                      Supplier Name
+                    </Label>
+                    <SupplierCombobox
+                      value={editFields.extractedSupplierName}
+                      onChange={({ name, supplierId }) => {
+                        setEditFields(f => ({ ...f, extractedSupplierName: name }));
+                        setEditSupplierId(supplierId);
+                      }}
+                    />
+                  </div>
                   <EditField label="ABN" icon={Hash}
                     value={editFields.extractedSupplierAbn}
                     onChange={(v) => setEditFields(f => ({ ...f, extractedSupplierAbn: v }))} />

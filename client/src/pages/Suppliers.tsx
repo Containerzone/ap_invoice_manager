@@ -6,9 +6,9 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Building2, Plus, Search, Mail, Phone, Hash, Edit2, X, Check, Loader2 } from "lucide-react";
+import { Building2, Plus, Search, Mail, Phone, Hash, Edit2, Check, Loader2, Trash2 } from "lucide-react";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/_core/hooks/useAuth";
 
@@ -32,6 +32,8 @@ export default function Suppliers() {
   const [showDialog, setShowDialog] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<SupplierFormData>(EMPTY_FORM);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleteName, setDeleteName] = useState("");
 
   const utils = trpc.useUtils();
   const { data: allSuppliers, isLoading } = trpc.suppliers.list.useQuery();
@@ -42,6 +44,7 @@ export default function Suppliers() {
   );
   const createMutation = trpc.suppliers.create.useMutation();
   const updateMutation = trpc.suppliers.update.useMutation();
+  const deleteMutation = trpc.suppliers.delete.useMutation();
 
   const invalidate = () => utils.suppliers.list.invalidate();
 
@@ -81,6 +84,18 @@ export default function Suppliers() {
       setShowDialog(false);
     } catch (e: any) {
       toast.error(e?.message ?? "Failed to save supplier");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    try {
+      await deleteMutation.mutateAsync({ id: deleteId });
+      toast.success(`"${deleteName}" deleted`);
+      await invalidate();
+      setDeleteId(null);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to delete supplier");
     }
   };
 
@@ -148,14 +163,26 @@ export default function Suppliers() {
                     <Building2 className="h-5 w-5 text-primary" />
                   </div>
                   {isAdmin && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                      onClick={() => openEdit(s)}
-                    >
-                      <Edit2 className="h-3.5 w-3.5" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        onClick={() => openEdit(s)}
+                        title="Edit supplier"
+                      >
+                        <Edit2 className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => { setDeleteId(s.id); setDeleteName(s.name ?? "this supplier"); }}
+                        title="Delete supplier"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   )}
                 </div>
                 <p className="text-sm font-semibold text-foreground">{s.name}</p>
@@ -220,6 +247,31 @@ export default function Suppliers() {
             <Button onClick={handleSubmit} disabled={isPending} className="gap-2">
               {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               {editingId ? "Save Changes" : "Create Supplier"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete Supplier</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <span className="font-semibold text-foreground">"{deleteName}"</span>?
+              This will not delete any invoices linked to this supplier, but the supplier profile will be removed permanently.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+              className="gap-2"
+            >
+              {deleteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              Delete Supplier
             </Button>
           </DialogFooter>
         </DialogContent>
