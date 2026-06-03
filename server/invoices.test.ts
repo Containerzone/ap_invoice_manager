@@ -69,6 +69,7 @@ vi.mock("./xeroService", () => ({
   }),
   getXeroTenants: vi.fn().mockResolvedValue([{ tenantId: "t1", tenantName: "Test Org" }]),
   findXeroBillByInvoiceNumber: vi.fn().mockResolvedValue(null),
+  findXeroPurchaseOrderByNumber: vi.fn().mockResolvedValue(null),
   createXeroDraftBill: vi.fn().mockResolvedValue({ invoiceId: "x1", invoiceNumber: "BILL-001" }),
   findOrCreateXeroContact: vi.fn().mockResolvedValue("contact-id"),
   refreshXeroTokenIfNeeded: vi.fn().mockResolvedValue("fresh-token"),
@@ -325,5 +326,108 @@ describe("progressive query status", () => {
     const caller = appRouter.createCaller(makeUserCtx());
     const metrics = await caller.invoices.metrics();
     expect(metrics.openQueries).toBe(5);
+  });
+});
+
+describe("invoices.verifyWithXero", () => {
+  it("throws BAD_REQUEST when invoice has no PO number", async () => {
+    const { getInvoiceById } = await import("./db");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: null,
+      extractedTotal: "1100.00",
+      extractedInvoiceNumber: "INV-001",
+    } as any);
+    const caller = appRouter.createCaller(makeAdminCtx());
+    await expect(
+      caller.invoices.verifyWithXero({ invoiceId: 99 })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("flags invoice when PO is not found in Xero", async () => {
+    const { getInvoiceById, updateInvoice, createConversationNote } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: "AD123456",
+      extractedTotal: "1100.00",
+      extractedInvoiceNumber: "INV-001",
+    } as any);
+    vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce(null);
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
+    expect(result.matched).toBe(false);
+    expect(result.discrepancy).toBe(true);
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({ status: "flagged", hasDiscrepancy: true })
+    );
+    expect(vi.mocked(createConversationNote)).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining("AD123456") })
+    );
+  });
+
+  it("verifies invoice when PO total matches invoice total", async () => {
+    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: "AD123456",
+      extractedTotal: "1100.00",
+      extractedInvoiceNumber: "INV-001",
+    } as any);
+    vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
+      purchaseOrderId: "po-uuid-1",
+      purchaseOrderNumber: "AD123456",
+      reference: "",
+      contact: { contactId: "c1", name: "Supplier Co" },
+      date: "2024-01-15",
+      deliveryDate: "",
+      subTotal: 1000.00,
+      totalTax: 100.00,
+      total: 1100.00,
+      status: "AUTHORISED",
+      currencyCode: "AUD",
+    });
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
+    expect(result.matched).toBe(true);
+    expect(result.discrepancy).toBe(false);
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({ status: "verified", hasDiscrepancy: false })
+    );
+  });
+
+  it("flags invoice when PO total differs from invoice total", async () => {
+    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: "AD123456",
+      extractedTotal: "1250.00",
+      extractedInvoiceNumber: "INV-001",
+    } as any);
+    vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
+      purchaseOrderId: "po-uuid-1",
+      purchaseOrderNumber: "AD123456",
+      reference: "",
+      contact: { contactId: "c1", name: "Supplier Co" },
+      date: "2024-01-15",
+      deliveryDate: "",
+      subTotal: 1000.00,
+      totalTax: 100.00,
+      total: 1100.00,
+      status: "AUTHORISED",
+      currencyCode: "AUD",
+    });
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
+    expect(result.matched).toBe(true);
+    expect(result.discrepancy).toBe(true);
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({ status: "flagged", hasDiscrepancy: true })
+    );
   });
 });

@@ -38,6 +38,7 @@ import {
   exchangeXeroCode,
   getXeroTenants,
   findXeroBillByInvoiceNumber,
+  findXeroPurchaseOrderByNumber,
   createXeroDraftBill,
   findOrCreateXeroContact,
 } from "./xeroService";
@@ -296,7 +297,8 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    // Verify against Xero
+    // Verify against Xero — looks up the Purchase Order by PO number and compares
+    // the PO total against the invoice total to detect discrepancies.
     verifyWithXero: protectedProcedure
       .input(z.object({ invoiceId: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -309,45 +311,56 @@ export const appRouter = router({
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Xero not configured" });
         }
 
-        if (!invoice.extractedInvoiceNumber) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "No invoice number to verify" });
+        const poNumber = invoice.extractedPoNumber;
+        if (!poNumber) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "No PO number found on this invoice. Cannot verify against Xero.",
+          });
         }
 
-        const xeroBill = await findXeroBillByInvoiceNumber(
-          invoice.extractedInvoiceNumber,
-          clientId,
-          clientSecret
-        );
+        const xeroPO = await findXeroPurchaseOrderByNumber(poNumber, clientId, clientSecret);
 
-        if (!xeroBill) {
+        if (!xeroPO) {
+          // PO not found in Xero — flag as discrepancy (unrecognised PO)
+          // Clear any previously stored PO/bill data so stale values don't persist
           await updateInvoice(input.invoiceId, {
-            status: "verified",
+            status: "flagged",
             xeroVerifiedAt: new Date(),
+            hasDiscrepancy: true,
+            xeroStatus: "NOT_FOUND",
+            xeroInvoiceId: null,
+            xeroInvoiceNumber: null,
+            xeroTotal: null,
+            xeroSubtotal: null,
+            xeroTax: null,
+            discrepancyAmount: null,
           });
           await createConversationNote({
             invoiceId: input.invoiceId,
             authorId: ctx.user.id,
-            type: "system",
-            content: `Xero verification: No matching bill found in Xero for invoice ${invoice.extractedInvoiceNumber}. Marked as verified (new invoice).`,
+            type: "status_change",
+            content: `Xero verification: Purchase Order ${poNumber} not found in Xero. Invoice flagged — PO number may be incorrect or the PO has not been raised yet.`,
           });
-          return { matched: false, discrepancy: false };
+          return { matched: false, discrepancy: true, poNumber };
         }
 
         const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
-        const xeroTotal = xeroBill.total;
-        const diff = Math.abs(extractedTotal - xeroTotal);
+        const xeroPoTotal = xeroPO.total;
+        const diff = Math.abs(extractedTotal - xeroPoTotal);
         const hasDiscrepancy = diff > 0.01;
 
         await updateInvoice(input.invoiceId, {
-          xeroInvoiceId: xeroBill.invoiceId,
-          xeroInvoiceNumber: xeroBill.invoiceNumber,
-          xeroTotal: xeroTotal.toString(),
-          xeroSubtotal: xeroBill.subTotal.toString(),
-          xeroTax: xeroBill.totalTax.toString(),
-          xeroStatus: xeroBill.status,
+          // Re-use the xeroInvoiceId/Number fields to store the PO ID/Number for reference
+          xeroInvoiceId: xeroPO.purchaseOrderId,
+          xeroInvoiceNumber: xeroPO.purchaseOrderNumber,
+          xeroTotal: xeroPoTotal.toString(),
+          xeroSubtotal: xeroPO.subTotal.toString(),
+          xeroTax: xeroPO.totalTax.toString(),
+          xeroStatus: xeroPO.status,
           xeroVerifiedAt: new Date(),
           hasDiscrepancy,
-          discrepancyAmount: hasDiscrepancy ? diff.toString() : undefined,
+          discrepancyAmount: hasDiscrepancy ? diff.toString() : null,
           status: hasDiscrepancy ? "flagged" : "verified",
         });
 
@@ -356,12 +369,12 @@ export const appRouter = router({
           authorId: ctx.user.id,
           type: "status_change",
           content: hasDiscrepancy
-            ? `Discrepancy detected: Extracted total $${extractedTotal.toFixed(2)} vs Xero total $${xeroTotal.toFixed(2)} (diff: $${diff.toFixed(2)}). Invoice flagged.`
-            : `Xero verification passed. Amounts match ($${xeroTotal.toFixed(2)}). Invoice verified.`,
-          metadata: { xeroTotal, extractedTotal, diff, hasDiscrepancy },
+            ? `Discrepancy detected: Invoice total $${extractedTotal.toFixed(2)} vs Xero PO ${poNumber} total $${xeroPoTotal.toFixed(2)} (diff: $${diff.toFixed(2)}). Invoice flagged.`
+            : `Xero PO verification passed. Invoice total $${extractedTotal.toFixed(2)} matches PO ${poNumber} total $${xeroPoTotal.toFixed(2)}. Invoice verified.`,
+          metadata: { xeroPoTotal, extractedTotal, diff, hasDiscrepancy, poNumber },
         });
 
-        return { matched: true, discrepancy: hasDiscrepancy, xeroBill };
+        return { matched: true, discrepancy: hasDiscrepancy, xeroPO };
       }),
 
     // Send dispute email

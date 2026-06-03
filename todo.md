@@ -77,3 +77,4 @@
 - [x] Supplier name field in invoice edit mode becomes a combobox — search existing suppliers, prompt to create new if no match
 - [x] Delete supplier button on Suppliers page (Admin only) with confirmation dialog
 - [x] Quick-add dispute templates in Query Points panel — dropdown with common pre-written reasons
+- [x] Rework Verify with Xero to look up Purchase Orders by PO number instead of matching bills by invoice number — compare PO amount vs invoice total to flag discrepancies

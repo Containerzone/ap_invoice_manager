@@ -130,6 +130,20 @@ export interface XeroBill {
   currencyCode: string;
 }
 
+export interface XeroPurchaseOrder {
+  purchaseOrderId: string;
+  purchaseOrderNumber: string;
+  reference: string;
+  contact: { contactId: string; name: string };
+  date: string;
+  deliveryDate: string;
+  subTotal: number;
+  totalTax: number;
+  total: number;
+  status: string;
+  currencyCode: string;
+}
+
 export async function findXeroBillByInvoiceNumber(
   invoiceNumber: string,
   clientId: string,
@@ -170,6 +184,52 @@ export async function findXeroBillByInvoiceNumber(
     };
   } catch (err: any) {
     console.error("[Xero] Find bill error:", err?.response?.data ?? err.message);
+    return null;
+  }
+}
+
+export async function findXeroPurchaseOrderByNumber(
+  poNumber: string,
+  clientId: string,
+  clientSecret: string
+): Promise<XeroPurchaseOrder | null> {
+  const auth = await getValidAccessToken(clientId, clientSecret);
+  if (!auth) return null;
+
+  try {
+    // Xero supports direct lookup by PurchaseOrderNumber as a path segment
+    const response = await axios.get(
+      `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+      }
+    );
+
+    const poList = response.data?.PurchaseOrders ?? [];
+    if (poList.length === 0) return null;
+
+    const po = poList[0];
+    return {
+      purchaseOrderId: po.PurchaseOrderID,
+      purchaseOrderNumber: po.PurchaseOrderNumber,
+      reference: po.Reference ?? "",
+      contact: { contactId: po.Contact?.ContactID, name: po.Contact?.Name },
+      date: po.DateString ?? po.Date,
+      deliveryDate: po.DeliveryDateString ?? po.DeliveryDate ?? "",
+      subTotal: parseFloat(po.SubTotal ?? "0"),
+      totalTax: parseFloat(po.TotalTax ?? "0"),
+      total: parseFloat(po.Total ?? "0"),
+      status: po.Status,
+      currencyCode: po.CurrencyCode ?? "AUD",
+    };
+  } catch (err: any) {
+    // 404 means no PO found with that number — not an error worth logging loudly
+    if (err?.response?.status === 404) return null;
+    console.error("[Xero] Find PO error:", err?.response?.data ?? err.message);
     return null;
   }
 }

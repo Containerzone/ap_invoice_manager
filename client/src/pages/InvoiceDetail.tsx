@@ -316,9 +316,13 @@ export default function InvoiceDetail() {
       const result = await verifyMutation.mutateAsync({ invoiceId });
       await invalidate();
       if (result.discrepancy) {
-        toast.warning("Discrepancy detected — invoice flagged");
+        toast.warning(
+          result.matched
+            ? "Discrepancy detected — invoice total differs from PO total. Invoice flagged."
+            : "PO not found in Xero — invoice flagged."
+        );
       } else {
-        toast.success(result.matched ? "Verified — amounts match" : "No Xero bill found — marked verified");
+        toast.success("PO verified — invoice total matches Xero Purchase Order.");
       }
     } catch (e: any) {
       toast.error(e?.message ?? "Verification failed");
@@ -635,9 +639,12 @@ export default function InvoiceDetail() {
           <div>
             <p className="text-sm font-semibold text-amber-800">Amount Discrepancy Detected</p>
             <p className="text-sm text-amber-700 mt-0.5">
-              Extracted total {formatCurrency(invoice.extractedTotal)} differs from Xero total{" "}
-              {formatCurrency(invoice.xeroTotal)} by{" "}
-              <strong>{formatCurrency((invoice as any).discrepancyAmount)}</strong>
+              {invoice.xeroTotal
+                ? <>Invoice total {formatCurrency(invoice.extractedTotal)} differs from Xero PO total{" "}
+                    {formatCurrency(invoice.xeroTotal)} by{" "}
+                    <strong>{formatCurrency((invoice as any).discrepancyAmount)}</strong></>
+                : <>Purchase Order {invoice.extractedPoNumber} was not found in Xero. PO number may be incorrect or the PO has not been raised yet.</>
+              }
             </p>
           </div>
         </div>
@@ -790,7 +797,9 @@ export default function InvoiceDetail() {
                       </div>
                       <div className="space-y-2">
                         <p className="text-xs font-medium text-muted-foreground">
-                          Xero{invoice.xeroVerifiedAt && (
+                          Xero PO{invoice.xeroInvoiceNumber && (
+                            <span className="font-semibold text-foreground"> {invoice.xeroInvoiceNumber}</span>
+                          )}{invoice.xeroVerifiedAt && (
                             <span className="text-muted-foreground/60"> · verified {formatRelativeTime(invoice.xeroVerifiedAt)}</span>
                           )}
                         </p>
@@ -800,6 +809,8 @@ export default function InvoiceDetail() {
                             <AmountRow label="GST" value={formatCurrency(invoice.xeroTax)} />
                             <AmountRow label="Total" value={formatCurrency(invoice.xeroTotal)} highlight discrepancy={invoice.hasDiscrepancy ?? false} />
                           </>
+                        ) : invoice.xeroVerifiedAt && invoice.hasDiscrepancy ? (
+                          <p className="text-xs text-destructive italic">PO not found in Xero</p>
                         ) : (
                           <p className="text-xs text-muted-foreground italic">Not verified yet</p>
                         )}
