@@ -15,7 +15,10 @@ export function getXeroAuthUrl(
     response_type: "code",
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: "openid profile email accounting.transactions accounting.contacts offline_access",
+    // accounting.transactions was retired for apps created after 2 March 2026.
+    // Use granular scopes instead: invoices covers bills/POs/credit notes;
+    // payments covers bill payments; contacts covers suppliers.
+    scope: "openid profile email accounting.invoices accounting.contacts accounting.payments accounting.settings offline_access",
     state,
   });
   return `${XERO_AUTH_URL}?${params.toString()}`;
