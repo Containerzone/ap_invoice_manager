@@ -790,7 +790,8 @@ export const appRouter = router({
                   lineItems: xeroLineItems,
                   // Include all PO numbers in the reference field
                   reference: allPoNumbers.length > 0 ? allPoNumbers.join(", ") : undefined,
-                  currencyCode: invoice.extractedCurrency ?? "AUD",
+                  // Default to AUD — Xero rejects foreign currencies unless multi-currency is enabled on the org
+                  currencyCode: "AUD",
                   xeroStatus,
                 },
                 clientId,
