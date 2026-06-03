@@ -91,9 +91,9 @@ export async function getXeroTenants(accessToken: string): Promise<Array<{ tenan
   return response.data.map((t: any) => ({ tenantId: t.tenantId, tenantName: t.tenantName }));
 }
 
-async function getValidAccessToken(clientId: string, clientSecret: string): Promise<{ token: string; tenantId: string } | null> {
+async function getValidAccessToken(clientId: string, clientSecret: string): Promise<{ token: string; tenantId: string }> {
   const stored = await getXeroToken();
-  if (!stored) return null;
+  if (!stored) throw new Error("Xero is not connected. Please connect Xero in Settings before pushing bills.");
 
   // Check if token is still valid (with 60s buffer)
   if (stored.expiresAt > new Date(Date.now() + 60000)) {
@@ -113,9 +113,9 @@ async function getValidAccessToken(clientId: string, clientSecret: string): Prom
       connectedBy: stored.connectedBy,
     });
     return { token: refreshed.accessToken, tenantId: stored.tenantId };
-  } catch (err) {
+  } catch (err: any) {
     console.error("[Xero] Token refresh failed:", err);
-    return null;
+    throw new Error(`Xero token refresh failed: ${err?.response?.data ? JSON.stringify(err.response.data) : err.message}. Please reconnect Xero in Settings.`);
   }
 }
 
@@ -323,11 +323,14 @@ export async function createXeroDraftBill(
     );
 
     const created = response.data?.Invoices?.[0];
-    if (!created) return null;
+    if (!created) throw new Error("Xero returned no invoice in response");
     return { invoiceId: created.InvoiceID, invoiceNumber: created.InvoiceNumber };
   } catch (err: any) {
-    console.error("[Xero] Create draft bill error:", err?.response?.data ?? err.message);
-    return null;
+    const detail = err?.response?.data
+      ? JSON.stringify(err.response.data)
+      : err.message;
+    console.error("[Xero] Create draft bill error:", detail);
+    throw new Error(`Xero bill creation failed: ${detail}`);
   }
 }
 

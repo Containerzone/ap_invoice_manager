@@ -779,24 +779,31 @@ export const appRouter = router({
                 }];
 
             console.log(`[Resolve] Calling createXeroDraftBill for invoice ${invoice.extractedInvoiceNumber}, status=${xeroStatus}, contact=${xeroContactId ?? "name-only"}, lineItems=${xeroLineItems.length}`);
-            xeroResult = await createXeroDraftBill(
-              {
-                supplierXeroContactId: xeroContactId ?? undefined,
-                supplierName: supplier?.name ?? invoice.extractedSupplierName ?? "Unknown Supplier",
-                invoiceNumber: invoice.extractedInvoiceNumber ?? `AP-${input.invoiceId}`,
-                invoiceDate: invoice.extractedInvoiceDate ?? new Date().toISOString().split("T")[0],
-                dueDate: invoice.extractedDueDate ?? undefined,
-                lineItems: xeroLineItems,
-                // Include all PO numbers in the reference field
-                reference: allPoNumbers.length > 0 ? allPoNumbers.join(", ") : undefined,
-                currencyCode: invoice.extractedCurrency ?? "AUD",
-                xeroStatus,
-              },
-              clientId,
-              clientSecret
-            );
-
-            console.log(`[Resolve] createXeroDraftBill result: ${xeroResult ? JSON.stringify(xeroResult) : "null (failed)"}`);
+            try {
+              xeroResult = await createXeroDraftBill(
+                {
+                  supplierXeroContactId: xeroContactId ?? undefined,
+                  supplierName: supplier?.name ?? invoice.extractedSupplierName ?? "Unknown Supplier",
+                  invoiceNumber: invoice.extractedInvoiceNumber ?? `AP-${input.invoiceId}`,
+                  invoiceDate: invoice.extractedInvoiceDate ?? new Date().toISOString().split("T")[0],
+                  dueDate: invoice.extractedDueDate ?? undefined,
+                  lineItems: xeroLineItems,
+                  // Include all PO numbers in the reference field
+                  reference: allPoNumbers.length > 0 ? allPoNumbers.join(", ") : undefined,
+                  currencyCode: invoice.extractedCurrency ?? "AUD",
+                  xeroStatus,
+                },
+                clientId,
+                clientSecret
+              );
+              console.log(`[Resolve] createXeroDraftBill result: ${xeroResult ? JSON.stringify(xeroResult) : "null"}`);
+            } catch (xeroErr: any) {
+              console.error(`[Resolve] Xero push failed:`, xeroErr.message);
+              throw new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: `Failed to push bill to Xero: ${xeroErr.message}`,
+              });
+            }
             // Mark each linked PO as BILLED in Xero (only for PO-backed invoices)
             if (xeroResult && allPoNumbers.length > 0) {
               await Promise.allSettled(
