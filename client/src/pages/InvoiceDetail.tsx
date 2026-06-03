@@ -52,6 +52,19 @@ export default function InvoiceDetail() {
   const deleteMutation = trpc.invoices.delete.useMutation();
   const updateExtractedMutation = trpc.invoices.updateExtracted.useMutation();
   const updateLineItemMutation = trpc.invoices.updateLineItem.useMutation();
+  const addLineItemMutation = trpc.invoices.addLineItem.useMutation();
+
+  const handleAddLineItem = async () => {
+    await addLineItemMutation.mutateAsync({
+      invoiceId,
+      description: "",
+      quantity: "1",
+      unitPrice: "0.00",
+      amount: "0.00",
+    });
+    await utils.invoices.get.invalidate({ id: invoiceId });
+    // After refetch, the new item will appear; sync editLineItems
+  };
 
   // ── Dialog / panel state ──────────────────────────────────────────────────
   const [noteContent, setNoteContent] = useState("");
@@ -118,7 +131,7 @@ export default function InvoiceDetail() {
         }))
       );
     }
-  }, [editMode, data?.invoice]);
+  }, [editMode, data?.invoice, data?.lineItems]);
 
   const handleSaveEdits = async () => {
     try {
@@ -693,15 +706,45 @@ export default function InvoiceDetail() {
                 <FileText className="h-4 w-4 text-muted-foreground" />
                 Invoice Lines
                 {lineItems.length > 0 && (
-                  <Badge variant="secondary" className="text-xs font-normal ml-auto">{lineItems.length} items</Badge>
+                  <Badge variant="secondary" className="text-xs font-normal">{lineItems.length} items</Badge>
+                )}
+                {editMode && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto h-7 text-xs gap-1.5"
+                    onClick={handleAddLineItem}
+                    disabled={addLineItemMutation.isPending}
+                  >
+                    {addLineItemMutation.isPending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Plus className="h-3 w-3" />
+                    )}
+                    New Line
+                  </Button>
                 )}
               </CardTitle>
             </CardHeader>
             <CardContent>
               {lineItems.length === 0 ? (
-                <p className="text-xs text-muted-foreground italic text-center py-4">
-                  No line items extracted. Re-extract to populate.
-                </p>
+                <div className="text-center py-4 space-y-2">
+                  <p className="text-xs text-muted-foreground italic">
+                    No line items extracted. Re-extract to populate.
+                  </p>
+                  {editMode && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1.5"
+                      onClick={handleAddLineItem}
+                      disabled={addLineItemMutation.isPending}
+                    >
+                      {addLineItemMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                      Add First Line
+                    </Button>
+                  )}
+                </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">

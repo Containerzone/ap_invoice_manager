@@ -556,6 +556,23 @@ export const appRouter = router({
         return { success: true, xeroResult };
       }),
 
+    // Add a new line item manually
+    addLineItem: protectedProcedure
+      .input(
+        z.object({
+          invoiceId: z.number(),
+          description: z.string().optional().nullable(),
+          quantity: z.string().optional().nullable(),
+          unitPrice: z.string().optional().nullable(),
+          amount: z.string().optional().nullable(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const { invoiceId, ...fields } = input;
+        await createLineItems([{ invoiceId, ...fields } as any]);
+        return { success: true };
+      }),
+
     // Update a single line item
     updateLineItem: protectedProcedure
       .input(

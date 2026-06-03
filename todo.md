@@ -68,3 +68,4 @@
 - [x] Invoice navigation — prev/next buttons and collapsible sidebar invoice list
 - [x] Add supplier email and currency to editable fields on invoice detail
 - [x] Make line items editable (description, quantity, unit price, amount) with backend support
+- [x] Add "New Line Item" button in edit mode to manually add missing invoice lines
