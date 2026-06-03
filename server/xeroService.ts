@@ -302,8 +302,9 @@ export async function createXeroDraftBill(
       Description: li.description,
       Quantity: li.quantity,
       UnitAmount: li.unitAmount,
-      AccountCode: li.accountCode ?? "200",
-      TaxType: li.taxType ?? "INPUT2",
+      // 300 = Purchases (expense account) — correct for AP bills in Australian Xero orgs
+      // TaxType is omitted to let Xero use the account's default tax rate
+      AccountCode: li.accountCode ?? "300",
     })),
   };
 
