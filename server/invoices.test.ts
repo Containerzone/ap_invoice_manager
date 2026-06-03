@@ -600,3 +600,73 @@ describe("invoices.adminApprove", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
+
+describe("invoices.verifyWithXero — BILLED PO flagging", () => {
+  it("flags invoice when Xero PO status is BILLED (duplicate billing risk)", async () => {
+    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: "AD123456",
+      extractedTotal: "1100.00",
+      extractedInvoiceNumber: "INV-001",
+      extractedRawData: null,
+    } as any);
+    vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
+      purchaseOrderId: "po-uuid-1",
+      purchaseOrderNumber: "AD123456",
+      reference: "",
+      contact: { contactId: "c1", name: "Supplier Co" },
+      date: "2024-01-15",
+      deliveryDate: "",
+      subTotal: 1000.00,
+      totalTax: 100.00,
+      total: 1100.00,
+      status: "BILLED", // PO already billed — should flag regardless of amount match
+      currencyCode: "AUD",
+      lineItems: [],
+    });
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
+    expect(result.discrepancy).toBe(true);
+    expect((result.poResults[0] as any).alreadyBilled).toBe(true);
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({ status: "flagged", hasDiscrepancy: true })
+    );
+  });
+
+  it("does NOT flag when PO is AUTHORISED and amounts match exactly", async () => {
+    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: "AD123456",
+      extractedTotal: "1100.00",
+      extractedInvoiceNumber: "INV-001",
+      extractedRawData: null,
+    } as any);
+    vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
+      purchaseOrderId: "po-uuid-1",
+      purchaseOrderNumber: "AD123456",
+      reference: "",
+      contact: { contactId: "c1", name: "Supplier Co" },
+      date: "2024-01-15",
+      deliveryDate: "",
+      subTotal: 1000.00,
+      totalTax: 100.00,
+      total: 1100.00,
+      status: "AUTHORISED",
+      currencyCode: "AUD",
+      lineItems: [],
+    });
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.verifyWithXero({ invoiceId: 99 });
+    expect(result.discrepancy).toBe(false);
+    expect((result.poResults[0] as any).alreadyBilled).toBeFalsy();
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({ status: "verified" })
+    );
+  });
+});

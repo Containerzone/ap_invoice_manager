@@ -276,6 +276,8 @@ export async function createXeroDraftBill(
     }>;
     reference?: string;
     currencyCode?: string;
+    /** Xero invoice status. Defaults to DRAFT. Use AUTHORISED for AWAITING PAYMENT, SUBMITTED for AWAITING APPROVAL. */
+    xeroStatus?: "DRAFT" | "SUBMITTED" | "AUTHORISED";
   },
   clientId: string,
   clientSecret: string
@@ -293,7 +295,7 @@ export async function createXeroDraftBill(
     InvoiceNumber: data.invoiceNumber,
     Date: data.invoiceDate,
     DueDate: data.dueDate ?? data.invoiceDate,
-    Status: "DRAFT",
+    Status: data.xeroStatus ?? "DRAFT",
     Reference: data.reference ?? "",
     CurrencyCode: data.currencyCode ?? "AUD",
     LineAmountTypes: "EXCLUSIVE",

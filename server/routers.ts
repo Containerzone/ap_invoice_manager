@@ -334,12 +334,56 @@ export const appRouter = router({
 
         const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
 
+        // Xero PO statuses that allow amount comparison
+        const COMPARABLE_STATUSES = new Set(["DRAFT", "SUBMITTED", "AUTHORISED"]);
+
         // Look up each PO in Xero in parallel
         const poLookups = await Promise.all(
           allPoNumbers.map(async (poNum) => {
             const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
             if (!po) {
-              return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, diff: extractedTotal, lineItems: [] };
+              return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, alreadyBilled: false, diff: extractedTotal, lineItems: [] };
+            }
+            // Rule 2: If PO is already BILLED, flag immediately — do not compare amounts
+            if (po.status === "BILLED") {
+              return {
+                poNumber: poNum,
+                found: true,
+                status: po.status,
+                poTotal: po.total,
+                poSubtotal: po.subTotal,
+                poTax: po.totalTax,
+                discrepancy: true,
+                alreadyBilled: true,
+                overBilled: false,
+                underBilled: false,
+                diff: 0,
+                rawDiff: 0,
+                contact: po.contact,
+                currencyCode: po.currencyCode,
+                lineItems: po.lineItems,
+              };
+            }
+            // Rule 1: Only compare amounts for DRAFT / SUBMITTED / AUTHORISED
+            if (!COMPARABLE_STATUSES.has(po.status)) {
+              // Unknown/unsupported status — treat as not comparable, flag for safety
+              return {
+                poNumber: poNum,
+                found: true,
+                status: po.status,
+                poTotal: po.total,
+                poSubtotal: po.subTotal,
+                poTax: po.totalTax,
+                discrepancy: true,
+                alreadyBilled: false,
+                overBilled: false,
+                underBilled: false,
+                diff: 0,
+                rawDiff: 0,
+                contact: po.contact,
+                currencyCode: po.currencyCode,
+                lineItems: po.lineItems,
+              };
             }
             const rawDiff = extractedTotal - po.total; // positive = billed more than PO, negative = billed less
             const absDiff = Math.abs(rawDiff);
@@ -351,6 +395,7 @@ export const appRouter = router({
               poSubtotal: po.subTotal,
               poTax: po.totalTax,
               discrepancy: absDiff > 0.01,
+              alreadyBilled: false,
               overBilled: rawDiff > 0.01,   // billed > PO → flag
               underBilled: rawDiff < -0.01, // billed < PO → under budget (ok)
               diff: absDiff,
@@ -362,13 +407,15 @@ export const appRouter = router({
           })
         );
 
+        const anyAlreadyBilled = poLookups.some((r) => (r as any).alreadyBilled);
         const anyOverBilled = poLookups.some((r) => (r as any).overBilled);
         const anyNotFound = poLookups.some((r) => !r.found);
-        const anyDiscrepancy = anyOverBilled || anyNotFound;
-        const allUnderBilled = poLookups.every((r) => r.found && (r as any).underBilled);
+        const anyDiscrepancy = anyAlreadyBilled || anyOverBilled || anyNotFound;
+        const allUnderBilled = !anyAlreadyBilled && poLookups.every((r) => r.found && (r as any).underBilled);
         const allFound = poLookups.every((r) => r.found);
 
         // Determine invoice status:
+        // - any PO already BILLED → flagged (duplicate billing risk)
         // - any PO not found OR billed > PO → flagged
         // - all POs found AND billed < PO → under_budget (safe to approve)
         // - all POs found AND amounts match → verified
@@ -399,22 +446,24 @@ export const appRouter = router({
         });
 
         // Build a human-readable summary for the conversation note
-        const summaryLines = poLookups.map((r) =>
-          r.found
-            ? `PO ${r.poNumber}: ${r.status} — PO total $${r.poTotal.toFixed(2)} vs invoice $${extractedTotal.toFixed(2)}${r.discrepancy ? ` (DIFF $${r.diff.toFixed(2)})` : " (match)"}`
-            : `PO ${r.poNumber}: NOT FOUND in Xero`
-        );
+        const summaryLines = poLookups.map((r) => {
+          if (!r.found) return `PO ${r.poNumber}: NOT FOUND in Xero`;
+          if ((r as any).alreadyBilled) return `PO ${r.poNumber}: BILLED — already billed in Xero (duplicate billing risk)`;
+          return `PO ${r.poNumber}: ${r.status} — PO total $${r.poTotal.toFixed(2)} vs invoice $${extractedTotal.toFixed(2)}${r.discrepancy ? ` (DIFF $${r.diff.toFixed(2)})` : " (match)"}`;
+        });
 
         await createConversationNote({
           invoiceId: input.invoiceId,
           authorId: ctx.user.id,
           type: "status_change",
-          content: anyDiscrepancy
-            ? `Xero PO verification — discrepancy detected:\n${summaryLines.join("\n")}. Invoice flagged.`
-            : allUnderBilled
-              ? `Xero PO verification — billed amount is under PO budget:\n${summaryLines.join("\n")}. Invoice marked as Under Budget (safe to approve).`
-              : `Xero PO verification passed — all POs matched:\n${summaryLines.join("\n")}. Invoice verified.`,
-          metadata: { poLookups, extractedTotal, anyDiscrepancy, allFound, allUnderBilled },
+          content: anyAlreadyBilled
+            ? `Xero PO verification — PO already billed:\n${summaryLines.join("\n")}. Invoice flagged (duplicate billing risk).`
+            : anyDiscrepancy
+              ? `Xero PO verification — discrepancy detected:\n${summaryLines.join("\n")}. Invoice flagged.`
+              : allUnderBilled
+                ? `Xero PO verification — billed amount is under PO budget:\n${summaryLines.join("\n")}. Invoice marked as Under Budget (safe to approve).`
+                : `Xero PO verification passed — all POs matched:\n${summaryLines.join("\n")}. Invoice verified.`,
+          metadata: { poLookups, extractedTotal, anyDiscrepancy, anyAlreadyBilled, allFound, allUnderBilled },
         });
 
         return { matched: allFound, discrepancy: anyDiscrepancy, underBudget: allUnderBilled, poResults: poLookups };
@@ -668,6 +717,7 @@ export const appRouter = router({
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
 
         let xeroResult: { invoiceId: string; invoiceNumber: string } | null = null;
+        let xeroStatus: "DRAFT" | "SUBMITTED" | "AUTHORISED" = "SUBMITTED";
         // Collect all PO numbers up front (used for reference field and marking as Billed)
         const rawData = invoice.extractedRawData as any;
         const allPoNumbers: string[] = invoice.extractedPoNumber
@@ -681,6 +731,28 @@ export const appRouter = router({
           if (clientId && clientSecret) {
             const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
             const lineItems = await getLineItemsByInvoice(input.invoiceId);
+
+            // Determine the Xero bill status based on invoice approval state and paid detection:
+            // Rule 3: verified or under_budget → AUTHORISED (= AWAITING PAYMENT in Xero UI)
+            // Rule 4: admin-approved (no PO / manually approved) → SUBMITTED (= AWAITING APPROVAL in Xero UI)
+            // Rule 5: invoice appears paid (paid date present, zero balance, or status=paid) → AUTHORISED (Xero marks as paid separately)
+            //         If unsure → SUBMITTED (AWAITING APPROVAL)
+            const invoiceStatus = invoice.status as string;
+            const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
+            const hasPaidDate = !!(invoice as any).extractedPaymentDate;
+            const hasZeroBalance = extractedTotal === 0;
+            const isPaidStatus = invoiceStatus === "paid";
+            const isPaid = hasPaidDate || hasZeroBalance || isPaidStatus;
+
+            // Rule 5: paid invoice → AUTHORISED (AWAITING PAYMENT) so Xero can reconcile
+            // Rule 3: verified/under_budget → AUTHORISED (AWAITING PAYMENT)
+            // Rule 4: admin-approved (no PO) → SUBMITTED (AWAITING APPROVAL)
+            // Default fallback → SUBMITTED (AWAITING APPROVAL) for safety
+            if (isPaid || invoiceStatus === "verified" || invoiceStatus === "under_budget") {
+              xeroStatus = "AUTHORISED";
+            } else {
+              xeroStatus = "SUBMITTED";
+            }
 
             // Find or create Xero contact
             const xeroContactId = await findOrCreateXeroContact(
@@ -701,7 +773,7 @@ export const appRouter = router({
               : [{
                   description: `Invoice ${invoice.extractedInvoiceNumber ?? "N/A"}`,
                   quantity: 1,
-                  unitAmount: parseFloat(invoice.extractedTotal?.toString() ?? "0"),
+                  unitAmount: extractedTotal,
                   accountCode: "200",
                 }];
 
@@ -716,12 +788,13 @@ export const appRouter = router({
                 // Include all PO numbers in the reference field
                 reference: allPoNumbers.length > 0 ? allPoNumbers.join(", ") : undefined,
                 currencyCode: invoice.extractedCurrency ?? "AUD",
+                xeroStatus,
               },
               clientId,
               clientSecret
             );
 
-            // Mark each linked PO as BILLED in Xero
+            // Mark each linked PO as BILLED in Xero (only for PO-backed invoices)
             if (xeroResult && allPoNumbers.length > 0) {
               await Promise.allSettled(
                 allPoNumbers.map((poNum) => markXeroPOAsBilled(poNum, clientId, clientSecret))
@@ -739,14 +812,15 @@ export const appRouter = router({
           xeroFinalBillNumber: xeroResult?.invoiceNumber ?? undefined,
         });
 
+        const xeroStatusLabel = xeroStatus === "AUTHORISED" ? "AWAITING PAYMENT" : "AWAITING APPROVAL";
         await createConversationNote({
           invoiceId: input.invoiceId,
           authorId: ctx.user.id,
           type: "status_change",
           content: xeroResult
-            ? `Invoice resolved. Draft bill created in Xero: ${xeroResult.invoiceNumber}${allPoNumbers.length > 0 ? `. POs marked as Billed: ${allPoNumbers.join(", ")}` : ""}. ${input.resolutionNotes ?? ""}`
+            ? `Invoice resolved. Bill created in Xero as ${xeroStatusLabel}: ${xeroResult.invoiceNumber}${allPoNumbers.length > 0 ? `. POs marked as Billed: ${allPoNumbers.join(", ")}` : ""}. ${input.resolutionNotes ?? ""}`
             : `Invoice resolved. ${input.resolutionNotes ?? ""}`,
-          metadata: { xeroResult, poNumbers: allPoNumbers },
+          metadata: { xeroResult, poNumbers: allPoNumbers, xeroStatus },
         });
 
         return { success: true, xeroResult };

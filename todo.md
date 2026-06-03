@@ -89,3 +89,8 @@
 - [x] Admin Approve button for invoices without PO numbers that cannot be verified via Xero
 - [x] Push to Xero creates draft bill linked to PO numbers (or standalone bill if no PO)
 - [x] Mark linked Purchase Orders as Billed in Xero after pushing draft bill
+- [ ] Flag invoice when Xero PO status is BILLED — do not compare amounts, show "PO already billed" error
+- [ ] Only compare amounts when PO status is DRAFT, AWAITING_APPROVAL, or AUTHORISED
+- [ ] Push to Xero (verified/under_budget invoice) — create bill in AWAITING PAYMENT stage
+- [ ] Push to Xero (admin-approved invoice) — create bill in AWAITING APPROVAL stage
+- [ ] Auto-detect paid invoices — if invoice has paid date, zero balance, or paid status then mark as PAID in Xero; otherwise use AWAITING APPROVAL
