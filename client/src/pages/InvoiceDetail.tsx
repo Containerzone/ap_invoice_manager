@@ -30,6 +30,24 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+
+const DISPUTE_TEMPLATES = [
+  "Amount does not match the Purchase Order",
+  "Invoice is a duplicate of a previously received invoice",
+  "Container number on invoice does not match our records",
+  "GST/Tax amount is incorrectly calculated",
+  "Invoice date or due date is incorrect",
+  "Description of services does not match the agreed scope",
+  "Rate applied does not match the agreed contract rate",
+  "Invoice references an incorrect PO number",
+  "Charges have already been paid under a previous invoice",
+  "Detention/demurrage charges exceed the agreed free days",
+  "Port/terminal handling charges are not in the agreed schedule",
+  "Fuel surcharge rate does not match the current schedule",
+];
 
 export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -978,12 +996,36 @@ export default function InvoiceDetail() {
                   ))}
                 </ol>
               )}
-              <div className="flex gap-2 pt-1">
+              {/* Quick-add templates */}
+              <div className="pt-1">
+                <Select
+                  value=""
+                  onValueChange={(val) => {
+                    if (!val) return;
+                    const updated = [...queryPoints, val];
+                    setQueryPoints(updated);
+                    setQueryPointsSaved(false);
+                    setQueryPointsDirty(true);
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs w-full">
+                    <SelectValue placeholder="⚡ Quick-add a common dispute reason..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DISPUTE_TEMPLATES.map((tpl) => (
+                      <SelectItem key={tpl} value={tpl} className="text-xs">
+                        {tpl}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2">
                 <Input
                   value={newQueryPoint}
                   onChange={(e) => setNewQueryPoint(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddQueryPoint(); } }}
-                  placeholder="Type a query point and press Enter or Add..."
+                  placeholder="Or type a custom query point and press Enter..."
                   className="flex-1 text-xs h-8"
                 />
                 <Button

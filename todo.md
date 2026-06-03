@@ -76,3 +76,4 @@
 - [x] Log email reply — button on each email log entry to paste/type supplier's reply and attach it to the invoice thread
 - [x] Supplier name field in invoice edit mode becomes a combobox — search existing suppliers, prompt to create new if no match
 - [x] Delete supplier button on Suppliers page (Admin only) with confirmation dialog
+- [x] Quick-add dispute templates in Query Points panel — dropdown with common pre-written reasons

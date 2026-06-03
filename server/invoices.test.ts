@@ -214,10 +214,16 @@ describe("xero.status", () => {
 
 describe("xero.getAuthUrl", () => {
   it("throws when XERO_CLIENT_ID not set", async () => {
-    const caller = appRouter.createCaller(makeAdminCtx());
-    await expect(
-      caller.xero.getAuthUrl({ redirectUri: "https://example.com/callback" })
-    ).rejects.toThrow("XERO_CLIENT_ID not set");
+    const original = process.env.XERO_CLIENT_ID;
+    delete process.env.XERO_CLIENT_ID;
+    try {
+      const caller = appRouter.createCaller(makeAdminCtx());
+      await expect(
+        caller.xero.getAuthUrl({ redirectUri: "https://example.com/callback" })
+      ).rejects.toThrow("XERO_CLIENT_ID not set");
+    } finally {
+      if (original !== undefined) process.env.XERO_CLIENT_ID = original;
+    }
   });
 });
 
