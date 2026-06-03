@@ -298,7 +298,6 @@ export async function createXeroDraftBill(
     Status: data.xeroStatus ?? "DRAFT",
     Reference: data.reference ?? "",
     CurrencyCode: data.currencyCode ?? "AUD",
-    LineAmountTypes: "INCLUSIVE",
     LineItems: data.lineItems.map((li) => ({
       Description: li.description,
       Quantity: li.quantity,
