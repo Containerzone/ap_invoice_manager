@@ -602,6 +602,12 @@ export default function InvoiceDetail() {
                 {invoice.extractedInvoiceNumber ?? `Invoice #${invoice.id}`}
               </h1>
               <StatusBadge status={invoice.status} />
+              {(invoice as any).xeroFinalBillId && (
+                <Badge className="text-xs gap-1 bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-100">
+                  <CheckCircle2 className="h-3 w-3" />
+                  Pushed to Xero
+                </Badge>
+              )}
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               {invoice.extractedSupplierName ?? "Unknown supplier"} · {invoice.originalFileName} · Uploaded {formatRelativeTime(invoice.createdAt)}
@@ -702,6 +708,12 @@ export default function InvoiceDetail() {
             {invoice.extractedInvoiceNumber ?? `Invoice #${invoice.id}`}
           </h1>
           <StatusBadge status={invoice.status} />
+          {(invoice as any).xeroFinalBillId && (
+            <Badge className="text-xs gap-1 bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-100">
+              <CheckCircle2 className="h-3 w-3" />
+              Pushed to Xero
+            </Badge>
+          )}
         </div>
         <p className="text-xs text-muted-foreground mt-0.5">
           {invoice.extractedSupplierName ?? "Unknown supplier"} · Uploaded {formatRelativeTime(invoice.createdAt)}
@@ -736,23 +748,70 @@ export default function InvoiceDetail() {
         </div>
       )}
 
-      {/* Discrepancy Alert — billed > PO */}
-      {invoice.hasDiscrepancy && invoice.status === "flagged" && (
-        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-          <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-semibold text-amber-800">Amount Discrepancy Detected — Invoice Exceeds PO</p>
-            <p className="text-sm text-amber-700 mt-0.5">
-              {invoice.xeroTotal
-                ? <>Invoice total {formatCurrency(invoice.extractedTotal)} exceeds Xero PO total{" "}
-                    {formatCurrency(invoice.xeroTotal)} by{" "}
-                    <strong>{formatCurrency((invoice as any).discrepancyAmount)}</strong>. Please query the supplier or obtain a PO amendment.</>
-                : <>Purchase Order {invoice.extractedPoNumber} was not found in Xero. PO number may be incorrect or the PO has not been raised yet.</>
-              }
-            </p>
+      {/* Discrepancy Alert — billed > PO, already billed, or PO not found */}
+      {invoice.hasDiscrepancy && invoice.status === "flagged" && (() => {
+        const poResults: XeroPoResult[] = Array.isArray((invoice as any).xeroPoResults) ? (invoice as any).xeroPoResults : [];
+        const anyAlreadyBilled = poResults.some((r) => (r as any).alreadyBilled);
+        const anyNotFound = poResults.some((r) => !r.found);
+        const anyOverBilled = poResults.some((r) => (r as any).overBilled);
+
+        if (anyAlreadyBilled) {
+          const billedPOs = poResults.filter((r) => (r as any).alreadyBilled).map((r) => r.poNumber).join(", ");
+          return (
+            <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+              <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-red-800">Duplicate Billing Risk — PO Already Billed in Xero</p>
+                <p className="text-sm text-red-700 mt-0.5">
+                  Purchase Order{billedPOs.includes(",") ? "s" : ""} <strong>{billedPOs}</strong> {billedPOs.includes(",") ? "have" : "has"} already been billed in Xero.
+                  This invoice may be a duplicate. Please verify with the supplier before approving.
+                </p>
+              </div>
+            </div>
+          );
+        }
+        if (anyNotFound) {
+          const notFoundPOs = poResults.filter((r) => !r.found).map((r) => r.poNumber).join(", ");
+          return (
+            <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+              <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-800">Purchase Order Not Found in Xero</p>
+                <p className="text-sm text-amber-700 mt-0.5">
+                  Purchase Order{notFoundPOs.includes(",") ? "s" : ""} <strong>{notFoundPOs}</strong> could not be found in Xero.
+                  The PO number may be incorrect or the PO has not been raised yet.
+                </p>
+              </div>
+            </div>
+          );
+        }
+        if (anyOverBilled) {
+          const firstOver = poResults.find((r) => (r as any).overBilled);
+          return (
+            <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+              <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-800">Amount Discrepancy — Invoice Exceeds PO</p>
+                <p className="text-sm text-amber-700 mt-0.5">
+                  Invoice total {formatCurrency(invoice.extractedTotal)} exceeds Xero PO total{" "}
+                  {formatCurrency(firstOver?.poTotal)} by{" "}
+                  <strong>{formatCurrency(firstOver?.diff)}</strong>. Please query the supplier or obtain a PO amendment.
+                </p>
+              </div>
+            </div>
+          );
+        }
+        // Generic fallback
+        return (
+          <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-amber-800">Xero Verification Issue</p>
+              <p className="text-sm text-amber-700 mt-0.5">A discrepancy was detected during Xero PO verification. Please review the PO details below.</p>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Xero resolved banner */}
       {(invoice as any).xeroFinalBillId && (
@@ -760,9 +819,12 @@ export default function InvoiceDetail() {
           <CardContent className="p-4 flex items-center gap-3">
             <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
             <div>
-              <p className="text-sm font-semibold text-emerald-800">Draft Bill Created in Xero</p>
+              <p className="text-sm font-semibold text-emerald-800">Bill Created in Xero</p>
               <p className="text-xs text-emerald-700 mt-0.5">
-                Bill number: {(invoice as any).xeroFinalBillNumber} — awaiting payment approval in Xero
+                Bill number: <strong>{(invoice as any).xeroFinalBillNumber}</strong>
+                {invoice.status === "resolved" && (
+                  <> — {["verified", "under_budget"].includes((invoice as any).resolvedFromStatus ?? "") ? "Awaiting Payment" : "Awaiting Approval"} in Xero</>
+                )}
               </p>
             </div>
           </CardContent>

@@ -94,3 +94,7 @@
 - [ ] Push to Xero (verified/under_budget invoice) — create bill in AWAITING PAYMENT stage
 - [ ] Push to Xero (admin-approved invoice) — create bill in AWAITING APPROVAL stage
 - [ ] Auto-detect paid invoices — if invoice has paid date, zero balance, or paid status then mark as PAID in Xero; otherwise use AWAITING APPROVAL
+- [ ] Fix: invoices not being pushed to Xero when resolve + push to Xero is clicked
+- [ ] Fix: wrong error message shown when PO is already billed (shows "Invoice Exceeds PO" instead of "PO Already Billed")
+- [ ] Add "Pushed to Xero" badge next to "Resolved" status on invoice detail
+- [ ] Fix: toast message after resolve+push should mention Xero push result

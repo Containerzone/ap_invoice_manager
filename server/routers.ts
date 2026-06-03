@@ -727,6 +727,7 @@ export const appRouter = router({
         if (input.pushToXero) {
           const clientId = process.env.XERO_CLIENT_ID;
           const clientSecret = process.env.XERO_CLIENT_SECRET;
+          console.log(`[Resolve] pushToXero=true, clientId=${clientId ? clientId.slice(0,8)+"..." : "MISSING"}, clientSecret=${clientSecret ? "set" : "MISSING"}`);
 
           if (clientId && clientSecret) {
             const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
@@ -777,6 +778,7 @@ export const appRouter = router({
                   accountCode: "200",
                 }];
 
+            console.log(`[Resolve] Calling createXeroDraftBill for invoice ${invoice.extractedInvoiceNumber}, status=${xeroStatus}, contact=${xeroContactId ?? "name-only"}, lineItems=${xeroLineItems.length}`);
             xeroResult = await createXeroDraftBill(
               {
                 supplierXeroContactId: xeroContactId ?? undefined,
@@ -794,6 +796,7 @@ export const appRouter = router({
               clientSecret
             );
 
+            console.log(`[Resolve] createXeroDraftBill result: ${xeroResult ? JSON.stringify(xeroResult) : "null (failed)"}`);
             // Mark each linked PO as BILLED in Xero (only for PO-backed invoices)
             if (xeroResult && allPoNumbers.length > 0) {
               await Promise.allSettled(
