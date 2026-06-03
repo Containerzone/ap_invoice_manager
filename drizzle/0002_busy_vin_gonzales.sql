@@ -1,0 +1,1 @@
+ALTER TABLE `invoices` ADD `queryPoints` json;

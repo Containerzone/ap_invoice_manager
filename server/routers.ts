@@ -437,6 +437,10 @@ export const appRouter = router({
           ? JSON.parse(invoice.extractedContainerNumbers)
           : [];
 
+        const queryPoints = Array.isArray((invoice as any).queryPoints)
+          ? (invoice as any).queryPoints as string[]
+          : [];
+
         return generateDisputeEmailTemplate({
           supplierName: supplier?.name ?? invoice.extractedSupplierName ?? "Supplier",
           invoiceNumber: invoice.extractedInvoiceNumber ?? "N/A",
@@ -449,6 +453,7 @@ export const appRouter = router({
           containerNumbers,
           poNumber: invoice.extractedPoNumber,
           senderName: ctx.user.name ?? "Accounts Payable",
+          queryPoints,
         });
       }),
 
@@ -556,6 +561,14 @@ export const appRouter = router({
         return { success: true, xeroResult };
       }),
 
+    // Save query points (numbered dispute reasons)
+    saveQueryPoints: protectedProcedure
+      .input(z.object({ id: z.number(), queryPoints: z.array(z.string()) }))
+      .mutation(async ({ input }) => {
+        await updateInvoice(input.id, { queryPoints: input.queryPoints } as any);
+        return { success: true };
+      }),
+
     // Add a new line item manually
     addLineItem: protectedProcedure
       .input(
@@ -570,6 +583,18 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const { invoiceId, ...fields } = input;
         await createLineItems([{ invoiceId, ...fields } as any]);
+        return { success: true };
+      }),
+
+    // Delete a single line item
+    deleteLineItem: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const db = await (await import("./db")).getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { invoiceLineItems } = await import("../drizzle/schema");
+        const { eq } = await import("drizzle-orm");
+        await db.delete(invoiceLineItems).where(eq(invoiceLineItems.id, input.id));
         return { success: true };
       }),
 

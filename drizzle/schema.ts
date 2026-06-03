@@ -102,6 +102,9 @@ export const invoices = mysqlTable("invoices", {
   discrepancyNotes: text("discrepancyNotes"),
   discrepancyAmount: decimal("discrepancyAmount", { precision: 15, scale: 2 }),
 
+  // Query points (numbered list of dispute reasons)
+  queryPoints: json("queryPoints"), // string[]
+
   // Resolution
   resolvedAt: timestamp("resolvedAt"),
   resolvedBy: int("resolvedBy"),

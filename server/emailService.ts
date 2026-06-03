@@ -79,6 +79,7 @@ export function generateDisputeEmailTemplate(params: {
   containerNumbers?: string[];
   poNumber?: string | null;
   senderName: string;
+  queryPoints?: string[];
 }): { subject: string; body: string } {
   const subject = `Invoice Query — ${params.invoiceNumber} — ${params.supplierName}`;
 
@@ -94,12 +95,21 @@ export function generateDisputeEmailTemplate(params: {
       ? `\n\nUpon review, we have identified a discrepancy between the amount on your invoice (${formatCurrency(params.extractedTotal)}) and the amount recorded in our system (${formatCurrency(params.xeroTotal)}). The difference is ${formatCurrency(Math.abs(params.discrepancyAmount ?? params.extractedTotal - params.xeroTotal))}.`
       : "";
 
+  const queryPointsSection =
+    params.queryPoints && params.queryPoints.filter(Boolean).length > 0
+      ? `\n\nWe have the following specific queries regarding this invoice:\n\n` +
+        params.queryPoints
+          .filter(Boolean)
+          .map((point, i) => `${i + 1}. ${point}`)
+          .join("\n")
+      : "";
+
   const body = `Dear ${params.supplierName},
 
 We are writing to query the following invoice:
 
 Invoice Number: ${params.invoiceNumber}
-Invoice Date: ${params.invoiceDate ?? "N/A"}${containerLine}${poLine}${discrepancyLine}
+Invoice Date: ${params.invoiceDate ?? "N/A"}${containerLine}${poLine}${discrepancyLine}${queryPointsSection}
 
 Could you please review and provide clarification on the above at your earliest convenience? We would appreciate a response within 5 business days.
 

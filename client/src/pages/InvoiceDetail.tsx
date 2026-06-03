@@ -53,6 +53,60 @@ export default function InvoiceDetail() {
   const updateExtractedMutation = trpc.invoices.updateExtracted.useMutation();
   const updateLineItemMutation = trpc.invoices.updateLineItem.useMutation();
   const addLineItemMutation = trpc.invoices.addLineItem.useMutation();
+  const deleteLineItemMutation = trpc.invoices.deleteLineItem.useMutation();
+  const saveQueryPointsMutation = trpc.invoices.saveQueryPoints.useMutation();
+
+  // ── Query points state ────────────────────────────────────────────────────
+  const [queryPoints, setQueryPoints] = useState<string[]>([]);
+  const [newQueryPoint, setNewQueryPoint] = useState("");
+  const [queryPointsSaved, setQueryPointsSaved] = useState(false);
+  const [queryPointsDirty, setQueryPointsDirty] = useState(false);
+
+  // Sync query points from invoice data
+  useEffect(() => {
+    if (data?.invoice) {
+      const pts = Array.isArray((data.invoice as any).queryPoints)
+        ? (data.invoice as any).queryPoints as string[]
+        : [];
+      setQueryPoints(pts);
+    }
+  }, [data?.invoice]);
+
+  const handleAddQueryPoint = () => {
+    const trimmed = newQueryPoint.trim();
+    if (!trimmed) return;
+    const updated = [...queryPoints, trimmed];
+    setQueryPoints(updated);
+    setNewQueryPoint("");
+    setQueryPointsSaved(false);
+    setQueryPointsDirty(true);
+  };
+
+  const handleRemoveQueryPoint = (idx: number) => {
+    const updated = queryPoints.filter((_, i) => i !== idx);
+    setQueryPoints(updated);
+    setQueryPointsSaved(false);
+    setQueryPointsDirty(true);
+  };
+
+  const handleUpdateQueryPoint = (idx: number, value: string) => {
+    setQueryPoints(pts => pts.map((p, i) => i === idx ? value : p));
+    setQueryPointsSaved(false);
+    setQueryPointsDirty(true);
+  };
+
+  const handleSaveQueryPoints = async () => {
+    await saveQueryPointsMutation.mutateAsync({ id: invoiceId, queryPoints });
+    await utils.invoices.generateEmailTemplate.invalidate({ invoiceId });
+    setQueryPointsSaved(true);
+    setQueryPointsDirty(false);
+    toast.success("Query points saved — email template updated");
+  };
+
+  const handleDeleteLineItem = async (lineItemId: number) => {
+    await deleteLineItemMutation.mutateAsync({ id: lineItemId });
+    await utils.invoices.get.invalidate({ id: invoiceId });
+  };
 
   const handleAddLineItem = async () => {
     await addLineItemMutation.mutateAsync({
@@ -754,6 +808,7 @@ export default function InvoiceDetail() {
                         <th className="text-right pb-2.5 font-medium w-16">Qty</th>
                         <th className="text-right pb-2.5 font-medium w-24">Unit Price</th>
                         <th className="text-right pb-2.5 font-medium w-24">Amount</th>
+                        {editMode && <th className="w-8"></th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -792,6 +847,18 @@ export default function InvoiceDetail() {
                                   placeholder="0.00"
                                 />
                               </td>
+                              <td className="py-1.5 pl-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                  onClick={() => handleDeleteLineItem(li.id)}
+                                  disabled={deleteLineItemMutation.isPending}
+                                  title="Delete line"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </td>
                             </tr>
                           ))
                         : lineItems.map((li) => (
@@ -824,6 +891,87 @@ export default function InvoiceDetail() {
                     )}
                   </table>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Query Points */}
+          <Card className="border shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                Query Points
+                {queryPoints.length > 0 && (
+                  <Badge variant="secondary" className="text-xs font-normal">{queryPoints.length} {queryPoints.length === 1 ? 'point' : 'points'}</Badge>
+                )}
+                <span className="ml-auto text-xs font-normal text-muted-foreground">Reflected in dispute email</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {queryPoints.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic text-center py-2">
+                  No query points added yet. Add specific issues to include in the dispute email.
+                </p>
+              ) : (
+                <ol className="space-y-2">
+                  {queryPoints.map((pt, idx) => (
+                    <li key={idx} className="flex items-start gap-2">
+                      <span className="shrink-0 mt-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold">
+                        {idx + 1}
+                      </span>
+                      <Textarea
+                        value={pt}
+                        onChange={(e) => handleUpdateQueryPoint(idx, e.target.value)}
+                        className="flex-1 text-xs min-h-[60px] resize-none"
+                        placeholder={`Query point ${idx + 1}`}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 mt-1 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => handleRemoveQueryPoint(idx)}
+                        title="Remove"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <div className="flex gap-2 pt-1">
+                <Input
+                  value={newQueryPoint}
+                  onChange={(e) => setNewQueryPoint(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddQueryPoint(); } }}
+                  placeholder="Type a query point and press Enter or Add..."
+                  className="flex-1 text-xs h-8"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs gap-1.5 shrink-0"
+                  onClick={handleAddQueryPoint}
+                  disabled={!newQueryPoint.trim()}
+                >
+                  <Plus className="h-3 w-3" /> Add
+                </Button>
+              </div>
+              {(queryPointsDirty || queryPointsSaved) && (
+                <Button
+                  size="sm"
+                  className="w-full h-8 text-xs gap-1.5"
+                  onClick={handleSaveQueryPoints}
+                  disabled={saveQueryPointsMutation.isPending || queryPointsSaved}
+                >
+                  {saveQueryPointsMutation.isPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : queryPointsSaved ? (
+                    <CheckCircle2 className="h-3 w-3" />
+                  ) : (
+                    <Save className="h-3 w-3" />
+                  )}
+                  {queryPointsSaved ? "Saved — email updated" : "Save & Update Email Template"}
+                </Button>
               )}
             </CardContent>
           </Card>
