@@ -661,7 +661,40 @@ export async function updateXeroPODetails(
     console.log(`[Xero] Keeping existing contact: ContactID=${po.Contact?.ContactID}`);
   }
 
-  // ── Step 2: Build the fields-only update payload (no Status change yet) ────
+  // ── Helper: make a POST to /PurchaseOrders and throw with full Xero error body ──
+  async function xeroPost(payload: Record<string, any>, label: string): Promise<any> {
+    try {
+      const resp = await axios.post(
+        `${XERO_API_BASE}/PurchaseOrders`,
+        { PurchaseOrders: [payload] },
+        {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        }
+      );
+      const result = resp.data?.PurchaseOrders?.[0];
+      console.log(`[Xero] ${label} → status: ${result?.Status}`);
+      return result;
+    } catch (err: any) {
+      const body = err?.response?.data ? JSON.stringify(err.response.data) : err.message;
+      const status = err?.response?.status ?? "?";
+      console.error(`[Xero] ${label} FAILED (HTTP ${status}):`, body);
+      throw new Error(`PO update failed for: ${poNumber}: ${body}`);
+    }
+  }
+
+  // ── Step 2: If PO is AUTHORISED, revert to DRAFT first (Xero won't allow
+  //           field edits on an AUTHORISED PO) ─────────────────────────────────
+  if (currentStatus === "AUTHORISED") {
+    console.log(`[Xero] PO "${poNumber}" is AUTHORISED — reverting to DRAFT before field update`);
+    await xeroPost({ PurchaseOrderID: poId, Status: "DRAFT" }, `Step 2a revert-to-DRAFT "${poNumber}"`);
+  }
+
+  // ── Step 3: Update all editable fields (contact, reference, line items) ─────
   const fieldsPayload: Record<string, any> = {
     PurchaseOrderID: poId,
     Contact: contactPayload,
@@ -678,41 +711,17 @@ export async function updateXeroPODetails(
     }));
   }
 
-  console.log(`[Xero] Step 2 — updating fields for PO "${poNumber}":`, JSON.stringify(fieldsPayload));
-  const fieldsResp = await axios.post(
-    `${XERO_API_BASE}/PurchaseOrders`,
-    { PurchaseOrders: [fieldsPayload] },
-    {
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        "Xero-tenant-id": auth.tenantId,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-    }
-  );
-  const afterFields = fieldsResp.data?.PurchaseOrders?.[0];
-  console.log(`[Xero] After fields update — PO "${poNumber}" status: ${afterFields?.Status}`);
+  console.log(`[Xero] Step 3 — updating fields for PO "${poNumber}":`, JSON.stringify(fieldsPayload));
+  const afterFields = await xeroPost(fieldsPayload, `Step 3 fields-update "${poNumber}"`);
 
-  // ── Step 3: Move to AUTHORISED (separate call) ─────────────────────────────
+  // ── Step 4: Move to AUTHORISED ────────────────────────────────────────────
   const targetStatus = updates.status ?? "AUTHORISED";
   if (afterFields?.Status !== targetStatus) {
-    const statusPayload = { PurchaseOrderID: poId, Status: targetStatus };
-    console.log(`[Xero] Step 3 — setting PO "${poNumber}" Status=${targetStatus}`);
-    const statusResp = await axios.post(
-      `${XERO_API_BASE}/PurchaseOrders`,
-      { PurchaseOrders: [statusPayload] },
-      {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-      }
+    console.log(`[Xero] Step 4 — setting PO "${poNumber}" Status=${targetStatus}`);
+    const afterStatus = await xeroPost(
+      { PurchaseOrderID: poId, Status: targetStatus },
+      `Step 4 set-status-${targetStatus} "${poNumber}"`
     );
-    const afterStatus = statusResp.data?.PurchaseOrders?.[0];
-    console.log(`[Xero] After status update — PO "${poNumber}" final status: ${afterStatus?.Status}`);
     return { poId, finalStatus: afterStatus?.Status ?? targetStatus };
   }
 
