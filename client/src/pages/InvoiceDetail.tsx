@@ -549,11 +549,20 @@ export default function InvoiceDetail() {
 
   const handleAdminApprove = async () => {
     try {
-      await adminApproveMutation.mutateAsync({ invoiceId, notes: approveNotes || undefined });
+      const result = await adminApproveMutation.mutateAsync({ invoiceId, notes: approveNotes || undefined });
       await utils.invoices.get.invalidate({ id: invoiceId });
       setShowApproveDialog(false);
       setApproveNotes("");
-      toast.success("Invoice approved by admin");
+      const xeroResults = (result as any).xeroUpdateResults as Array<{ poNumber: string; status: string; error?: string }> | undefined;
+      const xeroWarning = (result as any).xeroWarning as string | undefined;
+      if (xeroWarning) {
+        toast.warning(`Invoice approved — but Xero PO update failed: ${xeroWarning}`);
+      } else if (xeroResults && xeroResults.length > 0) {
+        const summary = xeroResults.map(r => `${r.poNumber} → ${r.status}`).join(", ");
+        toast.success(`Invoice approved by admin. Xero POs updated: ${summary}`);
+      } else {
+        toast.success("Invoice approved by admin");
+      }
     } catch (e: any) {
       toast.error(e?.message ?? "Failed to approve invoice");
     }
@@ -568,7 +577,16 @@ export default function InvoiceDetail() {
       if ((result as any).requiresAdminApproval) {
         toast.warning("Discrepancy exceeds staff threshold — admin approval required.");
       } else {
-        toast.success("Invoice approved");
+        const xeroResults = (result as any).xeroUpdateResults as Array<{ poNumber: string; status: string; error?: string }> | undefined;
+        const xeroWarning = (result as any).xeroWarning as string | undefined;
+        if (xeroWarning) {
+          toast.warning(`Invoice approved — but Xero PO update failed: ${xeroWarning}`);
+        } else if (xeroResults && xeroResults.length > 0) {
+          const summary = xeroResults.map(r => `${r.poNumber} → ${r.status}`).join(", ");
+          toast.success(`Invoice approved. Xero POs updated: ${summary}`);
+        } else {
+          toast.success("Invoice approved");
+        }
       }
     } catch (e: any) {
       toast.error(e?.message ?? "Failed to approve invoice");

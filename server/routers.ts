@@ -692,52 +692,69 @@ export const appRouter = router({
           metadata: { approvedBy: ctx.user.id, approvedAt: new Date().toISOString(), invoiceTotal, discrepancyAmount },
         });
 
-        // Sync PO details in Xero (same as adminApprove) — move PO to AUTHORISED
+        // ── Sync PO details in Xero ─────────────────────────────────────────────────
+        const xeroStaffResults: Array<{ poNumber: string; status: string; error?: string }> = [];
         const staffClientId = process.env.XERO_CLIENT_ID;
         const staffClientSecret = process.env.XERO_CLIENT_SECRET;
-        if (staffClientId && staffClientSecret) {
-          const rawData = invoice.extractedRawData as any;
-          const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
-          const primaryPo = invoice.extractedPoNumber;
-          // Manual PO list takes priority — do not merge raw data scan
-          const allPoNumbers: string[] = extractedPoNumbersJson && extractedPoNumbersJson.length > 0
-            ? Array.from(new Set(extractedPoNumbersJson.map(p => p.trim()).filter(Boolean)))
-            : primaryPo
-              ? [primaryPo]
-              : Array.from(new Set(extractAllPoNumbers(rawData ?? {}))).filter(Boolean);
 
-          if (allPoNumbers.length > 0) {
-            const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
-            const lineItems = await getLineItemsByInvoice(input.invoiceId);
-            const xeroLineItems = lineItems.length > 0
-              ? lineItems.map((li) => ({
+        const staffPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
+        const staffPrimaryPo = invoice.extractedPoNumber;
+        const staffPoNumbers: string[] =
+          staffPoNumbersJson && staffPoNumbersJson.length > 0
+            ? Array.from(new Set(staffPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)))
+            : staffPrimaryPo
+            ? [staffPrimaryPo]
+            : [];
+
+        if (staffClientId && staffClientSecret && staffPoNumbers.length > 0) {
+          const staffSupplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
+          const staffSupplierName = staffSupplier?.name ?? invoice.extractedSupplierName ?? undefined;
+          const staffLineItems = await getLineItemsByInvoice(input.invoiceId);
+          const staffXeroLineItems = staffLineItems.length > 0
+            ? staffLineItems.map((li) => {
+                const unitEx = parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0");
+                const taxRate = li.taxRate != null ? parseFloat(li.taxRate.toString()) : 10;
+                return {
                   description: li.description ?? "Service",
                   quantity: parseFloat(li.quantity?.toString() ?? "1"),
-                  unitAmount: parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0"),
+                  unitAmount: unitEx,
                   accountCode: li.accountCode ?? "300",
-                }))
-              : undefined;
+                  taxType: taxRate > 0 ? "INPUT" : "NONE",
+                };
+              })
+            : undefined;
 
-            await Promise.allSettled(
-              allPoNumbers.map((poNum) =>
-                updateXeroPODetails(
-                  poNum,
-                  {
-                    invoiceNumber: invoice.extractedInvoiceNumber ?? undefined,
-                    supplierName: supplier?.name ?? invoice.extractedSupplierName ?? undefined,
-                    description: (invoice as any).description ?? undefined,
-                    status: "AUTHORISED",
-                    lineItems: xeroLineItems,
-                  },
-                  staffClientId,
-                  staffClientSecret
-                )
-              )
-            );
+          console.log(`[StaffApproval] Updating ${staffPoNumbers.length} PO(s) in Xero:`, staffPoNumbers);
+          for (const poNum of staffPoNumbers) {
+            try {
+              const result = await updateXeroPODetails(
+                poNum,
+                {
+                  invoiceNumber: invoice.extractedInvoiceNumber ?? undefined,
+                  supplierName: staffSupplierName,
+                  status: "AUTHORISED",
+                  lineItems: staffXeroLineItems,
+                },
+                staffClientId,
+                staffClientSecret
+              );
+              xeroStaffResults.push({ poNumber: poNum, status: result.finalStatus });
+            } catch (err: any) {
+              xeroStaffResults.push({ poNumber: poNum, status: "ERROR", error: err?.message ?? "Unknown error" });
+              console.error(`[StaffApproval] Failed to update PO ${poNum}:`, err?.message);
+            }
           }
         }
 
-        return { success: true, requiresAdminApproval: false };
+        const xeroStaffErrors = xeroStaffResults.filter(r => r.status === "ERROR");
+        return {
+          success: true,
+          requiresAdminApproval: false,
+          xeroUpdateResults: xeroStaffResults,
+          xeroWarning: xeroStaffErrors.length > 0
+            ? `PO update failed for: ${xeroStaffErrors.map(r => `${r.poNumber}: ${r.error}`).join("; ")}`
+            : undefined,
+        };
       }),
 
     // Admin approve — for invoices without PO numbers OR outside staff thresholds
@@ -748,6 +765,7 @@ export const appRouter = router({
         const invoice = await getInvoiceById(input.invoiceId);
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
 
+        // ── 1. Mark approved in DB first ──────────────────────────────────────
         await updateInvoice(input.invoiceId, {
           status: "approved" as any,
           adminApproved: true,
@@ -757,61 +775,93 @@ export const appRouter = router({
           requiresAdminApproval: false,
         } as any);
 
+        // ── 2. Resolve PO numbers (manual list takes priority) ────────────────
+        const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
+        const primaryPo = invoice.extractedPoNumber;
+        const allPoNumbers: string[] =
+          extractedPoNumbersJson && extractedPoNumbersJson.length > 0
+            ? Array.from(new Set(extractedPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)))
+            : primaryPo
+            ? [primaryPo]
+            : [];
+
+        // ── 3. Sync each PO in Xero ───────────────────────────────────────────
+        const xeroUpdateResults: Array<{ poNumber: string; status: string; error?: string }> = [];
+        const clientId = process.env.XERO_CLIENT_ID;
+        const clientSecret = process.env.XERO_CLIENT_SECRET;
+
+        if (clientId && clientSecret && allPoNumbers.length > 0) {
+          const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
+          const supplierName = supplier?.name ?? invoice.extractedSupplierName ?? undefined;
+          const lineItems = await getLineItemsByInvoice(input.invoiceId);
+
+          // Build Xero line items from the invoice's saved line items
+          // Use GST-inclusive unit amounts (unitPrice * 1.1 if taxRate is null/10)
+          const xeroLineItems = lineItems.length > 0
+            ? lineItems.map((li) => {
+                const unitEx = parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0");
+                const taxRate = li.taxRate != null ? parseFloat(li.taxRate.toString()) : 10;
+                const unitInc = parseFloat((unitEx * (1 + taxRate / 100)).toFixed(2));
+                return {
+                  description: li.description ?? "Service",
+                  quantity: parseFloat(li.quantity?.toString() ?? "1"),
+                  unitAmount: unitEx, // Xero line items use exclusive amounts; tax is applied via TaxType
+                  accountCode: li.accountCode ?? "300",
+                  taxType: taxRate > 0 ? "INPUT" : "NONE",
+                };
+              })
+            : undefined;
+
+          console.log(`[Approval] Updating ${allPoNumbers.length} PO(s) in Xero for invoice ${invoice.extractedInvoiceNumber}:`, allPoNumbers);
+
+          for (const poNum of allPoNumbers) {
+            try {
+              const result = await updateXeroPODetails(
+                poNum,
+                {
+                  invoiceNumber: invoice.extractedInvoiceNumber ?? undefined,
+                  supplierName,
+                  status: "AUTHORISED",
+                  lineItems: xeroLineItems,
+                },
+                clientId,
+                clientSecret
+              );
+              xeroUpdateResults.push({ poNumber: poNum, status: result.finalStatus });
+              console.log(`[Approval] PO ${poNum} updated successfully. Final status: ${result.finalStatus}`);
+            } catch (err: any) {
+              const msg = err?.message ?? "Unknown error";
+              xeroUpdateResults.push({ poNumber: poNum, status: "ERROR", error: msg });
+              console.error(`[Approval] Failed to update PO ${poNum} in Xero:`, msg);
+            }
+          }
+        } else if (allPoNumbers.length === 0) {
+          console.log(`[Approval] No PO numbers found on invoice ${input.invoiceId} — skipping Xero PO update`);
+        } else {
+          console.warn(`[Approval] XERO_CLIENT_ID or XERO_CLIENT_SECRET not set — skipping Xero PO update`);
+        }
+
+        // ── 4. Log the result ─────────────────────────────────────────────────
+        const xeroSummary = xeroUpdateResults.length > 0
+          ? ` Xero PO updates: ${xeroUpdateResults.map(r => `${r.poNumber}=${r.status}${r.error ? ` (${r.error})` : ""}`).join(", ")}`
+          : "";
+
         await createConversationNote({
           invoiceId: input.invoiceId,
           authorId: ctx.user.id,
           type: "status_change",
-          content: `Invoice approved by admin (${ctx.user.name ?? "admin"}).${input.notes ? ` Notes: ${input.notes}` : ""}`,
-          metadata: { approvedBy: ctx.user.id, approvedAt: new Date().toISOString() },
+          content: `Invoice approved by admin (${ctx.user.name ?? "admin"}).${input.notes ? ` Notes: ${input.notes}` : ""}${xeroSummary}`,
+          metadata: { approvedBy: ctx.user.id, approvedAt: new Date().toISOString(), xeroUpdateResults },
         });
 
-        // Sync PO details in Xero if PO numbers are present
-        const clientId = process.env.XERO_CLIENT_ID;
-        const clientSecret = process.env.XERO_CLIENT_SECRET;
-        if (clientId && clientSecret) {
-          const rawData = invoice.extractedRawData as any;
-          const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
-          const primaryPo = invoice.extractedPoNumber;
-          // Manual PO list takes priority — do not merge raw data scan
-          const allPoNumbers: string[] = extractedPoNumbersJson && extractedPoNumbersJson.length > 0
-            ? Array.from(new Set(extractedPoNumbersJson.map(p => p.trim()).filter(Boolean)))
-            : primaryPo
-              ? [primaryPo]
-              : Array.from(new Set(extractAllPoNumbers(rawData ?? {}))).filter(Boolean);
-
-          if (allPoNumbers.length > 0) {
-            const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
-            const lineItems = await getLineItemsByInvoice(input.invoiceId);
-            const xeroLineItems = lineItems.length > 0
-              ? lineItems.map((li) => ({
-                  description: li.description ?? "Service",
-                  quantity: parseFloat(li.quantity?.toString() ?? "1"),
-                  unitAmount: parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0"),
-                  accountCode: li.accountCode ?? "300",
-                }))
-              : undefined;
-
-            // Update each PO with invoice details and move to AUTHORISED
-            await Promise.allSettled(
-              allPoNumbers.map((poNum) =>
-                updateXeroPODetails(
-                  poNum,
-                  {
-                    invoiceNumber: invoice.extractedInvoiceNumber ?? undefined,
-                    supplierName: supplier?.name ?? invoice.extractedSupplierName ?? undefined,
-                    description: (invoice as any).description ?? undefined,
-                    status: "AUTHORISED",
-                    lineItems: xeroLineItems,
-                  },
-                  clientId,
-                  clientSecret
-                )
-              )
-            );
-          }
-        }
-
-        return { success: true };
+        const xeroErrors = xeroUpdateResults.filter(r => r.status === "ERROR");
+        return {
+          success: true,
+          xeroUpdateResults,
+          xeroWarning: xeroErrors.length > 0
+            ? `PO update failed for: ${xeroErrors.map(r => `${r.poNumber}: ${r.error}`).join("; ")}`
+            : undefined,
+        };
       }),
 
     // Send dispute email
