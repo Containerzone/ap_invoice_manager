@@ -695,6 +695,14 @@ export default function InvoiceDetail() {
   const anyAlreadyBilled = poResults.some((r) => r.alreadyBilled);
   const anyNotFound = poResults.some((r) => !r.found);
   const anyOverBilled = poResults.some((r) => r.overBilled);
+  // Total net diff across all POs (positive = net over-billed, negative = net under-billed)
+  const totalNetDiff = (invoice as any).totalNetDiff != null
+    ? parseFloat((invoice as any).totalNetDiff.toString())
+    : poResults.filter((r) => r.found && !r.alreadyBilled && r.rawDiff !== undefined)
+        .reduce((sum, r) => sum + (r.rawDiff ?? 0), 0);
+  const totalNetDiffAbs = Math.abs(Math.round(totalNetDiff * 100) / 100);
+  const netOverBilled = totalNetDiff > 0.01;
+  const netUnderBilled = totalNetDiff < -0.01;
 
   const noteTypeConfig: Record<string, { icon: React.ComponentType<any>; color: string; label: string }> = {
     note:           { icon: MessageSquare, color: "text-blue-500",   label: "Note" },
@@ -958,9 +966,11 @@ export default function InvoiceDetail() {
             <p className="text-sm font-semibold text-emerald-800">Billed Amount is Lower than PO — Safe to Approve</p>
             <p className="text-sm text-emerald-700 mt-0.5">
               {poResults.length > 1
-                ? <>Each PO’s invoice line items are within the approved PO budget. All {poResults.length} POs verified as under budget. You may proceed to approve and push to Xero.</>
+                ? <>Each PO's invoice line items are within the approved PO budget. All {poResults.length} POs verified as under budget.
+                   {netUnderBilled && <> Total net saving: <strong>{formatCurrency(totalNetDiffAbs)}</strong> under PO budget.</>}
+                   {" "}You may proceed to approve and push to Xero.</>
                 : <>Invoice total {formatCurrency(invoice.extractedTotal)} is lower than the Xero PO total{" "}
-                   {formatCurrency(invoice.xeroTotal)}. The billed amount is within the approved PO budget.
+                   {formatCurrency(invoice.xeroTotal)} by <strong>{formatCurrency(totalNetDiffAbs)}</strong>. The billed amount is within the approved PO budget.
                    You may proceed to approve and push to Xero.</>
               }
             </p>
@@ -1029,21 +1039,31 @@ export default function InvoiceDetail() {
           );
         }
         if (anyOverBilled) {
-          const firstOver = poResults.find((r) => r.overBilled);
-          // Use the grouped line-item total if available (multi-PO), otherwise invoice total
-          const invoiceSideAmt = firstOver?.invoiceLineItemTotal ?? invoice.extractedTotal;
+          const overBilledPOs = poResults.filter((r) => r.overBilled);
+          const underBilledPOs = poResults.filter((r) => r.found && !r.alreadyBilled && r.underBilled);
           return (
             <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
               <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-              <div>
+              <div className="space-y-1">
                 <p className="text-sm font-semibold text-amber-800">Amount Discrepancy — Invoice Exceeds PO</p>
-                <p className="text-sm text-amber-700 mt-0.5">
-                  {firstOver?.invoiceLineItemTotal !== undefined
-                    ? <>Invoice line items for PO <strong>{firstOver.poNumber}</strong> ({formatCurrency(invoiceSideAmt)}) exceed Xero PO total{" "}
-                       {formatCurrency(firstOver?.poTotal)} by <strong>{formatCurrency(firstOver?.diff)}</strong>.</>
-                    : <>Invoice total {formatCurrency(invoice.extractedTotal)} exceeds Xero PO total{" "}
-                       {formatCurrency(firstOver?.poTotal)} by <strong>{formatCurrency(firstOver?.diff)}</strong>.</>
-                  }
+                {overBilledPOs.map((r) => (
+                  <p key={r.poNumber} className="text-sm text-amber-700">
+                    PO <strong>{r.poNumber}</strong>: invoice lines {formatCurrency(r.invoiceLineItemTotal ?? invoice.extractedTotal)}{" "}
+                    vs PO total {formatCurrency(r.poTotal)} — <strong className="text-red-700">over by {formatCurrency(r.diff)}</strong>
+                  </p>
+                ))}
+                {underBilledPOs.map((r) => (
+                  <p key={r.poNumber} className="text-sm text-emerald-700">
+                    PO <strong>{r.poNumber}</strong>: invoice lines {formatCurrency(r.invoiceLineItemTotal ?? invoice.extractedTotal)}{" "}
+                    vs PO total {formatCurrency(r.poTotal)} — <strong>under by {formatCurrency(Math.abs(r.rawDiff ?? 0))}</strong>
+                  </p>
+                ))}
+                <p className="text-sm font-medium text-amber-800 border-t border-amber-200 pt-1 mt-1">
+                  Net total difference: {netOverBilled
+                    ? <><strong className="text-red-700">+{formatCurrency(totalNetDiffAbs)}</strong> over budget overall</>
+                    : netUnderBilled
+                      ? <><strong className="text-emerald-700">−{formatCurrency(totalNetDiffAbs)}</strong> under budget overall (but flagged because at least one PO is over-billed)</>  
+                      : <>amounts balance out overall</>}
                 </p>
               </div>
             </div>

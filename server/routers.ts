@@ -30,6 +30,7 @@ import {
   upsertXeroToken,
   deleteXeroToken,
   logEmailReply,
+  getPoVarianceReport,
 } from "./db";
 import { storagePut } from "./storage";
 import { extractInvoiceData, extractAllPoNumbers } from "./extractionService";
@@ -554,11 +555,17 @@ export const appRouter = router({
         );
 
         const anyAlreadyBilled = poLookups.some((r) => (r as any).alreadyBilled);
-        const anyOverBilled = poLookups.some((r) => (r as any).overBilled);
+        const anyOverBilled = poLookups.some((r) => (r as any).overBilled);   // ANY single PO over-billed → flag
         const anyNotFound = poLookups.some((r) => !r.found);
         const anyDiscrepancy = anyAlreadyBilled || anyOverBilled || anyNotFound;
         const allUnderBilled = !anyAlreadyBilled && poLookups.every((r) => r.found && (r as any).underBilled);
         const allFound = poLookups.every((r) => r.found);
+
+        // Total net difference across all POs: positive = net over-billed, negative = net under-billed
+        const totalNetDiff = poLookups
+          .filter((r) => r.found && !(r as any).alreadyBilled && r.rawDiff !== undefined)
+          .reduce((sum, r) => sum + (r.rawDiff ?? 0), 0);
+        const totalNetDiffRounded = Math.round(totalNetDiff * 100) / 100;
 
         // Determine invoice status:
         // - any PO already BILLED → flagged (duplicate billing risk)
@@ -587,6 +594,7 @@ export const appRouter = router({
           xeroVerifiedAt: new Date(),
           hasDiscrepancy: anyDiscrepancy,
           discrepancyAmount: anyDiscrepancy && firstFound ? firstFound.diff.toString() : null,
+          totalNetDiff: totalNetDiffRounded.toString(),
           status: newStatus as any,
           xeroPoResults: poLookups as any,
         });
@@ -621,7 +629,7 @@ export const appRouter = router({
           metadata: { poLookups, extractedTotal, anyDiscrepancy, anyAlreadyBilled, allFound, allUnderBilled },
         });
 
-        return { matched: allFound, discrepancy: anyDiscrepancy, underBudget: allUnderBilled, poResults: poLookups };
+        return { matched: allFound, discrepancy: anyDiscrepancy, underBudget: allUnderBilled, poResults: poLookups, totalNetDiff: totalNetDiffRounded };
       }),
 
     // Staff approve — for invoices within staff approval thresholds
@@ -1266,6 +1274,51 @@ export const appRouter = router({
     disconnect: adminProcedure.mutation(async () => {
       await deleteXeroToken();
       return { success: true };
+    }),
+  }),
+
+  // ─── Reports ─────────────────────────────────────────────────────────────────
+  reports: router({
+    poVariance: protectedProcedure.query(async () => {
+      const allRows = await getPoVarianceReport();
+      // Only show invoices that have been explicitly approved or resolved
+      const rows = allRows.filter((r) =>
+        ["approved", "resolved"].includes(r.status ?? "")
+      );
+      return rows.map((r) => {
+        const poResults: any[] = Array.isArray(r.xeroPoResults) ? r.xeroPoResults : [];
+        const poBreakdown = poResults
+          .filter((p) => p.found && !p.alreadyBilled)
+          .map((p) => ({
+            poNumber: p.poNumber as string,
+            poTotal: p.poTotal as number,
+            invoiceLineItemTotal: (p.invoiceLineItemTotal ?? null) as number | null,
+            rawDiff: (p.rawDiff ?? 0) as number,
+            overBilled: !!(p.overBilled),
+            underBilled: !!(p.underBilled),
+          }));
+        // Compute overall PO total from all per-PO breakdowns (not the legacy xeroTotal field)
+        const computedXeroTotal = poBreakdown.length > 0
+          ? poBreakdown.reduce((s, p) => s + p.poTotal, 0)
+          : r.xeroTotal != null ? parseFloat(r.xeroTotal.toString()) : null;
+        const totalNetDiff = r.totalNetDiff != null
+          ? parseFloat(r.totalNetDiff.toString())
+          : poBreakdown.reduce((s, p) => s + p.rawDiff, 0);
+        return {
+          invoiceId: r.invoiceId,
+          invoiceNumber: r.invoiceNumber,
+          supplierName: r.supplierName,
+          invoiceDate: r.invoiceDate,
+          status: r.status,
+          extractedTotal: r.extractedTotal != null ? parseFloat(r.extractedTotal.toString()) : null,
+          xeroTotal: computedXeroTotal != null ? Math.round(computedXeroTotal * 100) / 100 : null,
+          totalNetDiff: Math.round(totalNetDiff * 100) / 100,
+          poBreakdown,
+          staffApproved: r.staffApproved,
+          adminApproved: r.adminApproved,
+          approvedAt: r.adminApprovedAt ?? r.staffApprovedAt,
+        };
+      });
     }),
   }),
 });

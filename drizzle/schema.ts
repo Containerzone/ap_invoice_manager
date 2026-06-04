@@ -110,6 +110,8 @@ export const invoices = mysqlTable("invoices", {
   hasDiscrepancy: boolean("hasDiscrepancy").default(false),
   discrepancyNotes: text("discrepancyNotes"),
   discrepancyAmount: decimal("discrepancyAmount", { precision: 15, scale: 2 }),
+  // Total net difference across all POs: positive = net over-billed, negative = net under-billed
+  totalNetDiff: decimal("totalNetDiff", { precision: 15, scale: 2 }),
 
   // Multi-PO numbers (up to 15, stored as JSON array)
   extractedPoNumbers: json("extractedPoNumbers"), // string[]

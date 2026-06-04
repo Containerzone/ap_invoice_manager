@@ -1,0 +1,1 @@
+ALTER TABLE `invoices` ADD `totalNetDiff` decimal(15,2);

@@ -115,3 +115,5 @@
 - [x] Fix: verifyWithXero now scans DB line items first for PO numbers (definitive source), then merges with extractedPoNumbers and raw data
 - [x] Fix: groupedTotal now always uses line-item total when available (not just for multi-PO), falls back to invoice total only when no line items contain the PO number
 - [x] PO pattern documented: P (Pacific National), SL (Straitlink), AZ (Aurizon), TR (Tasmanian Railways) + any other 1-2 letter prefix
+- [x] Multi-PO verification summary: show total net difference (sum of all PO diffs), flag as discrepancy if ANY single PO is over-billed even if overall total is under
+- [x] Reports portal: approved invoices PO variance dashboard — show each approved invoice with PO amount, invoice amount, and net over/under per PO and overall

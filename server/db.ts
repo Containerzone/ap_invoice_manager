@@ -370,3 +370,51 @@ export async function deleteXeroToken(): Promise<void> {
   if (!db) return;
   await db.delete(xeroTokens);
 }
+
+// ─── Reports ──────────────────────────────────────────────────────────────────
+
+export interface PoVarianceRow {
+  invoiceId: number;
+  invoiceNumber: string | null;
+  supplierName: string | null;
+  invoiceDate: string | null;
+  status: string | null;
+  extractedTotal: string | null;
+  xeroTotal: string | null;
+  totalNetDiff: string | null;
+  xeroPoResults: unknown;
+  staffApproved: boolean | null;
+  adminApproved: boolean | null;
+  staffApprovedAt: Date | null;
+  adminApprovedAt: Date | null;
+}
+
+/**
+ * Returns all approved/resolved invoices with their PO variance data.
+ * Used by the Reports portal to show the net over/under position per invoice.
+ */
+export async function getPoVarianceReport(): Promise<PoVarianceRow[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({
+      invoiceId: invoices.id,
+      invoiceNumber: invoices.extractedInvoiceNumber,
+      supplierName: invoices.extractedSupplierName,
+      invoiceDate: invoices.extractedInvoiceDate,
+      status: invoices.status,
+      extractedTotal: invoices.extractedTotal,
+      xeroTotal: invoices.xeroTotal,
+      totalNetDiff: invoices.totalNetDiff,
+      xeroPoResults: invoices.xeroPoResults,
+      staffApproved: invoices.staffApproved,
+      adminApproved: invoices.adminApproved,
+      staffApprovedAt: invoices.staffApprovedAt,
+      adminApprovedAt: invoices.adminApprovedAt,
+    })
+    .from(invoices);
+  // Filter in JS to avoid complex SQL — dataset is small
+  return rows.filter((r) =>
+    ["approved", "resolved", "under_budget", "verified"].includes(r.status ?? "")
+  );
+}

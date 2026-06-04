@@ -19,6 +19,7 @@ import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import XeroCallback from "./pages/XeroCallback";
 import BulkQuery from "./pages/BulkQuery";
+import Reports from "./pages/Reports";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -78,6 +79,7 @@ function AppRoutes() {
               <Route path="/settings">
                 <AdminGuard><Settings /></AdminGuard>
               </Route>
+              <Route path="/reports" component={Reports} />
               <Route component={NotFound} />
             </Switch>
           </DashboardLayout>
