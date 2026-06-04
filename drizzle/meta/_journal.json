@@ -50,6 +50,13 @@
       "when": 1780542532244,
       "tag": "0006_natural_the_twelve",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1780547798257,
+      "tag": "0007_white_roughhouse",
+      "breakpoints": true
     }
   ]
 }

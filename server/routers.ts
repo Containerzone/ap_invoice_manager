@@ -263,18 +263,35 @@ export const appRouter = router({
               unitPrice: li.unitPrice?.toString() ?? undefined,
               amount: li.amount?.toString() ?? undefined,
               taxRate: li.taxRate?.toString() ?? undefined,
+              // Store per-line-item PO number and custRef (e.g. from Cust Ref column on Pacific National invoices)
+              poNumber: li.poNumber ?? undefined,
+              custRef: li.custRef ?? undefined,
             }))
           );
         }
 
-        // After saving line items, scan ALL saved line item descriptions for PO numbers.
-        // This is the definitive source — the LLM may miss PO numbers in descriptions.
-        // PO pattern: 1-2 uppercase letters + exactly 6 digits (e.g. P123456, SL123456, AZ123456, AD123456)
+        // After saving line items, scan ALL sources for PO numbers:
+        // 1. Per-line-item poNumber field (most reliable — structured from LLM)
+        // 2. Per-line-item custRef field (e.g. "CBHU4279322 P702739")
+        // 3. Description text scan
+        // 4. Notes and invoice number fields
         const PO_SCAN_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
         const poFromLineItems = new Set<string>();
         for (const li of extracted.lineItems) {
-          const matches = li.description?.match(PO_SCAN_PATTERN);
-          if (matches) matches.forEach((m) => poFromLineItems.add(m));
+          // Structured per-line PO number (highest priority)
+          if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) {
+            poFromLineItems.add(li.poNumber);
+          }
+          // custRef scan (e.g. "CBHU4279322 P702739" — extract the PO token)
+          if (li.custRef) {
+            const custRefMatches = li.custRef.match(PO_SCAN_PATTERN);
+            if (custRefMatches) custRefMatches.forEach((m) => poFromLineItems.add(m));
+          }
+          // Description text scan
+          if (li.description) {
+            const descMatches = li.description.match(PO_SCAN_PATTERN);
+            if (descMatches) descMatches.forEach((m) => poFromLineItems.add(m));
+          }
         }
         // Also scan notes and invoice number fields
         const scanText = [extracted.invoiceNumber, extracted.notes].filter(Boolean).join(" ");
@@ -282,7 +299,7 @@ export const appRouter = router({
           const matches = scanText.match(PO_SCAN_PATTERN);
           if (matches) matches.forEach((m) => poFromLineItems.add(m));
         }
-        // Merge with LLM-found PO numbers
+        // Merge with LLM-found PO numbers (from top-level poNumber field)
         const allPoNumbers = Array.from(new Set([...allPoNumbersFromExtraction, ...Array.from(poFromLineItems)]));
 
         // Save the full list of PO numbers to the DB
@@ -369,12 +386,22 @@ export const appRouter = router({
         // Fetch invoice line items FIRST — they are the definitive source for PO numbers
         const invoiceLineItems = await getLineItemsByInvoice(input.invoiceId);
 
-        // Scan DB line items for PO numbers (most reliable source)
+        // Scan DB line items for PO numbers — check all fields (most reliable source)
         const poFromDbLineItems = new Set<string>();
         for (const li of invoiceLineItems) {
+          // Priority 1: structured per-line poNumber field (e.g. from Cust Ref column)
+          if ((li as any).poNumber && /^[A-Z]{1,2}\d{6}$/.test((li as any).poNumber)) {
+            poFromDbLineItems.add((li as any).poNumber);
+          }
+          // Priority 2: custRef field scan (e.g. "CBHU4279322 P702739")
+          if ((li as any).custRef) {
+            const custRefMatches = ((li as any).custRef as string).match(PO_PATTERN);
+            if (custRefMatches) custRefMatches.forEach((m) => poFromDbLineItems.add(m));
+          }
+          // Priority 3: description text scan
           const desc = li.description ?? "";
-          const matches = desc.match(PO_PATTERN);
-          if (matches) matches.forEach((m) => poFromDbLineItems.add(m));
+          const descMatches = desc.match(PO_PATTERN);
+          if (descMatches) descMatches.forEach((m) => poFromDbLineItems.add(m));
         }
 
         // Also collect from: extractedPoNumbers JSON array, primary field, and raw data
@@ -400,18 +427,32 @@ export const appRouter = router({
         }
 
         /**
-         * For a given PO number, sum the amounts of invoice line items whose description
-         * contains that PO number. Returns null if no line items match (fall back to invoice total).
+         * For a given PO number, sum the amounts of invoice line items associated with that PO.
+         * Checks (in priority order):
+         * 1. li.poNumber field (structured, most reliable — e.g. from Cust Ref column)
+         * 2. li.custRef field (raw ref text, e.g. "CBHU4279322 P702739")
+         * 3. li.description text scan (fallback for invoices where PO is embedded in description)
+         * Returns null if no line items match (caller falls back to invoice total).
          */
         function getGroupedLineItemTotal(poNum: string): number | null {
           if (invoiceLineItems.length === 0) return null;
           const matched = invoiceLineItems.filter((li) => {
+            // Priority 1: structured per-line poNumber field
+            if (li.poNumber && li.poNumber === poNum) return true;
+            // Priority 2: custRef text scan (e.g. "CBHU4279322 P702739")
+            if (li.custRef) {
+              const custRefMatches = li.custRef.match(PO_PATTERN);
+              if (custRefMatches && custRefMatches.includes(poNum)) return true;
+            }
+            // Priority 3: description text scan
             const desc = li.description ?? "";
-            const matches = desc.match(PO_PATTERN);
-            return matches && matches.includes(poNum);
+            const descMatches = desc.match(PO_PATTERN);
+            return descMatches ? descMatches.includes(poNum) : false;
           });
           if (matched.length === 0) return null;
-          return matched.reduce((sum, li) => sum + parseFloat(li.amount?.toString() ?? "0"), 0);
+          const total = matched.reduce((sum, li) => sum + parseFloat(li.amount?.toString() ?? "0"), 0);
+          console.log(`[verifyWithXero] PO ${poNum}: matched ${matched.length} line item(s), total = ${total}`);
+          return total;
         }
 
         // Xero PO statuses that allow amount comparison
@@ -1141,6 +1182,8 @@ export const appRouter = router({
           unitPrice: z.string().optional().nullable(),
           amount: z.string().optional().nullable(),
           taxRate: z.string().optional().nullable(),
+          poNumber: z.string().optional().nullable(),
+          custRef: z.string().optional().nullable(),
         })
       )
       .mutation(async ({ input }) => {

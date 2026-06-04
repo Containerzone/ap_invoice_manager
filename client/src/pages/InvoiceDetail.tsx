@@ -424,6 +424,8 @@ export default function InvoiceDetail() {
           quantity: li.quantity ?? "",
           unitPrice: li.unitPrice ?? "",
           amount: li.amount ?? "",
+          poNumber: (li as any).poNumber ?? "",
+          custRef: (li as any).custRef ?? "",
         }))
       );
     }
@@ -477,6 +479,8 @@ export default function InvoiceDetail() {
             quantity: li.quantity || null,
             unitPrice: li.unitPrice || null,
             amount: li.amount || null,
+            poNumber: (li as any).poNumber || null,
+            custRef: (li as any).custRef || null,
           })
         )
       );
@@ -1448,6 +1452,11 @@ export default function InvoiceDetail() {
                     <thead>
                       <tr className="border-b text-muted-foreground">
                         <th className="text-left pb-2.5 font-medium pr-3">Description</th>
+                        {/* Show PO Ref column when any line item has a poNumber or custRef */}
+                        {lineItems.some((li) => (li as any).poNumber || (li as any).custRef) && (
+                          <th className="text-left pb-2.5 font-medium w-28">PO Ref</th>
+                        )}
+                        {editMode && <th className="text-left pb-2.5 font-medium w-28">PO Ref</th>}
                         <th className="text-right pb-2.5 font-medium w-16">Qty</th>
                         <th className="text-right pb-2.5 font-medium w-24">Unit Price</th>
                         <th className="text-right pb-2.5 font-medium w-24">Amount</th>
@@ -1460,6 +1469,9 @@ export default function InvoiceDetail() {
                             <tr key={li.id} className="text-foreground">
                               <td className="py-1.5 pr-2">
                                 <Input value={li.description} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, description: e.target.value } : x))} className="h-7 text-xs" placeholder="Description" />
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                <Input value={(li as any).poNumber ?? ""} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, poNumber: e.target.value } : x))} className="h-7 text-xs w-28" placeholder="P702739" title="PO number for this line" />
                               </td>
                               <td className="py-1.5 pr-2">
                                 <Input value={li.quantity} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, quantity: e.target.value } : x))} className="h-7 text-xs text-right w-16" placeholder="1" />
@@ -1480,6 +1492,15 @@ export default function InvoiceDetail() {
                         : lineItems.map((li) => (
                             <tr key={li.id} className="text-foreground hover:bg-muted/30 transition-colors">
                               <td className="py-2.5 pr-3 leading-relaxed">{li.description ?? "—"}</td>
+                              {lineItems.some((l) => (l as any).poNumber || (l as any).custRef) && (
+                                <td className="py-2.5 pr-3 text-xs font-mono text-primary">
+                                  {(li as any).poNumber
+                                    ? <span title={(li as any).custRef ?? ""}>{(li as any).poNumber}</span>
+                                    : (li as any).custRef
+                                      ? <span className="text-muted-foreground text-xs">{(li as any).custRef}</span>
+                                      : "—"}
+                                </td>
+                              )}
                               <td className="py-2.5 text-right tabular-nums text-muted-foreground">{li.quantity ?? "—"}</td>
                               <td className="py-2.5 text-right tabular-nums text-muted-foreground">{formatCurrency(li.unitPrice)}</td>
                               <td className="py-2.5 text-right tabular-nums font-medium">{formatCurrency(li.amount)}</td>

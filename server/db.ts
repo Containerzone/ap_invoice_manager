@@ -255,7 +255,7 @@ export async function getLineItemsByInvoice(invoiceId: number): Promise<InvoiceL
 
 export async function updateLineItem(
   id: number,
-  data: Partial<Pick<InvoiceLineItem, "description" | "quantity" | "unitPrice" | "amount" | "taxRate">>
+  data: Partial<Pick<InvoiceLineItem, "description" | "quantity" | "unitPrice" | "amount" | "taxRate" | "poNumber" | "custRef">>
 ): Promise<void> {
   const db = await getDb();
   if (!db) return;

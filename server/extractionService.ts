@@ -23,6 +23,10 @@ export interface ExtractedInvoiceData {
     unitPrice: number | null;
     amount: number | null;
     taxRate: number | null;
+    /** PO number associated with this specific line item (e.g. from a Cust Ref column) */
+    poNumber?: string | null;
+    /** Raw customer reference field (may contain container number + PO number) */
+    custRef?: string | null;
   }>;
   confidence: "high" | "medium" | "low";
   notes: string | null;
@@ -122,15 +126,27 @@ export function extractAllPoNumbers(data: ExtractedInvoiceData | null | undefine
   const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
   const found = new Set<string>();
 
-  // From LLM-identified poNumber
+  // From LLM-identified top-level poNumber
   if (data.poNumber && /^[A-Z]{1,2}\d{6}$/.test(data.poNumber)) {
     found.add(data.poNumber);
   }
 
-  // From all line item descriptions
+  // From all line items — check description, poNumber field, and custRef
   for (const li of (data.lineItems ?? [])) {
-    const matches = li.description.match(PO_PATTERN);
-    if (matches) matches.forEach((m) => found.add(m));
+    // Per-line-item poNumber (structured field — most reliable)
+    if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) {
+      found.add(li.poNumber);
+    }
+    // Per-line-item custRef (may contain container + PO, e.g. "CBHU4279322 P702739")
+    if (li.custRef) {
+      const custRefMatches = li.custRef.match(PO_PATTERN);
+      if (custRefMatches) custRefMatches.forEach((m) => found.add(m));
+    }
+    // Description text scan
+    if (li.description) {
+      const descMatches = li.description.match(PO_PATTERN);
+      if (descMatches) descMatches.forEach((m) => found.add(m));
+    }
   }
 
   // From combined text fields
@@ -180,8 +196,10 @@ const JSON_SCHEMA = {
           unitPrice: { type: ["number", "null"] },
           amount: { type: ["number", "null"] },
           taxRate: { type: ["number", "null"] },
+          poNumber: { type: ["string", "null"] },
+          custRef: { type: ["string", "null"] },
         },
-        required: ["description", "quantity", "unitPrice", "amount", "taxRate"],
+        required: ["description", "quantity", "unitPrice", "amount", "taxRate", "poNumber", "custRef"],
         additionalProperties: false,
       },
     },
@@ -200,7 +218,7 @@ const JSON_SCHEMA = {
 const EXTRACTION_PROMPT = `Extract all data from this invoice PDF and return it as JSON with this exact structure:
 {
   "invoiceNumber": "string or null",
-  "poNumber": "Purchase Order number or null. IMPORTANT: Look for patterns like 'PO#', 'PO:', 'Purchase Order', 'Order No', or in the reference/description fields. The PO number is exactly 2 uppercase letters followed by 6 digits (e.g. AD123456, BD001234, DD987654). Common prefixes are AD, BD, DD, ED. Search ALL text including reference fields, descriptions, and line items.",
+  "poNumber": "The primary/first Purchase Order number found on the invoice, or null. PO numbers are 1-2 uppercase letters followed by exactly 6 digits. Known supplier prefixes: P (Pacific National), SL (Straitlink), AZ (Aurizon), TR (Tasmanian Railways). Also look for AD, BD, DD, ED and other 1-2 letter prefixes. Search ALL text including reference fields, Cust Ref columns, descriptions, and line items.",
   "containerNumbers": ["array of container numbers like MSCU1234567 — ISO 6346 format: 4 letters + 7 digits"],
   "supplierName": "full legal company name or null",
   "supplierAbn": "Australian Business Number (11 digits) or null",
@@ -214,7 +232,17 @@ const EXTRACTION_PROMPT = `Extract all data from this invoice PDF and return it 
   "tax": number or null (GST/VAT amount),
   "total": number or null (final amount due),
   "currency": "3-letter currency code, default AUD",
-  "lineItems": [{ "description": "full line item description", "quantity": number|null, "unitPrice": number|null, "amount": number|null, "taxRate": number|null }],
+  "lineItems": [
+    {
+      "description": "full line item description text",
+      "quantity": number|null,
+      "unitPrice": number|null,
+      "amount": number|null (the line item amount/total, excluding GST if shown separately),
+      "taxRate": number|null (e.g. 10 for 10% GST),
+      "poNumber": "PO number for THIS specific line item — 1-2 uppercase letters + 6 digits (e.g. P702739, SL123456). Look in the Cust Ref column, reference column, or any column adjacent to this line. Extract ONLY the PO number token, not the full ref. null if not found.",
+      "custRef": "The full raw customer reference string for this line item (e.g. 'CBHU4279322 P702739'). This is the entire Cust Ref / Customer Reference field value for this line. null if not found."
+    }
+  ],
   "confidence": "high if all key fields found, medium if some missing, low if very little data",
   "notes": "any additional observations, warnings, or context — or null"
 }
@@ -222,7 +250,8 @@ Rules:
 - Container numbers: ISO 6346 format (4 letters + 7 digits, e.g. MSCU1234567)
 - ABN: 11 digits, often formatted as XX XXX XXX XXX — normalise to digits only
 - All monetary values must be numbers (not strings)
-- PO number: search ALL text including reference fields, description, and line items
+- PO numbers: 1-2 uppercase letters + exactly 6 digits. IMPORTANT: On freight/rail invoices, each line item often has its own PO number in a 'Cust Ref' or 'Customer Reference' column. Extract the PO number per line item into the poNumber field.
+- For Pacific National invoices: the Cust Ref column contains a container number followed by a PO number (e.g. 'CBHU4279322 P702739'). The PO number is the P-prefixed token.
 - Use null for any field not found
 Return ONLY valid JSON. No markdown, no explanation.`;
 

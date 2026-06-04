@@ -154,6 +154,10 @@ export const invoiceLineItems = mysqlTable("invoice_line_items", {
   amount: decimal("amount", { precision: 15, scale: 2 }),
   taxRate: decimal("taxRate", { precision: 5, scale: 2 }),
   accountCode: varchar("accountCode", { length: 50 }),
+  // PO number associated with this specific line item (e.g. from "Cust Ref" column on Pacific National invoices)
+  poNumber: varchar("poNumber", { length: 50 }),
+  // Raw customer reference field from invoice (may contain container number + PO number)
+  custRef: varchar("custRef", { length: 200 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
