@@ -680,6 +680,50 @@ export const appRouter = router({
           metadata: { approvedBy: ctx.user.id, approvedAt: new Date().toISOString(), invoiceTotal, discrepancyAmount },
         });
 
+        // Sync PO details in Xero (same as adminApprove) — move PO to AUTHORISED
+        const staffClientId = process.env.XERO_CLIENT_ID;
+        const staffClientSecret = process.env.XERO_CLIENT_SECRET;
+        if (staffClientId && staffClientSecret) {
+          const rawData = invoice.extractedRawData as any;
+          const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
+          const primaryPo = invoice.extractedPoNumber;
+          const allPoNumbers: string[] = Array.from(new Set([
+            ...(extractedPoNumbersJson ?? []),
+            ...(primaryPo ? [primaryPo] : []),
+            ...extractAllPoNumbers(rawData ?? {}),
+          ])).filter(Boolean);
+
+          if (allPoNumbers.length > 0) {
+            const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
+            const lineItems = await getLineItemsByInvoice(input.invoiceId);
+            const xeroLineItems = lineItems.length > 0
+              ? lineItems.map((li) => ({
+                  description: li.description ?? "Service",
+                  quantity: parseFloat(li.quantity?.toString() ?? "1"),
+                  unitAmount: parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0"),
+                  accountCode: li.accountCode ?? "300",
+                }))
+              : undefined;
+
+            await Promise.allSettled(
+              allPoNumbers.map((poNum) =>
+                updateXeroPODetails(
+                  poNum,
+                  {
+                    invoiceNumber: invoice.extractedInvoiceNumber ?? undefined,
+                    supplierName: supplier?.name ?? invoice.extractedSupplierName ?? undefined,
+                    description: (invoice as any).description ?? undefined,
+                    status: "AUTHORISED",
+                    lineItems: xeroLineItems,
+                  },
+                  staffClientId,
+                  staffClientSecret
+                )
+              )
+            );
+          }
+        }
+
         return { success: true, requiresAdminApproval: false };
       }),
 
@@ -733,7 +777,7 @@ export const appRouter = router({
                 }))
               : undefined;
 
-            // Update each PO with invoice details
+            // Update each PO with invoice details and move to AUTHORISED
             await Promise.allSettled(
               allPoNumbers.map((poNum) =>
                 updateXeroPODetails(
@@ -741,6 +785,8 @@ export const appRouter = router({
                   {
                     invoiceNumber: invoice.extractedInvoiceNumber ?? undefined,
                     supplierName: supplier?.name ?? invoice.extractedSupplierName ?? undefined,
+                    description: (invoice as any).description ?? undefined,
+                    status: "AUTHORISED",
                     lineItems: xeroLineItems,
                   },
                   clientId,

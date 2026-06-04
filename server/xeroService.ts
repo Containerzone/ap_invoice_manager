@@ -481,8 +481,16 @@ export async function convertPOsToBill(
         }
       );
       const poList = response.data?.PurchaseOrders ?? [];
-      if (poList.length === 0) continue;
+      if (poList.length === 0) {
+        console.warn(`[Xero] convertPOsToBill: PO ${poNumber} not found in Xero — skipping`);
+        continue;
+      }
       const po = poList[0];
+      const poStatus = po.Status as string;
+      // Only pull line items from POs that are AUTHORISED or BILLED (approved stage)
+      if (poStatus !== "AUTHORISED" && poStatus !== "BILLED") {
+        console.warn(`[Xero] convertPOsToBill: PO ${poNumber} is in status ${poStatus} (not AUTHORISED/BILLED) — including anyway but approval should have moved it to AUTHORISED first`);
+      }
       for (const li of po.LineItems ?? []) {
         allLineItems.push({
           description: li.Description ?? `PO ${poNumber}`,
@@ -560,11 +568,14 @@ export async function updateXeroPODetails(
     invoiceNumber?: string;
     supplierName?: string;
     supplierXeroContactId?: string;
+    status?: "DRAFT" | "SUBMITTED" | "AUTHORISED";
+    description?: string;
     lineItems?: Array<{
       description: string;
       quantity: number;
       unitAmount: number;
       accountCode?: string;
+      taxType?: string;
     }>;
   },
   clientId: string,
@@ -591,8 +602,16 @@ export async function updateXeroPODetails(
     const po = poList[0];
     const poId = po.PurchaseOrderID;
 
+    // Skip update if PO is already BILLED — it cannot be modified
+    if (po.Status === "BILLED") {
+      console.log(`[Xero] PO ${poNumber} is already BILLED — skipping update`);
+      return true;
+    }
+
     const updatePayload: Record<string, any> = { PurchaseOrderID: poId };
     if (updates.invoiceNumber) updatePayload.Reference = updates.invoiceNumber;
+    if (updates.description) updatePayload.DeliveryInstructions = updates.description;
+    if (updates.status) updatePayload.Status = updates.status;
     if (updates.supplierXeroContactId) {
       updatePayload.Contact = { ContactID: updates.supplierXeroContactId };
     } else if (updates.supplierName) {
@@ -604,6 +623,7 @@ export async function updateXeroPODetails(
         Quantity: li.quantity,
         UnitAmount: li.unitAmount,
         AccountCode: li.accountCode ?? "300",
+        ...(li.taxType ? { TaxType: li.taxType } : {}),
       }));
     }
 

@@ -117,3 +117,5 @@
 - [x] PO pattern documented: P (Pacific National), SL (Straitlink), AZ (Aurizon), TR (Tasmanian Railways) + any other 1-2 letter prefix
 - [x] Multi-PO verification summary: show total net difference (sum of all PO diffs), flag as discrepancy if ANY single PO is over-billed even if overall total is under
 - [x] Reports portal: approved invoices PO variance dashboard — show each approved invoice with PO amount, invoice amount, and net over/under per PO and overall
+- [x] Fix approval: update PO in Xero with supplier name, invoice amount, invoice number (→ reference), description, line items; move PO to AUTHORISED stage (skip if already BILLED)
+- [x] Fix resolve: instead of creating bill from scratch, find the approved PO(s) in Xero and use Xero's create-bill-from-PO API; mark each PO as BILLED after bill is created
