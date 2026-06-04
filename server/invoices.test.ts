@@ -491,6 +491,7 @@ describe("invoices.verifyWithXero", () => {
     vi.mocked(getInvoiceById).mockResolvedValueOnce({
       id: 99,
       extractedPoNumber: "AD123456",
+      extractedPoNumbers: ["AD123456", "BD654321"],
       extractedTotal: "2750.00", // total of both POs
       extractedInvoiceNumber: "INV-002",
       extractedRawData: {

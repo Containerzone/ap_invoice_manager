@@ -228,8 +228,8 @@ export const appRouter = router({
           supplierCreated = true;
         }
 
-        // Collect all PO numbers found across the invoice text
-        const allPoNumbers = extractAllPoNumbers(extracted as any);
+        // Collect all PO numbers found across the invoice text (from LLM-extracted data)
+        const allPoNumbersFromExtraction = extractAllPoNumbers(extracted as any);
 
         // Update invoice with extracted data
         await updateInvoice(input.invoiceId, {
@@ -265,6 +265,33 @@ export const appRouter = router({
               taxRate: li.taxRate?.toString() ?? undefined,
             }))
           );
+        }
+
+        // After saving line items, scan ALL saved line item descriptions for PO numbers.
+        // This is the definitive source — the LLM may miss PO numbers in descriptions.
+        // PO pattern: 1-2 uppercase letters + exactly 6 digits (e.g. P123456, SL123456, AZ123456, AD123456)
+        const PO_SCAN_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+        const poFromLineItems = new Set<string>();
+        for (const li of extracted.lineItems) {
+          const matches = li.description?.match(PO_SCAN_PATTERN);
+          if (matches) matches.forEach((m) => poFromLineItems.add(m));
+        }
+        // Also scan notes and invoice number fields
+        const scanText = [extracted.invoiceNumber, extracted.notes].filter(Boolean).join(" ");
+        if (scanText) {
+          const matches = scanText.match(PO_SCAN_PATTERN);
+          if (matches) matches.forEach((m) => poFromLineItems.add(m));
+        }
+        // Merge with LLM-found PO numbers
+        const allPoNumbers = Array.from(new Set([...allPoNumbersFromExtraction, ...Array.from(poFromLineItems)]));
+
+        // Save the full list of PO numbers to the DB
+        if (allPoNumbers.length > 0) {
+          await updateInvoice(input.invoiceId, {
+            extractedPoNumbers: allPoNumbers,
+            // Also set the primary PO to the first found if not already set
+            extractedPoNumber: extracted.poNumber ?? allPoNumbers[0] ?? undefined,
+          });
         }
 
         const supplierMsg = supplierCreated
@@ -332,15 +359,38 @@ export const appRouter = router({
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Xero not configured" });
         }
 
-        // Collect all PO numbers: extractedPoNumbers JSON array (new), primary field, and raw data
+        // PO pattern: 1-2 uppercase letters + exactly 6 digits
+        // Known supplier prefixes: P (Pacific National), SL (Straitlink), AZ (Aurizon), TR (Tasmanian Railways)
+        // Plus any other 1-2 letter prefix (AD, BD, DD, ED, A, B, D, E, etc.)
+        const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+
+        const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
+
+        // Fetch invoice line items FIRST — they are the definitive source for PO numbers
+        const invoiceLineItems = await getLineItemsByInvoice(input.invoiceId);
+
+        // Scan DB line items for PO numbers (most reliable source)
+        const poFromDbLineItems = new Set<string>();
+        for (const li of invoiceLineItems) {
+          const desc = li.description ?? "";
+          const matches = desc.match(PO_PATTERN);
+          if (matches) matches.forEach((m) => poFromDbLineItems.add(m));
+        }
+
+        // Also collect from: extractedPoNumbers JSON array, primary field, and raw data
         const rawData = invoice.extractedRawData as any;
         const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
         const primaryPo = invoice.extractedPoNumber;
+
+        // Merge all sources — DB line items take priority (scanned first)
         const allPoNumbers: string[] = Array.from(new Set([
+          ...Array.from(poFromDbLineItems),
           ...(extractedPoNumbersJson ?? []),
           ...(primaryPo ? [primaryPo] : []),
           ...extractAllPoNumbers(rawData ?? {}),
         ])).filter(Boolean);
+
+        console.log(`[verifyWithXero] Invoice ${input.invoiceId}: found ${allPoNumbers.length} PO(s): ${allPoNumbers.join(", ")} | DB line items: ${invoiceLineItems.length}`);
 
         if (allPoNumbers.length === 0) {
           throw new TRPCError({
@@ -348,14 +398,6 @@ export const appRouter = router({
             message: "No PO number found on this invoice. Cannot verify against Xero.",
           });
         }
-
-        const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
-
-        // Fetch invoice line items to group by PO number (for multi-PO invoices)
-        const invoiceLineItems = await getLineItemsByInvoice(input.invoiceId);
-
-        // PO pattern: 1-2 uppercase letters + exactly 6 digits
-        const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
 
         /**
          * For a given PO number, sum the amounts of invoice line items whose description
@@ -381,11 +423,10 @@ export const appRouter = router({
             const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
 
             // Determine the comparison amount for this PO:
-            // - If multiple POs exist: use the sum of line items tagged with this PO number
-            // - If single PO or no line item match: fall back to invoice total
-            const groupedTotal = allPoNumbers.length > 1
-              ? (getGroupedLineItemTotal(poNum) ?? extractedTotal)
-              : extractedTotal;
+            // Always try to use the sum of line items tagged with this PO number.
+            // This correctly handles both single-PO and multi-PO invoices.
+            // Falls back to invoice total only when no line items contain this PO number.
+            const groupedTotal = getGroupedLineItemTotal(poNum) ?? extractedTotal;
 
             if (!po) {
               return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, alreadyBilled: false, diff: groupedTotal, invoiceLineItemTotal: groupedTotal, lineItems: [] };

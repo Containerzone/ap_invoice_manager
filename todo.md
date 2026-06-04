@@ -111,3 +111,7 @@
 - [x] Admin Approve button moved before Resolve & Push to Xero in action bar
 - [x] Per-PO result card shows "Invoice lines: $X" alongside "PO total: $Y" for multi-PO invoices
 - [x] Over-billed banner updated to show per-PO line-item total for multi-PO invoices
+- [x] Fix: extractedPoNumbers not being saved during extraction — now scans DB line items after saving and writes all found PO numbers to extractedPoNumbers field
+- [x] Fix: verifyWithXero now scans DB line items first for PO numbers (definitive source), then merges with extractedPoNumbers and raw data
+- [x] Fix: groupedTotal now always uses line-item total when available (not just for multi-PO), falls back to invoice total only when no line items contain the PO number
+- [x] PO pattern documented: P (Pacific National), SL (Straitlink), AZ (Aurizon), TR (Tasmanian Railways) + any other 1-2 letter prefix
