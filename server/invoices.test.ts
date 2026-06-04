@@ -499,14 +499,16 @@ describe("invoices.verifyWithXero", () => {
         lineItems: [],
       },
     } as any);
-    // Provide invoice line items with PO numbers in descriptions
-    // AD123456 line items total: 1100; BD654321 line items total: 1650
+    // Provide invoice line items with PO numbers in descriptions.
+    // taxRate is null so GST defaults to 10%.
+    // AD123456: excl=1000, GST-incl=1100
+    // BD654321: excl=1500+150=1650, GST-incl=1815
     vi.mocked(getLineItemsByInvoice).mockResolvedValueOnce([
-      { id: 1, invoiceId: 99, description: "Freight AD123456", quantity: 1, unitPrice: "1100", amount: "1100", taxRate: null } as any,
+      { id: 1, invoiceId: 99, description: "Freight AD123456", quantity: 1, unitPrice: "1000", amount: "1000", taxRate: null } as any,
       { id: 2, invoiceId: 99, description: "Handling BD654321", quantity: 1, unitPrice: "1500", amount: "1500", taxRate: null } as any,
       { id: 3, invoiceId: 99, description: "Surcharge BD654321", quantity: 1, unitPrice: "150", amount: "150", taxRate: null } as any,
     ]);
-    // Xero POs match the grouped line item totals exactly
+    // Xero POs match the GST-inclusive grouped line item totals exactly
     vi.mocked(findXeroPurchaseOrderByNumber)
       .mockResolvedValueOnce({
         purchaseOrderId: "po-1", purchaseOrderNumber: "AD123456", reference: "",
@@ -517,7 +519,7 @@ describe("invoices.verifyWithXero", () => {
       .mockResolvedValueOnce({
         purchaseOrderId: "po-2", purchaseOrderNumber: "BD654321", reference: "",
         contact: { contactId: "c1", name: "Supplier" }, date: "", deliveryDate: "",
-        subTotal: 1500, totalTax: 150, total: 1650, status: "AUTHORISED", currencyCode: "AUD",
+        subTotal: 1650, totalTax: 165, total: 1815, status: "AUTHORISED", currencyCode: "AUD",
         lineItems: [],
       });
     const caller = appRouter.createCaller(makeAdminCtx());
@@ -525,11 +527,11 @@ describe("invoices.verifyWithXero", () => {
     expect(result.matched).toBe(true);
     expect(result.discrepancy).toBe(false);
     expect(result.poResults).toHaveLength(2);
-    // Each PO result should carry the grouped invoice line-item total
+    // Each PO result should carry the GST-inclusive grouped invoice line-item total
     const adResult = result.poResults.find((r: any) => r.poNumber === "AD123456");
     const bdResult = result.poResults.find((r: any) => r.poNumber === "BD654321");
     expect((adResult as any).invoiceLineItemTotal).toBe(1100);
-    expect((bdResult as any).invoiceLineItemTotal).toBe(1650);
+    expect((bdResult as any).invoiceLineItemTotal).toBe(1815);
     expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
       99,
       expect.objectContaining({ status: "verified", hasDiscrepancy: false })

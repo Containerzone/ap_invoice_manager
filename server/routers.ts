@@ -450,9 +450,18 @@ export const appRouter = router({
             return descMatches ? descMatches.includes(poNum) : false;
           });
           if (matched.length === 0) return null;
-          const total = matched.reduce((sum, li) => sum + parseFloat(li.amount?.toString() ?? "0"), 0);
-          console.log(`[verifyWithXero] PO ${poNum}: matched ${matched.length} line item(s), total = ${total}`);
-          return total;
+          // Use GST-inclusive amount: amount * (1 + taxRate/100)
+          // Default to 10% GST (Australian standard) when taxRate is null/undefined
+          const total = matched.reduce((sum, li) => {
+            const excl = parseFloat(li.amount?.toString() ?? "0");
+            const rate = li.taxRate != null ? parseFloat(li.taxRate.toString()) : 10;
+            const incl = excl * (1 + rate / 100);
+            return sum + incl;
+          }, 0);
+          // Round to 2 decimal places to avoid floating point drift
+          const rounded = Math.round(total * 100) / 100;
+          console.log(`[verifyWithXero] PO ${poNum}: matched ${matched.length} line item(s), GST-inclusive total = ${rounded}`);
+          return rounded;
         }
 
         // Xero PO statuses that allow amount comparison
