@@ -71,17 +71,17 @@ async function fetchPdfAsBase64(fileKey: string): Promise<string> {
 
 /**
  * Post-process extracted data to apply PO number regex pattern matching.
- * PO numbers follow the pattern: 1-2 uppercase letters (commonly AD, BD, DD, ED)
- * followed by exactly 7 digits. E.g. AD1234567, BD0012345, A1234567.
+ * PO numbers follow the pattern: 1-2 uppercase letters (commonly AD, BD, DD, ED, A, B, D, E)
+ * followed by exactly 6 digits. E.g. AD123456, BD001234, A123456.
  * Searches the poNumber field, all line item descriptions, and a combined text blob.
  */
 export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string): string | null {
-  // Pattern: 1-2 uppercase letters + exactly 7 digits, as a whole word/token
-  const PO_PATTERN = /\b([A-Z]{2}\d{6})\b/g;
+  // Pattern: 1-2 uppercase letters + exactly 6 digits, as a whole word/token
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
 
   // Priority 1: if LLM already found a poNumber, validate it matches pattern
   if (data.poNumber) {
-    const match = data.poNumber.match(/^[A-Z]{2}\d{6}$/);
+    const match = data.poNumber.match(/^[A-Z]{1,2}\d{6}$/);
     if (match) return data.poNumber;
     // LLM found something but it doesn't match — still search below
   }
@@ -119,11 +119,11 @@ export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string)
  */
 export function extractAllPoNumbers(data: ExtractedInvoiceData | null | undefined, rawText?: string): string[] {
   if (!data) return [];
-  const PO_PATTERN = /\b([A-Z]{2}\d{6})\b/g;
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
   const found = new Set<string>();
 
   // From LLM-identified poNumber
-  if (data.poNumber && /^[A-Z]{2}\d{6}$/.test(data.poNumber)) {
+  if (data.poNumber && /^[A-Z]{1,2}\d{6}$/.test(data.poNumber)) {
     found.add(data.poNumber);
   }
 

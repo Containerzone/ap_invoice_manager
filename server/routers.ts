@@ -316,8 +316,10 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    // Verify against Xero — looks up ALL Purchase Orders found on the invoice by PO number,
-    // compares each PO total against the invoice total, and stores per-PO results with line items.
+    // Verify against Xero — looks up ALL Purchase Orders found on the invoice by PO number.
+    // For MULTIPLE POs: groups invoice line items by PO number (matched from description),
+    // then compares each PO's grouped line-item total against the corresponding Xero PO total.
+    // For a SINGLE PO: falls back to comparing the invoice total against the Xero PO total.
     verifyWithXero: protectedProcedure
       .input(z.object({ invoiceId: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -349,6 +351,27 @@ export const appRouter = router({
 
         const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
 
+        // Fetch invoice line items to group by PO number (for multi-PO invoices)
+        const invoiceLineItems = await getLineItemsByInvoice(input.invoiceId);
+
+        // PO pattern: 1-2 uppercase letters + exactly 6 digits
+        const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+
+        /**
+         * For a given PO number, sum the amounts of invoice line items whose description
+         * contains that PO number. Returns null if no line items match (fall back to invoice total).
+         */
+        function getGroupedLineItemTotal(poNum: string): number | null {
+          if (invoiceLineItems.length === 0) return null;
+          const matched = invoiceLineItems.filter((li) => {
+            const desc = li.description ?? "";
+            const matches = desc.match(PO_PATTERN);
+            return matches && matches.includes(poNum);
+          });
+          if (matched.length === 0) return null;
+          return matched.reduce((sum, li) => sum + parseFloat(li.amount?.toString() ?? "0"), 0);
+        }
+
         // Xero PO statuses that allow amount comparison
         const COMPARABLE_STATUSES = new Set(["DRAFT", "SUBMITTED", "AUTHORISED"]);
 
@@ -356,8 +379,16 @@ export const appRouter = router({
         const poLookups = await Promise.all(
           allPoNumbers.map(async (poNum) => {
             const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
+
+            // Determine the comparison amount for this PO:
+            // - If multiple POs exist: use the sum of line items tagged with this PO number
+            // - If single PO or no line item match: fall back to invoice total
+            const groupedTotal = allPoNumbers.length > 1
+              ? (getGroupedLineItemTotal(poNum) ?? extractedTotal)
+              : extractedTotal;
+
             if (!po) {
-              return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, alreadyBilled: false, diff: extractedTotal, lineItems: [] };
+              return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, alreadyBilled: false, diff: groupedTotal, invoiceLineItemTotal: groupedTotal, lineItems: [] };
             }
             // Rule 2: If PO is already BILLED, flag immediately — also check payment status
             if (po.status === "BILLED") {
@@ -407,7 +438,8 @@ export const appRouter = router({
                 lineItems: po.lineItems,
               };
             }
-            const rawDiff = extractedTotal - po.total; // positive = billed more than PO, negative = billed less
+            // Use grouped line-item total for this PO (multi-PO) or invoice total (single PO)
+            const rawDiff = groupedTotal - po.total; // positive = billed more than PO, negative = billed less
             const absDiff = Math.abs(rawDiff);
             return {
               poNumber: poNum,
@@ -416,6 +448,7 @@ export const appRouter = router({
               poTotal: po.total,
               poSubtotal: po.subTotal,
               poTax: po.totalTax,
+              invoiceLineItemTotal: groupedTotal, // the invoice-side amount used for comparison
               discrepancy: absDiff > 0.01,
               alreadyBilled: false,
               overBilled: rawDiff > 0.01,   // billed > PO → flag
@@ -479,7 +512,8 @@ export const appRouter = router({
               : " — NOT YET PAID";
             return `PO ${r.poNumber}: BILLED — already billed in Xero (duplicate billing risk)${paidMsg}`;
           }
-          return `PO ${r.poNumber}: ${r.status} — PO total $${r.poTotal.toFixed(2)} vs invoice $${extractedTotal.toFixed(2)}${r.discrepancy ? ` (DIFF $${r.diff.toFixed(2)})` : " (match)"}`;
+          const invoiceAmt = (r as any).invoiceLineItemTotal ?? extractedTotal;
+          return `PO ${r.poNumber}: ${r.status} — PO total $${r.poTotal.toFixed(2)} vs invoice line items $${invoiceAmt.toFixed(2)}${r.discrepancy ? ` (DIFF $${r.diff.toFixed(2)})` : " (match)"}`;
         });
 
         await createConversationNote({

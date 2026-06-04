@@ -93,6 +93,7 @@ interface XeroPoResult {
   poTotal: number;
   poSubtotal: number;
   poTax: number;
+  invoiceLineItemTotal?: number; // grouped invoice line-item total for this PO (multi-PO invoices)
   discrepancy: boolean;
   overBilled?: boolean;
   underBilled?: boolean;
@@ -883,14 +884,7 @@ export default function InvoiceDetail() {
             </Button>
           )}
 
-          {canResolve && !editMode && (
-            <Button size="sm" className="gap-2 bg-sky-600 hover:bg-sky-700 text-white" onClick={() => setShowResolveDialog(true)}>
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Resolve &amp; Push to Xero
-            </Button>
-          )}
-
-          {/* Admin Approve button (admin only) */}
+          {/* Admin Approve button (admin only) — before Resolve */}
           {canAdminApprove && !editMode && (
             <Button
               size="sm"
@@ -900,6 +894,13 @@ export default function InvoiceDetail() {
             >
               {adminApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldAlert className="h-3.5 w-3.5" />}
               Admin Approve
+            </Button>
+          )}
+
+          {canResolve && !editMode && (
+            <Button size="sm" className="gap-2 bg-sky-600 hover:bg-sky-700 text-white" onClick={() => setShowResolveDialog(true)}>
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Resolve &amp; Push to Xero
             </Button>
           )}
 
@@ -952,9 +953,12 @@ export default function InvoiceDetail() {
           <div>
             <p className="text-sm font-semibold text-emerald-800">Billed Amount is Lower than PO — Safe to Approve</p>
             <p className="text-sm text-emerald-700 mt-0.5">
-              Invoice total {formatCurrency(invoice.extractedTotal)} is lower than the Xero PO total{" "}
-              {formatCurrency(invoice.xeroTotal)}. The billed amount is within the approved PO budget.
-              You may proceed to approve and push to Xero.
+              {poResults.length > 1
+                ? <>Each PO’s invoice line items are within the approved PO budget. All {poResults.length} POs verified as under budget. You may proceed to approve and push to Xero.</>
+                : <>Invoice total {formatCurrency(invoice.extractedTotal)} is lower than the Xero PO total{" "}
+                   {formatCurrency(invoice.xeroTotal)}. The billed amount is within the approved PO budget.
+                   You may proceed to approve and push to Xero.</>
+              }
             </p>
           </div>
         </div>
@@ -1022,15 +1026,20 @@ export default function InvoiceDetail() {
         }
         if (anyOverBilled) {
           const firstOver = poResults.find((r) => r.overBilled);
+          // Use the grouped line-item total if available (multi-PO), otherwise invoice total
+          const invoiceSideAmt = firstOver?.invoiceLineItemTotal ?? invoice.extractedTotal;
           return (
             <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
               <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-amber-800">Amount Discrepancy — Invoice Exceeds PO</p>
                 <p className="text-sm text-amber-700 mt-0.5">
-                  Invoice total {formatCurrency(invoice.extractedTotal)} exceeds Xero PO total{" "}
-                  {formatCurrency(firstOver?.poTotal)} by{" "}
-                  <strong>{formatCurrency(firstOver?.diff)}</strong>.
+                  {firstOver?.invoiceLineItemTotal !== undefined
+                    ? <>Invoice line items for PO <strong>{firstOver.poNumber}</strong> ({formatCurrency(invoiceSideAmt)}) exceed Xero PO total{" "}
+                       {formatCurrency(firstOver?.poTotal)} by <strong>{formatCurrency(firstOver?.diff)}</strong>.</>
+                    : <>Invoice total {formatCurrency(invoice.extractedTotal)} exceeds Xero PO total{" "}
+                       {formatCurrency(firstOver?.poTotal)} by <strong>{formatCurrency(firstOver?.diff)}</strong>.</>
+                  }
                 </p>
               </div>
             </div>
@@ -1321,6 +1330,9 @@ export default function InvoiceDetail() {
                               </div>
                               {po.found && !po.alreadyBilled && (
                                 <div className="flex items-center gap-3 text-muted-foreground">
+                                  {po.invoiceLineItemTotal !== undefined && (
+                                    <span>Invoice lines: <strong>{formatCurrency(po.invoiceLineItemTotal)}</strong></span>
+                                  )}
                                   <span>PO total: <strong className={cn(
                                     po.overBilled ? "text-amber-700" :
                                     po.underBilled ? "text-emerald-700" :

@@ -31,9 +31,9 @@ describe("applyPoNumberRegex", () => {
     expect(applyPoNumberRegex(data)).toBe("AD123456");
   });
 
-  it("rejects a single-letter prefix (must be exactly 2 letters)", () => {
+  it("accepts a single-letter prefix (1 or 2 letters allowed)", () => {
     const data = makeData({ poNumber: "A123456" });
-    expect(applyPoNumberRegex(data)).toBeNull();
+    expect(applyPoNumberRegex(data)).toBe("A123456");
   });
 
   it("rejects an invalid LLM poNumber and falls back to line item description", () => {
@@ -107,5 +107,93 @@ describe("applyPoNumberRegex", () => {
       const data = makeData({ notes: `Order ${prefix}123456` });
       expect(applyPoNumberRegex(data)).toBe(`${prefix}123456`);
     }
+  });
+});
+
+import { extractAllPoNumbers } from "./extractionService";
+
+describe("extractAllPoNumbers — single-letter prefix support", () => {
+  it("extracts single-letter prefix PO from line item description", () => {
+    const data = makeData({
+      lineItems: [
+        { description: "Freight A123456", quantity: 1, unitPrice: 500, amount: 500, taxRate: null },
+      ],
+    });
+    expect(extractAllPoNumbers(data)).toContain("A123456");
+  });
+
+  it("extracts both 1-letter and 2-letter PO numbers from same invoice", () => {
+    const data = makeData({
+      lineItems: [
+        { description: "Container handling AD123456", quantity: 1, unitPrice: 800, amount: 800, taxRate: null },
+        { description: "Freight B654321", quantity: 1, unitPrice: 400, amount: 400, taxRate: null },
+      ],
+    });
+    const result = extractAllPoNumbers(data);
+    expect(result).toContain("AD123456");
+    expect(result).toContain("B654321");
+    expect(result).toHaveLength(2);
+  });
+
+  it("does not match 3-letter prefix in extractAllPoNumbers", () => {
+    const data = makeData({ notes: "Reference ABC123456 is not a valid PO" });
+    expect(extractAllPoNumbers(data)).toHaveLength(0);
+  });
+});
+
+describe("Multi-PO line-item grouping helper", () => {
+  // Replicates the getGroupedLineItemTotal logic from routers.ts
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+
+  function getGroupedLineItemTotal(
+    poNum: string,
+    lineItems: Array<{ description: string; amount: number }>
+  ): number | null {
+    if (lineItems.length === 0) return null;
+    const matched = lineItems.filter((li) => {
+      const matches = li.description.match(PO_PATTERN);
+      return matches && matches.includes(poNum);
+    });
+    if (matched.length === 0) return null;
+    return matched.reduce((sum, li) => sum + li.amount, 0);
+  }
+
+  it("sums line items matching a 2-letter PO number", () => {
+    const lineItems = [
+      { description: "Freight AD123456", amount: 800 },
+      { description: "Handling AD123456 surcharge", amount: 200 },
+      { description: "Container BD654321", amount: 500 },
+    ];
+    expect(getGroupedLineItemTotal("AD123456", lineItems)).toBe(1000);
+  });
+
+  it("sums line items matching a single-letter PO number", () => {
+    const lineItems = [
+      { description: "Freight A123456", amount: 400 },
+      { description: "Delivery A123456", amount: 100 },
+      { description: "Other B654321", amount: 300 },
+    ];
+    expect(getGroupedLineItemTotal("A123456", lineItems)).toBe(500);
+  });
+
+  it("returns null when no line items match the PO number", () => {
+    const lineItems = [
+      { description: "Freight AD123456", amount: 800 },
+    ];
+    expect(getGroupedLineItemTotal("BD999999", lineItems)).toBeNull();
+  });
+
+  it("returns null for empty line items array", () => {
+    expect(getGroupedLineItemTotal("AD123456", [])).toBeNull();
+  });
+
+  it("correctly separates two POs on the same invoice", () => {
+    const lineItems = [
+      { description: "Container AD123456", amount: 1100 },
+      { description: "Freight BD654321", amount: 550 },
+      { description: "Handling BD654321", amount: 50 },
+    ];
+    expect(getGroupedLineItemTotal("AD123456", lineItems)).toBe(1100);
+    expect(getGroupedLineItemTotal("BD654321", lineItems)).toBe(600);
   });
 });

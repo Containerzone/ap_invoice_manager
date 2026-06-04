@@ -106,3 +106,8 @@
 - [x] Two-layer approval: staff approval for small differences (up to $30 on ≤$500, $50 on $501-$1000, $100 on $1001-$2000), admin approval required outside those thresholds
 - [x] Resolve converts PO to bill: instead of creating a new bill, convert the matched PO(s) into a bill in Xero and mark as BILLED; for multiple POs create one combined bill
 - [x] Date pickers: DD-MM-YY format with calendar popup; due date calendar includes quick-select buttons (7, 14, 21, 30, 60 days from issue date, End of Month)
+- [x] Multi-PO: group invoice line items by PO number (1-2 letters + 6 digits in description), compare each PO's grouped line-item total against Xero PO total
+- [x] PO regex: accept 1 OR 2 letter prefix + 6 digits (was 2-letter only)
+- [x] Admin Approve button moved before Resolve & Push to Xero in action bar
+- [x] Per-PO result card shows "Invoice lines: $X" alongside "PO total: $Y" for multi-PO invoices
+- [x] Over-billed banner updated to show per-PO line-item total for multi-PO invoices

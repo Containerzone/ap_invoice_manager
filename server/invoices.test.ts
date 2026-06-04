@@ -481,8 +481,8 @@ describe("invoices.verifyWithXero", () => {
     );
   });
 
-  it("handles multiple PO numbers — all found and matching", async () => {
-    const { getInvoiceById, updateInvoice } = await import("./db");
+  it("handles multiple PO numbers — groups line items by PO and compares each PO's total", async () => {
+    const { getInvoiceById, updateInvoice, getLineItemsByInvoice } = await import("./db");
     const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
     const { extractAllPoNumbers } = await import("./extractionService");
     // Override to return two PO numbers from the raw data
@@ -491,28 +491,32 @@ describe("invoices.verifyWithXero", () => {
     vi.mocked(getInvoiceById).mockResolvedValueOnce({
       id: 99,
       extractedPoNumber: "AD123456",
-      extractedTotal: "2200.00",
+      extractedTotal: "2750.00", // total of both POs
       extractedInvoiceNumber: "INV-002",
       extractedRawData: {
         poNumber: "AD123456",
-        lineItems: [
-          { description: "Freight AD123456", quantity: 1, unitPrice: 1100, amount: 1100, taxRate: 10 },
-          { description: "Handling BD654321", quantity: 1, unitPrice: 1100, amount: 1100, taxRate: 10 },
-        ],
+        lineItems: [],
       },
     } as any);
-    // First call for AD123456, second for BD654321
+    // Provide invoice line items with PO numbers in descriptions
+    // AD123456 line items total: 1100; BD654321 line items total: 1650
+    vi.mocked(getLineItemsByInvoice).mockResolvedValueOnce([
+      { id: 1, invoiceId: 99, description: "Freight AD123456", quantity: 1, unitPrice: "1100", amount: "1100", taxRate: null } as any,
+      { id: 2, invoiceId: 99, description: "Handling BD654321", quantity: 1, unitPrice: "1500", amount: "1500", taxRate: null } as any,
+      { id: 3, invoiceId: 99, description: "Surcharge BD654321", quantity: 1, unitPrice: "150", amount: "150", taxRate: null } as any,
+    ]);
+    // Xero POs match the grouped line item totals exactly
     vi.mocked(findXeroPurchaseOrderByNumber)
       .mockResolvedValueOnce({
         purchaseOrderId: "po-1", purchaseOrderNumber: "AD123456", reference: "",
         contact: { contactId: "c1", name: "Supplier" }, date: "", deliveryDate: "",
-        subTotal: 2000, totalTax: 200, total: 2200, status: "AUTHORISED", currencyCode: "AUD",
+        subTotal: 1000, totalTax: 100, total: 1100, status: "AUTHORISED", currencyCode: "AUD",
         lineItems: [],
       })
       .mockResolvedValueOnce({
         purchaseOrderId: "po-2", purchaseOrderNumber: "BD654321", reference: "",
         contact: { contactId: "c1", name: "Supplier" }, date: "", deliveryDate: "",
-        subTotal: 2000, totalTax: 200, total: 2200, status: "AUTHORISED", currencyCode: "AUD",
+        subTotal: 1500, totalTax: 150, total: 1650, status: "AUTHORISED", currencyCode: "AUD",
         lineItems: [],
       });
     const caller = appRouter.createCaller(makeAdminCtx());
@@ -520,6 +524,11 @@ describe("invoices.verifyWithXero", () => {
     expect(result.matched).toBe(true);
     expect(result.discrepancy).toBe(false);
     expect(result.poResults).toHaveLength(2);
+    // Each PO result should carry the grouped invoice line-item total
+    const adResult = result.poResults.find((r: any) => r.poNumber === "AD123456");
+    const bdResult = result.poResults.find((r: any) => r.poNumber === "BD654321");
+    expect((adResult as any).invoiceLineItemTotal).toBe(1100);
+    expect((bdResult as any).invoiceLineItemTotal).toBe(1650);
     expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
       99,
       expect.objectContaining({ status: "verified", hasDiscrepancy: false })
