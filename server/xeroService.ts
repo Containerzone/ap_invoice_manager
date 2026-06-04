@@ -582,10 +582,14 @@ export async function updateXeroPODetails(
   clientSecret: string
 ): Promise<boolean> {
   const auth = await getValidAccessToken(clientId, clientSecret);
-  if (!auth) return false;
+  if (!auth) {
+    console.error(`[Xero] updateXeroPODetails: no valid auth token`);
+    return false;
+  }
 
   try {
-    // Look up the PO to get its ID
+    // Look up the PO to get its ID and current status
+    console.log(`[Xero] updateXeroPODetails: fetching PO ${poNumber}`);
     const getResponse = await axios.get(
       `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
       {
@@ -597,10 +601,15 @@ export async function updateXeroPODetails(
       }
     );
     const poList = getResponse.data?.PurchaseOrders ?? [];
-    if (poList.length === 0) return false;
+    console.log(`[Xero] updateXeroPODetails: found ${poList.length} PO(s) for ${poNumber}`);
+    if (poList.length === 0) {
+      console.error(`[Xero] updateXeroPODetails: PO ${poNumber} not found in Xero`);
+      return false;
+    }
 
     const po = poList[0];
     const poId = po.PurchaseOrderID;
+    console.log(`[Xero] updateXeroPODetails: PO ${poNumber} has ID ${poId}, status ${po.Status}`);
 
     // Skip update if PO is already BILLED — it cannot be modified
     if (po.Status === "BILLED") {
@@ -608,16 +617,51 @@ export async function updateXeroPODetails(
       return true;
     }
 
-    const updatePayload: Record<string, any> = { PurchaseOrderID: poId };
+    // Build update payload — always include PurchaseOrderID and the PO number to identify it
+    const updatePayload: Record<string, any> = {
+      PurchaseOrderID: poId,
+      PurchaseOrderNumber: poNumber,
+    };
+
     if (updates.invoiceNumber) updatePayload.Reference = updates.invoiceNumber;
     if (updates.description) updatePayload.DeliveryInstructions = updates.description;
     if (updates.status) updatePayload.Status = updates.status;
+
+    // Contact: Xero requires ContactID for updates — look it up if we only have a name
     if (updates.supplierXeroContactId) {
       updatePayload.Contact = { ContactID: updates.supplierXeroContactId };
     } else if (updates.supplierName) {
-      updatePayload.Contact = { Name: updates.supplierName };
+      // Try to find the contact in Xero by name to get their ContactID
+      try {
+        const contactSearch = await axios.get(`${XERO_API_BASE}/Contacts`, {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            Accept: "application/json",
+          },
+          params: { searchTerm: updates.supplierName },
+        });
+        const contacts = contactSearch.data?.Contacts ?? [];
+        if (contacts.length > 0) {
+          const contactId = contacts[0].ContactID;
+          console.log(`[Xero] Found contact ${updates.supplierName} with ID ${contactId}`);
+          updatePayload.Contact = { ContactID: contactId };
+        } else {
+          // Contact not found — use existing PO contact (don't change it)
+          console.warn(`[Xero] Contact "${updates.supplierName}" not found in Xero — keeping existing PO contact`);
+          // Keep the existing contact from the PO
+          updatePayload.Contact = { ContactID: po.Contact?.ContactID };
+        }
+      } catch (contactErr: any) {
+        console.warn(`[Xero] Contact lookup failed — keeping existing contact:`, contactErr?.message);
+        updatePayload.Contact = { ContactID: po.Contact?.ContactID };
+      }
+    } else {
+      // No supplier info provided — keep existing contact
+      updatePayload.Contact = { ContactID: po.Contact?.ContactID };
     }
-    if (updates.lineItems) {
+
+    if (updates.lineItems && updates.lineItems.length > 0) {
       updatePayload.LineItems = updates.lineItems.map((li) => ({
         Description: li.description,
         Quantity: li.quantity,
@@ -627,8 +671,11 @@ export async function updateXeroPODetails(
       }));
     }
 
-    await axios.post(
-      `${XERO_API_BASE}/PurchaseOrders/${poId}`,
+    console.log(`[Xero] updateXeroPODetails: sending update for PO ${poNumber}:`, JSON.stringify(updatePayload));
+
+    // Xero uses POST to /PurchaseOrders with PurchaseOrderID in the body to update
+    const updateResp = await axios.post(
+      `${XERO_API_BASE}/PurchaseOrders`,
       { PurchaseOrders: [updatePayload] },
       {
         headers: {
@@ -639,9 +686,12 @@ export async function updateXeroPODetails(
         },
       }
     );
+    const updatedPO = updateResp.data?.PurchaseOrders?.[0];
+    console.log(`[Xero] updateXeroPODetails: PO ${poNumber} updated successfully. New status: ${updatedPO?.Status}`);
     return true;
   } catch (err: any) {
-    console.error(`[Xero] Update PO ${poNumber} details error:`, err?.response?.data ?? err.message);
+    const detail = err?.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error(`[Xero] Update PO ${poNumber} details error:`, detail);
     return false;
   }
 }
