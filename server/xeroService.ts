@@ -437,3 +437,233 @@ export async function markXeroPOAsBilled(
     return false;
   }
 }
+
+/**
+ * Convert one or more Xero Purchase Orders into a single ACCPAY bill.
+ * This uses the Xero API to create a bill that references the PO line items.
+ * After creation, each PO should be marked as BILLED via markXeroPOAsBilled.
+ */
+export async function convertPOsToBill(
+  data: {
+    poNumbers: string[];
+    supplierName: string;
+    supplierXeroContactId?: string;
+    invoiceNumber: string;
+    invoiceDate: string;
+    dueDate?: string;
+    currencyCode?: string;
+    xeroStatus?: "DRAFT" | "SUBMITTED" | "AUTHORISED";
+  },
+  clientId: string,
+  clientSecret: string
+): Promise<{ invoiceId: string; invoiceNumber: string } | null> {
+  const auth = await getValidAccessToken(clientId, clientSecret);
+  if (!auth) return null;
+
+  // Fetch all POs and aggregate their line items
+  const allLineItems: Array<{
+    description: string;
+    quantity: number;
+    unitAmount: number;
+    accountCode: string;
+  }> = [];
+
+  for (const poNumber of data.poNumbers) {
+    try {
+      const response = await axios.get(
+        `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            Accept: "application/json",
+          },
+        }
+      );
+      const poList = response.data?.PurchaseOrders ?? [];
+      if (poList.length === 0) continue;
+      const po = poList[0];
+      for (const li of po.LineItems ?? []) {
+        allLineItems.push({
+          description: li.Description ?? `PO ${poNumber}`,
+          quantity: parseFloat(li.Quantity ?? "1"),
+          unitAmount: parseFloat(li.UnitAmount ?? "0"),
+          accountCode: li.AccountCode ?? "300",
+        });
+      }
+    } catch {
+      // Skip POs that can't be fetched
+    }
+  }
+
+  // If no line items found from POs, create a placeholder line
+  if (allLineItems.length === 0) {
+    allLineItems.push({
+      description: `Invoice ${data.invoiceNumber} — POs: ${data.poNumbers.join(", ")}`,
+      quantity: 1,
+      unitAmount: 0,
+      accountCode: "300",
+    });
+  }
+
+  const contact = data.supplierXeroContactId
+    ? { ContactID: data.supplierXeroContactId }
+    : { Name: data.supplierName };
+
+  const payload = {
+    Type: "ACCPAY",
+    Contact: contact,
+    InvoiceNumber: data.invoiceNumber,
+    Date: data.invoiceDate,
+    DueDate: data.dueDate ?? data.invoiceDate,
+    Status: data.xeroStatus ?? "AUTHORISED",
+    Reference: data.poNumbers.join(", "),
+    CurrencyCode: data.currencyCode ?? "AUD",
+    LineItems: allLineItems.map((li) => ({
+      Description: li.description,
+      Quantity: li.quantity,
+      UnitAmount: li.unitAmount,
+      AccountCode: li.accountCode,
+    })),
+  };
+
+  try {
+    const response = await axios.post(
+      `${XERO_API_BASE}/Invoices`,
+      { Invoices: [payload] },
+      {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+      }
+    );
+    const created = response.data?.Invoices?.[0];
+    if (!created) throw new Error("Xero returned no invoice in response");
+    return { invoiceId: created.InvoiceID, invoiceNumber: created.InvoiceNumber };
+  } catch (err: any) {
+    const detail = err?.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error("[Xero] Convert POs to bill error:", detail);
+    throw new Error(`Xero bill creation failed: ${detail}`);
+  }
+}
+
+/**
+ * Update a Xero Purchase Order's details to match the invoice.
+ * Updates: supplier contact, reference (invoice number), and line items.
+ */
+export async function updateXeroPODetails(
+  poNumber: string,
+  updates: {
+    invoiceNumber?: string;
+    supplierName?: string;
+    supplierXeroContactId?: string;
+    lineItems?: Array<{
+      description: string;
+      quantity: number;
+      unitAmount: number;
+      accountCode?: string;
+    }>;
+  },
+  clientId: string,
+  clientSecret: string
+): Promise<boolean> {
+  const auth = await getValidAccessToken(clientId, clientSecret);
+  if (!auth) return false;
+
+  try {
+    // Look up the PO to get its ID
+    const getResponse = await axios.get(
+      `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+      }
+    );
+    const poList = getResponse.data?.PurchaseOrders ?? [];
+    if (poList.length === 0) return false;
+
+    const po = poList[0];
+    const poId = po.PurchaseOrderID;
+
+    const updatePayload: Record<string, any> = { PurchaseOrderID: poId };
+    if (updates.invoiceNumber) updatePayload.Reference = updates.invoiceNumber;
+    if (updates.supplierXeroContactId) {
+      updatePayload.Contact = { ContactID: updates.supplierXeroContactId };
+    } else if (updates.supplierName) {
+      updatePayload.Contact = { Name: updates.supplierName };
+    }
+    if (updates.lineItems) {
+      updatePayload.LineItems = updates.lineItems.map((li) => ({
+        Description: li.description,
+        Quantity: li.quantity,
+        UnitAmount: li.unitAmount,
+        AccountCode: li.accountCode ?? "300",
+      }));
+    }
+
+    await axios.post(
+      `${XERO_API_BASE}/PurchaseOrders/${poId}`,
+      { PurchaseOrders: [updatePayload] },
+      {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+      }
+    );
+    return true;
+  } catch (err: any) {
+    console.error(`[Xero] Update PO ${poNumber} details error:`, err?.response?.data ?? err.message);
+    return false;
+  }
+}
+
+/**
+ * Check if a Xero PO has been paid (i.e. its linked bill has been paid).
+ * Returns payment info if found.
+ */
+export async function getXeroPOPaymentStatus(
+  poNumber: string,
+  clientId: string,
+  clientSecret: string
+): Promise<{ isPaid: boolean; paidAmount?: number; paidDate?: string } | null> {
+  const auth = await getValidAccessToken(clientId, clientSecret);
+  if (!auth) return null;
+
+  try {
+    const response = await axios.get(
+      `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+      }
+    );
+    const poList = response.data?.PurchaseOrders ?? [];
+    if (poList.length === 0) return null;
+
+    const po = poList[0];
+    // A PO is considered paid if its AmountPaid > 0 or HasAttachments indicates payment
+    const amountPaid = parseFloat(po.AmountPaid ?? "0");
+    const isPaid = amountPaid > 0 || po.Status === "BILLED";
+    return {
+      isPaid,
+      paidAmount: amountPaid > 0 ? amountPaid : undefined,
+      paidDate: po.UpdatedDateUTC ? new Date(po.UpdatedDateUTC).toISOString().split("T")[0] : undefined,
+    };
+  } catch (err: any) {
+    if (err?.response?.status === 404) return null;
+    console.error(`[Xero] Get PO payment status error:`, err?.response?.data ?? err.message);
+    return null;
+  }
+}

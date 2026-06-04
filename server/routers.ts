@@ -42,6 +42,9 @@ import {
   createXeroDraftBill,
   findOrCreateXeroContact,
   markXeroPOAsBilled,
+  convertPOsToBill,
+  updateXeroPODetails,
+  getXeroPOPaymentStatus,
 } from "./xeroService";
 import { sendDisputeEmail, generateDisputeEmailTemplate } from "./emailService";
 import { ENV } from "./_core/env";
@@ -54,6 +57,16 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   }
   return next({ ctx });
 });
+
+// ─── Staff approval threshold logic ──────────────────────────────────────────
+// Returns true if the staff member can approve the given discrepancy amount
+// based on the invoice total.
+function isWithinStaffThreshold(invoiceTotal: number, diffAmount: number): boolean {
+  if (invoiceTotal <= 500) return diffAmount <= 30;
+  if (invoiceTotal <= 1000) return diffAmount <= 50;
+  if (invoiceTotal <= 2000) return diffAmount <= 100;
+  return false; // > $2000 always requires admin
+}
 
 // ─── App Router ───────────────────────────────────────────────────────────────
 
@@ -277,6 +290,7 @@ export const appRouter = router({
           id: z.number(),
           extractedInvoiceNumber: z.string().optional().nullable(),
           extractedPoNumber: z.string().optional().nullable(),
+          extractedPoNumbers: z.array(z.string()).optional().nullable(),
           extractedContainerNumbers: z.array(z.string()).optional(),
           extractedSupplierName: z.string().optional().nullable(),
           extractedSupplierAbn: z.string().optional().nullable(),
@@ -291,13 +305,14 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => {
-        const { id, extractedContainerNumbers, ...rest } = input;
+        const { id, extractedContainerNumbers, extractedPoNumbers, ...rest } = input;
         await updateInvoice(id, {
           ...rest,
           extractedContainerNumbers: extractedContainerNumbers
             ? JSON.stringify(extractedContainerNumbers)
             : undefined,
-        });
+          extractedPoNumbers: extractedPoNumbers ?? undefined,
+        } as any);
         return { success: true };
       }),
 
@@ -315,15 +330,15 @@ export const appRouter = router({
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Xero not configured" });
         }
 
-        // Collect all PO numbers: primary field + any extras found in raw data
-        const primaryPo = invoice.extractedPoNumber;
+        // Collect all PO numbers: extractedPoNumbers JSON array (new), primary field, and raw data
         const rawData = invoice.extractedRawData as any;
-        const allPoNumbers: string[] = primaryPo
-          ? Array.from(new Set([
-              primaryPo,
-              ...extractAllPoNumbers(rawData ?? {}),
-            ]))
-          : extractAllPoNumbers(rawData ?? {});
+        const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
+        const primaryPo = invoice.extractedPoNumber;
+        const allPoNumbers: string[] = Array.from(new Set([
+          ...(extractedPoNumbersJson ?? []),
+          ...(primaryPo ? [primaryPo] : []),
+          ...extractAllPoNumbers(rawData ?? {}),
+        ])).filter(Boolean);
 
         if (allPoNumbers.length === 0) {
           throw new TRPCError({
@@ -344,8 +359,13 @@ export const appRouter = router({
             if (!po) {
               return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, alreadyBilled: false, diff: extractedTotal, lineItems: [] };
             }
-            // Rule 2: If PO is already BILLED, flag immediately — do not compare amounts
+            // Rule 2: If PO is already BILLED, flag immediately — also check payment status
             if (po.status === "BILLED") {
+              // Check if the linked bill has been paid
+              const paymentStatus = await getXeroPOPaymentStatus(poNum, clientId, clientSecret);
+              const isPaid = paymentStatus?.isPaid ?? false;
+              const paidAmount = paymentStatus?.paidAmount;
+              const paidDate = paymentStatus?.paidDate;
               return {
                 poNumber: poNum,
                 found: true,
@@ -355,6 +375,9 @@ export const appRouter = router({
                 poTax: po.totalTax,
                 discrepancy: true,
                 alreadyBilled: true,
+                isPaid,
+                paidAmount,
+                paidDate,
                 overBilled: false,
                 underBilled: false,
                 diff: 0,
@@ -366,7 +389,6 @@ export const appRouter = router({
             }
             // Rule 1: Only compare amounts for DRAFT / SUBMITTED / AUTHORISED
             if (!COMPARABLE_STATUSES.has(po.status)) {
-              // Unknown/unsupported status — treat as not comparable, flag for safety
               return {
                 poNumber: poNum,
                 found: true,
@@ -448,7 +470,15 @@ export const appRouter = router({
         // Build a human-readable summary for the conversation note
         const summaryLines = poLookups.map((r) => {
           if (!r.found) return `PO ${r.poNumber}: NOT FOUND in Xero`;
-          if ((r as any).alreadyBilled) return `PO ${r.poNumber}: BILLED — already billed in Xero (duplicate billing risk)`;
+          if ((r as any).alreadyBilled) {
+            const paid = (r as any).isPaid;
+            const paidAmt = (r as any).paidAmount;
+            const paidDate = (r as any).paidDate;
+            const paidMsg = paid
+              ? ` — PAID${paidAmt ? ` $${paidAmt.toFixed(2)}` : ""}${paidDate ? ` on ${paidDate}` : ""}`
+              : " — NOT YET PAID";
+            return `PO ${r.poNumber}: BILLED — already billed in Xero (duplicate billing risk)${paidMsg}`;
+          }
           return `PO ${r.poNumber}: ${r.status} — PO total $${r.poTotal.toFixed(2)} vs invoice $${extractedTotal.toFixed(2)}${r.discrepancy ? ` (DIFF $${r.diff.toFixed(2)})` : " (match)"}`;
         });
 
@@ -469,20 +499,125 @@ export const appRouter = router({
         return { matched: allFound, discrepancy: anyDiscrepancy, underBudget: allUnderBilled, poResults: poLookups };
       }),
 
-    // Admin approve — for invoices without PO numbers that cannot be verified via Xero
+    // Staff approve — for invoices within staff approval thresholds
+    // Staff can approve: ≤$30 diff for invoices ≤$500, ≤$50 for $501-$1000, ≤$100 for $1001-$2000
+    // Anything outside these thresholds sets requiresAdminApproval=true
+    staffApprove: protectedProcedure
+      .input(z.object({ invoiceId: z.number(), notes: z.string().optional() }))
+      .mutation(async ({ input, ctx }) => {
+        const invoice = await getInvoiceById(input.invoiceId);
+        if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const invoiceTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
+        const discrepancyAmount = parseFloat(invoice.discrepancyAmount?.toString() ?? "0");
+
+        // Check if within staff threshold
+        const withinThreshold = isWithinStaffThreshold(invoiceTotal, discrepancyAmount);
+
+        if (!withinThreshold) {
+          // Mark as requiring admin approval instead
+          await updateInvoice(input.invoiceId, {
+            requiresAdminApproval: true,
+          } as any);
+          await createConversationNote({
+            invoiceId: input.invoiceId,
+            authorId: ctx.user.id,
+            type: "status_change",
+            content: `Staff approval attempted by ${ctx.user.name ?? "staff"} — discrepancy $${discrepancyAmount.toFixed(2)} on invoice total $${invoiceTotal.toFixed(2)} exceeds staff threshold. Admin approval required.`,
+            metadata: { invoiceTotal, discrepancyAmount, attemptedBy: ctx.user.id },
+          });
+          return { success: false, requiresAdminApproval: true, invoiceTotal, discrepancyAmount };
+        }
+
+        // Within threshold — approve
+        await updateInvoice(input.invoiceId, {
+          status: "approved" as any,
+          staffApproved: true,
+          staffApprovedBy: ctx.user.id,
+          staffApprovedAt: new Date(),
+          approvalNotes: input.notes ?? null,
+          requiresAdminApproval: false,
+        } as any);
+
+        await createConversationNote({
+          invoiceId: input.invoiceId,
+          authorId: ctx.user.id,
+          type: "status_change",
+          content: `Invoice approved by staff (${ctx.user.name ?? "staff"}). Discrepancy $${discrepancyAmount.toFixed(2)} within staff threshold for invoice total $${invoiceTotal.toFixed(2)}.${input.notes ? ` Notes: ${input.notes}` : ""}`,
+          metadata: { approvedBy: ctx.user.id, approvedAt: new Date().toISOString(), invoiceTotal, discrepancyAmount },
+        });
+
+        return { success: true, requiresAdminApproval: false };
+      }),
+
+    // Admin approve — for invoices without PO numbers OR outside staff thresholds
+    // Also syncs PO details in Xero if PO numbers are present
     adminApprove: adminProcedure
       .input(z.object({ invoiceId: z.number(), notes: z.string().optional() }))
       .mutation(async ({ input, ctx }) => {
         const invoice = await getInvoiceById(input.invoiceId);
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
-        await updateInvoice(input.invoiceId, { status: "approved" as any });
+
+        await updateInvoice(input.invoiceId, {
+          status: "approved" as any,
+          adminApproved: true,
+          adminApprovedBy: ctx.user.id,
+          adminApprovedAt: new Date(),
+          approvalNotes: input.notes ?? null,
+          requiresAdminApproval: false,
+        } as any);
+
         await createConversationNote({
           invoiceId: input.invoiceId,
           authorId: ctx.user.id,
           type: "status_change",
-          content: `Invoice manually approved by admin.${input.notes ? ` Notes: ${input.notes}` : ""}`,
+          content: `Invoice approved by admin (${ctx.user.name ?? "admin"}).${input.notes ? ` Notes: ${input.notes}` : ""}`,
           metadata: { approvedBy: ctx.user.id, approvedAt: new Date().toISOString() },
         });
+
+        // Sync PO details in Xero if PO numbers are present
+        const clientId = process.env.XERO_CLIENT_ID;
+        const clientSecret = process.env.XERO_CLIENT_SECRET;
+        if (clientId && clientSecret) {
+          const rawData = invoice.extractedRawData as any;
+          const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
+          const primaryPo = invoice.extractedPoNumber;
+          const allPoNumbers: string[] = Array.from(new Set([
+            ...(extractedPoNumbersJson ?? []),
+            ...(primaryPo ? [primaryPo] : []),
+            ...extractAllPoNumbers(rawData ?? {}),
+          ])).filter(Boolean);
+
+          if (allPoNumbers.length > 0) {
+            const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
+            const lineItems = await getLineItemsByInvoice(input.invoiceId);
+            const xeroLineItems = lineItems.length > 0
+              ? lineItems.map((li) => ({
+                  description: li.description ?? "Service",
+                  quantity: parseFloat(li.quantity?.toString() ?? "1"),
+                  unitAmount: parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0"),
+                  accountCode: li.accountCode ?? "300",
+                }))
+              : undefined;
+
+            // Update each PO with invoice details
+            await Promise.allSettled(
+              allPoNumbers.map((poNum) =>
+                updateXeroPODetails(
+                  poNum,
+                  {
+                    invoiceNumber: invoice.extractedInvoiceNumber ?? undefined,
+                    supplierName: supplier?.name ?? invoice.extractedSupplierName ?? undefined,
+                    lineItems: xeroLineItems,
+                  },
+                  clientId,
+                  clientSecret
+                )
+              )
+            );
+          }
+        }
+
         return { success: true };
       }),
 
@@ -512,6 +647,32 @@ export const appRouter = router({
           newQueryCount === 2 ? "queried_2nd" :
           "queried_3rd";
 
+        // Build thread history from previous emails for this invoice
+        const previousEmails = await getEmailLogsByInvoice(input.invoiceId);
+        // previousEmails is newest-first; reverse for chronological order
+        const threadHistory = [...previousEmails].reverse();
+        let bodyWithHistory = input.body;
+        if (threadHistory.length > 0) {
+          const historyLines: string[] = [
+            "",
+            "---",
+            "Previous correspondence:",
+            "",
+          ];
+          for (const email of threadHistory) {
+            const sentDate = email.sentAt ? new Date(email.sentAt).toLocaleString() : "unknown date";
+            historyLines.push(`On ${sentDate}, we wrote:`);
+            historyLines.push(email.body);
+            if (email.replyBody) {
+              const replyDate = email.repliedAt ? new Date(email.repliedAt).toLocaleString() : "unknown date";
+              historyLines.push(`On ${replyDate}, supplier replied:`);
+              historyLines.push(email.replyBody);
+            }
+            historyLines.push("");
+          }
+          bodyWithHistory = input.body + "\n" + historyLines.join("\n");
+        }
+
         const { createEmailLog, createConversationNote: addNote } = await import("./db");
 
         if (!smtpHost) {
@@ -523,7 +684,7 @@ export const appRouter = router({
             toAddress: input.to,
             ccAddress: input.cc ?? null,
             subject: input.subject,
-            body: input.body,
+            body: bodyWithHistory,
             status: "sent",
             sentAt: new Date(),
           });
@@ -544,7 +705,7 @@ export const appRouter = router({
           to: input.to,
           cc: input.cc,
           subject: input.subject,
-          body: input.body,
+          body: bodyWithHistory,
           smtpHost,
           smtpPort,
           smtpUser,
@@ -704,6 +865,8 @@ export const appRouter = router({
       }),
 
     // Resolve invoice and push to Xero
+    // If PO numbers exist: use convertPOsToBill to create bill from PO line items
+    // Otherwise: use createXeroDraftBill to create from scratch
     resolve: protectedProcedure
       .input(
         z.object({
@@ -720,9 +883,13 @@ export const appRouter = router({
         let xeroStatus: "DRAFT" | "SUBMITTED" | "AUTHORISED" = "SUBMITTED";
         // Collect all PO numbers up front (used for reference field and marking as Billed)
         const rawData = invoice.extractedRawData as any;
-        const allPoNumbers: string[] = invoice.extractedPoNumber
-          ? Array.from(new Set([invoice.extractedPoNumber, ...extractAllPoNumbers(rawData ?? {})]))
-          : extractAllPoNumbers(rawData ?? {});
+        const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
+        const primaryPo = invoice.extractedPoNumber;
+        const allPoNumbers: string[] = Array.from(new Set([
+          ...(extractedPoNumbersJson ?? []),
+          ...(primaryPo ? [primaryPo] : []),
+          ...extractAllPoNumbers(rawData ?? {}),
+        ])).filter(Boolean);
 
         if (input.pushToXero) {
           const clientId = process.env.XERO_CLIENT_ID;
@@ -736,8 +903,7 @@ export const appRouter = router({
             // Determine the Xero bill status based on invoice approval state and paid detection:
             // Rule 3: verified or under_budget → AUTHORISED (= AWAITING PAYMENT in Xero UI)
             // Rule 4: admin-approved (no PO / manually approved) → SUBMITTED (= AWAITING APPROVAL in Xero UI)
-            // Rule 5: invoice appears paid (paid date present, zero balance, or status=paid) → AUTHORISED (Xero marks as paid separately)
-            //         If unsure → SUBMITTED (AWAITING APPROVAL)
+            // Rule 5: invoice appears paid (paid date present, zero balance, or status=paid) → AUTHORISED
             const invoiceStatus = invoice.status as string;
             const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
             const hasPaidDate = !!(invoice as any).extractedPaymentDate;
@@ -745,10 +911,6 @@ export const appRouter = router({
             const isPaidStatus = invoiceStatus === "paid";
             const isPaid = hasPaidDate || hasZeroBalance || isPaidStatus;
 
-            // Rule 5: paid invoice → AUTHORISED (AWAITING PAYMENT) so Xero can reconcile
-            // Rule 3: verified/under_budget → AUTHORISED (AWAITING PAYMENT)
-            // Rule 4: admin-approved (no PO) → SUBMITTED (AWAITING APPROVAL)
-            // Default fallback → SUBMITTED (AWAITING APPROVAL) for safety
             if (isPaid || invoiceStatus === "verified" || invoiceStatus === "under_budget") {
               xeroStatus = "AUTHORISED";
             } else {
@@ -764,40 +926,59 @@ export const appRouter = router({
               clientSecret
             );
 
-            const xeroLineItems = lineItems.length > 0
-              ? lineItems.map((li) => ({
-                  description: li.description ?? "Service",
-                  quantity: parseFloat(li.quantity?.toString() ?? "1"),
-                  unitAmount: parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0"),
-                  accountCode: li.accountCode ?? "200",
-                }))
-              : [{
-                  description: `Invoice ${invoice.extractedInvoiceNumber ?? "N/A"}`,
-                  quantity: 1,
-                  unitAmount: extractedTotal,
-                  accountCode: "200",
-                }];
+            console.log(`[Resolve] PO numbers: ${allPoNumbers.join(", ") || "none"}, xeroStatus=${xeroStatus}`);
 
-            console.log(`[Resolve] Calling createXeroDraftBill for invoice ${invoice.extractedInvoiceNumber}, status=${xeroStatus}, contact=${xeroContactId ?? "name-only"}, lineItems=${xeroLineItems.length}`);
             try {
-              xeroResult = await createXeroDraftBill(
-                {
-                  supplierXeroContactId: xeroContactId ?? undefined,
-                  supplierName: supplier?.name ?? invoice.extractedSupplierName ?? "Unknown Supplier",
-                  invoiceNumber: invoice.extractedInvoiceNumber ?? `AP-${input.invoiceId}`,
-                  invoiceDate: invoice.extractedInvoiceDate ?? new Date().toISOString().split("T")[0],
-                  dueDate: invoice.extractedDueDate ?? undefined,
-                  lineItems: xeroLineItems,
-                  // Include all PO numbers in the reference field
-                  reference: allPoNumbers.length > 0 ? allPoNumbers.join(", ") : undefined,
-                  // Default to AUD — Xero rejects foreign currencies unless multi-currency is enabled on the org
-                  currencyCode: "AUD",
-                  xeroStatus,
-                },
-                clientId,
-                clientSecret
-              );
-              console.log(`[Resolve] createXeroDraftBill result: ${xeroResult ? JSON.stringify(xeroResult) : "null"}`);
+              if (allPoNumbers.length > 0) {
+                // Convert existing POs into a bill (preferred path)
+                console.log(`[Resolve] Using convertPOsToBill for ${allPoNumbers.length} PO(s)`);
+                xeroResult = await convertPOsToBill(
+                  {
+                    poNumbers: allPoNumbers,
+                    supplierName: supplier?.name ?? invoice.extractedSupplierName ?? "Unknown Supplier",
+                    supplierXeroContactId: xeroContactId ?? undefined,
+                    invoiceNumber: invoice.extractedInvoiceNumber ?? `AP-${input.invoiceId}`,
+                    invoiceDate: invoice.extractedInvoiceDate ?? new Date().toISOString().split("T")[0],
+                    dueDate: invoice.extractedDueDate ?? undefined,
+                    currencyCode: "AUD",
+                    xeroStatus,
+                  },
+                  clientId,
+                  clientSecret
+                );
+              } else {
+                // No POs — create bill from scratch
+                const xeroLineItems = lineItems.length > 0
+                  ? lineItems.map((li) => ({
+                      description: li.description ?? "Service",
+                      quantity: parseFloat(li.quantity?.toString() ?? "1"),
+                      unitAmount: parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0"),
+                      accountCode: li.accountCode ?? "300",
+                    }))
+                  : [{
+                      description: `Invoice ${invoice.extractedInvoiceNumber ?? "N/A"}`,
+                      quantity: 1,
+                      unitAmount: extractedTotal,
+                      accountCode: "300",
+                    }];
+
+                console.log(`[Resolve] Using createXeroDraftBill (no POs), lineItems=${xeroLineItems.length}`);
+                xeroResult = await createXeroDraftBill(
+                  {
+                    supplierXeroContactId: xeroContactId ?? undefined,
+                    supplierName: supplier?.name ?? invoice.extractedSupplierName ?? "Unknown Supplier",
+                    invoiceNumber: invoice.extractedInvoiceNumber ?? `AP-${input.invoiceId}`,
+                    invoiceDate: invoice.extractedInvoiceDate ?? new Date().toISOString().split("T")[0],
+                    dueDate: invoice.extractedDueDate ?? undefined,
+                    lineItems: xeroLineItems,
+                    currencyCode: "AUD",
+                    xeroStatus,
+                  },
+                  clientId,
+                  clientSecret
+                );
+              }
+              console.log(`[Resolve] Xero bill result: ${xeroResult ? JSON.stringify(xeroResult) : "null"}`);
             } catch (xeroErr: any) {
               console.error(`[Resolve] Xero push failed:`, xeroErr.message);
               throw new TRPCError({
@@ -805,6 +986,7 @@ export const appRouter = router({
                 message: `Failed to push bill to Xero: ${xeroErr.message}`,
               });
             }
+
             // Mark each linked PO as BILLED in Xero (only for PO-backed invoices)
             if (xeroResult && allPoNumbers.length > 0) {
               await Promise.allSettled(

@@ -75,6 +75,9 @@ vi.mock("./xeroService", () => ({
   findOrCreateXeroContact: vi.fn().mockResolvedValue("contact-id"),
   refreshXeroTokenIfNeeded: vi.fn().mockResolvedValue("fresh-token"),
   markXeroPOAsBilled: vi.fn().mockResolvedValue(true),
+  getXeroPOPaymentStatus: vi.fn().mockResolvedValue({ isPaid: false, paidAmount: null, paidDate: null }),
+  convertPOsToBill: vi.fn().mockResolvedValue({ invoiceId: "x2", invoiceNumber: "BILL-002" }),
+  updateXeroPODetails: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("./emailService", () => ({

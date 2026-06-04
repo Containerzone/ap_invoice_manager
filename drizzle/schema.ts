@@ -111,6 +111,19 @@ export const invoices = mysqlTable("invoices", {
   discrepancyNotes: text("discrepancyNotes"),
   discrepancyAmount: decimal("discrepancyAmount", { precision: 15, scale: 2 }),
 
+  // Multi-PO numbers (up to 15, stored as JSON array)
+  extractedPoNumbers: json("extractedPoNumbers"), // string[]
+
+  // Two-layer approval
+  staffApproved: boolean("staffApproved").default(false),
+  staffApprovedBy: int("staffApprovedBy"),
+  staffApprovedAt: timestamp("staffApprovedAt"),
+  adminApproved: boolean("adminApproved").default(false),
+  adminApprovedBy: int("adminApprovedBy"),
+  adminApprovedAt: timestamp("adminApprovedAt"),
+  approvalNotes: text("approvalNotes"),
+  requiresAdminApproval: boolean("requiresAdminApproval").default(false),
+
   // Query points (numbered list of dispute reasons)
   queryPoints: json("queryPoints"), // string[]
 

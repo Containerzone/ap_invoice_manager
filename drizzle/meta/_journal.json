@@ -43,6 +43,13 @@
       "when": 1780508813176,
       "tag": "0005_lowly_wild_child",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1780542532244,
+      "tag": "0006_natural_the_twelve",
+      "breakpoints": true
     }
   ]
 }

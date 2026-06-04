@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation, useParams } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -11,15 +11,16 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/StatusBadge";
 import { SupplierCombobox } from "@/components/SupplierCombobox";
-import { formatCurrency, formatDate, formatRelativeTime, parseContainerNumbers } from "@/lib/invoiceUtils";
+import { formatCurrency, formatRelativeTime, parseContainerNumbers } from "@/lib/invoiceUtils";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
-  ArrowLeft, ArrowRight, FileText, RefreshCw, Send, CheckCircle2,
+  ArrowLeft, FileText, RefreshCw, Send, CheckCircle2,
   MessageSquare, Mail, AlertTriangle, ExternalLink,
   Building2, Calendar, Hash, DollarSign, Container,
   Loader2, Plus, Trash2, Phone, MapPin, User,
-  ChevronLeft, ChevronRight, List, Pencil, X, Save
+  ChevronLeft, ChevronRight, List, Pencil, X, Save,
+  ShieldAlert, ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -33,8 +34,47 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { format, addDays, endOfMonth, parse, isValid } from "date-fns";
 
-// ── Xero PO types (mirrors server XeroPurchaseOrder/XeroPOLineItem) ─────────
+// ── Date helpers ──────────────────────────────────────────────────────────────
+// Display format: DD-MM-YY  (e.g. 04-06-25)
+// Storage format: YYYY-MM-DD (ISO, what the DB stores)
+
+function toDisplayDate(isoOrRaw: string | null | undefined): string {
+  if (!isoOrRaw) return "";
+  // Already in DD-MM-YY
+  if (/^\d{2}-\d{2}-\d{2}$/.test(isoOrRaw)) return isoOrRaw;
+  // YYYY-MM-DD → DD-MM-YY
+  const d = new Date(isoOrRaw);
+  if (!isNaN(d.getTime())) {
+    return format(d, "dd-MM-yy");
+  }
+  return isoOrRaw;
+}
+
+function toIsoDate(ddMMyy: string): string {
+  if (!ddMMyy) return "";
+  // Already ISO
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ddMMyy)) return ddMMyy;
+  // DD-MM-YY → YYYY-MM-DD
+  const parsed = parse(ddMMyy, "dd-MM-yy", new Date());
+  if (isValid(parsed)) return format(parsed, "yyyy-MM-dd");
+  // DD-MM-YYYY
+  const parsed2 = parse(ddMMyy, "dd-MM-yyyy", new Date());
+  if (isValid(parsed2)) return format(parsed2, "yyyy-MM-dd");
+  return ddMMyy;
+}
+
+function parseDateForCalendar(isoOrRaw: string | null | undefined): Date | undefined {
+  if (!isoOrRaw) return undefined;
+  const iso = toIsoDate(isoOrRaw);
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? undefined : d;
+}
+
+// ── Xero PO types ─────────────────────────────────────────────────────────────
 interface XeroPOLineItem {
   lineItemId: string;
   description: string;
@@ -54,13 +94,17 @@ interface XeroPoResult {
   poSubtotal: number;
   poTax: number;
   discrepancy: boolean;
-  overBilled?: boolean;   // billed > PO → flag
-  underBilled?: boolean; // billed < PO → under budget
+  overBilled?: boolean;
+  underBilled?: boolean;
   rawDiff?: number;
   diff: number;
   lineItems: XeroPOLineItem[];
   contact?: { contactId: string; name: string };
   currencyCode?: string;
+  alreadyBilled?: boolean;
+  isPaid?: boolean;
+  paidAmount?: number;
+  paidDate?: string;
 }
 
 const XERO_PO_STATUS_CONFIG: Record<string, { label: string; className: string }> = {
@@ -95,6 +139,98 @@ const DISPUTE_TEMPLATES = [
   "Fuel surcharge rate does not match the current schedule",
 ];
 
+// ── DatePickerField ───────────────────────────────────────────────────────────
+// Renders a button that opens a calendar popover. Stores/emits ISO dates.
+// showQuickSelect: if true, shows quick-select buttons (for due date).
+function DatePickerField({
+  label,
+  icon: Icon,
+  value,
+  onChange,
+  issueDate,
+  showQuickSelect = false,
+}: {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  value: string; // ISO or DD-MM-YY
+  onChange: (iso: string) => void;
+  issueDate?: string; // ISO or DD-MM-YY — used for quick-select offsets
+  showQuickSelect?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedDate = parseDateForCalendar(value);
+  const issueDateObj = parseDateForCalendar(issueDate);
+
+  const handleSelect = (d: Date | undefined) => {
+    if (d) {
+      onChange(format(d, "yyyy-MM-dd"));
+      setOpen(false);
+    }
+  };
+
+  const handleQuick = (days: number | "eom") => {
+    const base = issueDateObj ?? new Date();
+    const target = days === "eom" ? endOfMonth(base) : addDays(base, days);
+    onChange(format(target, "yyyy-MM-dd"));
+    setOpen(false);
+  };
+
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs text-muted-foreground flex items-center gap-1">
+        <Icon className="h-3 w-3" />
+        {label}
+      </Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            className={cn(
+              "h-8 w-full justify-start text-left text-sm font-normal",
+              !value && "text-muted-foreground"
+            )}
+          >
+            <Calendar className="mr-2 h-3.5 w-3.5 shrink-0" />
+            {value ? toDisplayDate(value) : "Pick a date"}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="start">
+          {showQuickSelect && (
+            <div className="p-2 border-b flex flex-wrap gap-1">
+              {[7, 14, 21, 30, 60].map((d) => (
+                <Button
+                  key={d}
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-xs px-2"
+                  onClick={() => handleQuick(d)}
+                >
+                  +{d}d
+                </Button>
+              ))}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-xs px-2"
+                onClick={() => handleQuick("eom")}
+              >
+                EOM
+              </Button>
+            </div>
+          )}
+          <CalendarComponent
+            mode="single"
+            selected={selectedDate}
+            onSelect={handleSelect}
+            initialFocus
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
@@ -122,6 +258,7 @@ export default function InvoiceDetail() {
   const saveQueryPointsMutation = trpc.invoices.saveQueryPoints.useMutation();
   const logReplyMutation = trpc.invoices.logReply.useMutation();
   const adminApproveMutation = trpc.invoices.adminApprove.useMutation();
+  const staffApproveMutation = trpc.invoices.staffApprove.useMutation();
 
   // ── Reply state ───────────────────────────────────────────────────────────
   const [replyEmailLogId, setReplyEmailLogId] = useState<number | null>(null);
@@ -154,7 +291,6 @@ export default function InvoiceDetail() {
   const [queryPointsSaved, setQueryPointsSaved] = useState(false);
   const [queryPointsDirty, setQueryPointsDirty] = useState(false);
 
-  // Sync query points from invoice data
   useEffect(() => {
     if (data?.invoice) {
       const pts = Array.isArray((data.invoice as any).queryPoints)
@@ -209,7 +345,6 @@ export default function InvoiceDetail() {
       amount: "0.00",
     });
     await utils.invoices.get.invalidate({ id: invoiceId });
-    // After refetch, the new item will appear; sync editLineItems
   };
 
   // ── Dialog / panel state ──────────────────────────────────────────────────
@@ -218,7 +353,9 @@ export default function InvoiceDetail() {
   const [showResolveDialog, setShowResolveDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showApproveDialog, setShowApproveDialog] = useState(false);
+  const [showStaffApproveDialog, setShowStaffApproveDialog] = useState(false);
   const [approveNotes, setApproveNotes] = useState("");
+  const [staffApproveNotes, setStaffApproveNotes] = useState("");
   const [emailTo, setEmailTo] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
@@ -242,7 +379,10 @@ export default function InvoiceDetail() {
     extractedTotal: "",
     extractedContainerNumbers: "",
   });
-  // Editable line items state (only active in edit mode)
+  // Multi-PO numbers (up to 15) in edit mode
+  const [editPoNumbers, setEditPoNumbers] = useState<string[]>([]);
+
+  // Editable line items state
   const [editLineItems, setEditLineItems] = useState<Array<{
     id: number;
     description: string;
@@ -271,6 +411,11 @@ export default function InvoiceDetail() {
         extractedTotal: inv.extractedTotal ?? "",
         extractedContainerNumbers: containers.join(", "),
       });
+      // Load multi-PO numbers
+      const existingPoNums = Array.isArray((inv as any).extractedPoNumbers)
+        ? (inv as any).extractedPoNumbers as string[]
+        : inv.extractedPoNumber ? [inv.extractedPoNumber] : [];
+      setEditPoNumbers(existingPoNums.length > 0 ? existingPoNums : [""]);
       setEditLineItems(
         (data.lineItems ?? []).map((li) => ({
           id: li.id,
@@ -283,17 +428,35 @@ export default function InvoiceDetail() {
     }
   }, [editMode, data?.invoice, data?.lineItems]);
 
+  const handleAddPoField = () => {
+    if (editPoNumbers.length >= 15) return;
+    setEditPoNumbers(prev => [...prev, ""]);
+  };
+
+  const handleRemovePoField = (idx: number) => {
+    setEditPoNumbers(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleUpdatePoField = (idx: number, val: string) => {
+    setEditPoNumbers(prev => prev.map((p, i) => i === idx ? val : p));
+  };
+
   const handleSaveEdits = async () => {
     try {
       const containers = editFields.extractedContainerNumbers
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
+      // Clean PO numbers — remove empties, deduplicate
+      const cleanPoNumbers = Array.from(new Set(editPoNumbers.map(p => p.trim()).filter(Boolean)));
+      const primaryPo = cleanPoNumbers[0] ?? null;
+
       await updateExtractedMutation.mutateAsync({
         id: invoiceId,
         supplierId: editSupplierId ?? null,
         extractedInvoiceNumber: editFields.extractedInvoiceNumber || null,
-        extractedPoNumber: editFields.extractedPoNumber || null,
+        extractedPoNumber: primaryPo,
+        extractedPoNumbers: cleanPoNumbers.length > 0 ? cleanPoNumbers : null,
         extractedSupplierName: editFields.extractedSupplierName || null,
         extractedSupplierAbn: editFields.extractedSupplierAbn || null,
         extractedSupplierEmail: editFields.extractedSupplierEmail || null,
@@ -305,7 +468,6 @@ export default function InvoiceDetail() {
         extractedTotal: editFields.extractedTotal || null,
         extractedContainerNumbers: containers,
       });
-      // Save edited line items
       await Promise.all(
         editLineItems.map((li) =>
           updateLineItemMutation.mutateAsync({
@@ -386,24 +548,36 @@ export default function InvoiceDetail() {
       await utils.invoices.get.invalidate({ id: invoiceId });
       setShowApproveDialog(false);
       setApproveNotes("");
-      toast.success("Invoice approved");
+      toast.success("Invoice approved by admin");
     } catch (e: any) {
       toast.error(e?.message ?? "Failed to approve invoice");
     }
   };
 
-  // Opens the email dialog — optionally pre-fill with last sent email body
+  const handleStaffApprove = async () => {
+    try {
+      const result = await staffApproveMutation.mutateAsync({ invoiceId, notes: staffApproveNotes || undefined });
+      await utils.invoices.get.invalidate({ id: invoiceId });
+      setShowStaffApproveDialog(false);
+      setStaffApproveNotes("");
+      if ((result as any).requiresAdminApproval) {
+        toast.warning("Discrepancy exceeds staff threshold — admin approval required.");
+      } else {
+        toast.success("Invoice approved");
+      }
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to approve invoice");
+    }
+  };
+
   const openEmailDialog = (prefillLastEmail = false) => {
     const supplier = data?.supplier;
     const emails = data?.emails ?? [];
     setEmailTo(supplier?.email ?? data?.invoice.extractedSupplierEmail ?? "");
-
     if (prefillLastEmail && emails.length > 0) {
-      const last = emails[0]; // emails are ordered newest-first
+      const last = emails[0];
       setEmailSubject(`Re: ${last.subject}`);
-      setEmailBody(
-        `\n\n--- Previous message ---\n${last.body}`
-      );
+      setEmailBody(`\n\n--- Previous message ---\n${last.body}`);
     } else {
       setEmailSubject(emailTemplate?.subject ?? "");
       setEmailBody(emailTemplate?.body ?? "");
@@ -453,7 +627,7 @@ export default function InvoiceDetail() {
       await invalidate();
       setShowResolveDialog(false);
       if (result.xeroResult) {
-        toast.success(`Resolved — Draft bill ${result.xeroResult.invoiceNumber} created in Xero`);
+        toast.success(`Resolved — Bill ${result.xeroResult.invoiceNumber} pushed to Xero`);
       } else {
         toast.success("Invoice marked as resolved");
       }
@@ -493,8 +667,29 @@ export default function InvoiceDetail() {
   const canResolve = ["flagged", "queried", "verified", "under_budget", "approved"].includes(invoice.status);
   const isQueried = invoice.status === "queried";
   const hasEmails = emails.length > 0;
-  // Admin can approve invoices that have no PO and cannot be Xero-verified
+
+  // Two-layer approval logic
+  const requiresAdminApproval = !!(invoice as any).requiresAdminApproval;
+  const invoiceTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
+  const discrepancyAmount = parseFloat(invoice.discrepancyAmount?.toString() ?? "0");
+  // Staff can approve verified/under_budget/flagged invoices
+  const canStaffApprove = ["verified", "under_budget", "flagged"].includes(invoice.status);
+  // Admin can approve any non-resolved invoice
   const canAdminApprove = user?.role === "admin" && ["extracted", "flagged", "verified", "under_budget"].includes(invoice.status);
+
+  // Staff threshold check (mirrors server logic)
+  function isWithinStaffThreshold(total: number, diff: number): boolean {
+    if (total <= 500) return diff <= 30;
+    if (total <= 1000) return diff <= 50;
+    if (total <= 2000) return diff <= 100;
+    return false;
+  }
+  const staffCanApproveThisInvoice = isWithinStaffThreshold(invoiceTotal, discrepancyAmount);
+
+  const poResults: XeroPoResult[] = Array.isArray((invoice as any).xeroPoResults) ? (invoice as any).xeroPoResults : [];
+  const anyAlreadyBilled = poResults.some((r) => r.alreadyBilled);
+  const anyNotFound = poResults.some((r) => !r.found);
+  const anyOverBilled = poResults.some((r) => r.overBilled);
 
   const noteTypeConfig: Record<string, { icon: React.ComponentType<any>; color: string; label: string }> = {
     note:           { icon: MessageSquare, color: "text-blue-500",   label: "Note" },
@@ -504,13 +699,20 @@ export default function InvoiceDetail() {
     system:         { icon: FileText,      color: "text-gray-400",   label: "System" },
   };
 
+  // Multi-PO display (view mode)
+  const viewPoNumbers: string[] = (() => {
+    const fromJson = Array.isArray((invoice as any).extractedPoNumbers) ? (invoice as any).extractedPoNumbers as string[] : [];
+    if (fromJson.length > 0) return fromJson;
+    if (invoice.extractedPoNumber) return [invoice.extractedPoNumber];
+    return [];
+  })();
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
 
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-2">
-          {/* Back */}
           <Button
             variant="ghost"
             size="sm"
@@ -521,7 +723,6 @@ export default function InvoiceDetail() {
             Invoices
           </Button>
 
-          {/* Prev / Next navigation */}
           <div className="flex items-center gap-0.5 border rounded-md">
             <Button
               variant="ghost"
@@ -546,7 +747,6 @@ export default function InvoiceDetail() {
             </Button>
           </div>
 
-          {/* Invoice sidebar trigger */}
           <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <SheetTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
@@ -617,34 +817,18 @@ export default function InvoiceDetail() {
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Edit / Save / Cancel */}
           {!editMode ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={() => setEditMode(true)}
-            >
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => setEditMode(true)}>
               <Pencil className="h-3.5 w-3.5" />
               Edit Fields
             </Button>
           ) : (
             <>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 text-muted-foreground"
-                onClick={() => setEditMode(false)}
-              >
+              <Button variant="outline" size="sm" className="gap-2 text-muted-foreground" onClick={() => setEditMode(false)}>
                 <X className="h-3.5 w-3.5" />
                 Cancel
               </Button>
-              <Button
-                size="sm"
-                className="gap-2"
-                onClick={handleSaveEdits}
-                disabled={updateExtractedMutation.isPending}
-              >
+              <Button size="sm" className="gap-2" onClick={handleSaveEdits} disabled={updateExtractedMutation.isPending}>
                 {updateExtractedMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 Save Changes
               </Button>
@@ -663,7 +847,6 @@ export default function InvoiceDetail() {
               Verify with Xero
             </Button>
           )}
-          {/* Send Query — always visible once invoice has data; for queried invoices show "Send Query Again" */}
           {(canQuery || isQueried) && !editMode && (
             <Button
               variant="outline"
@@ -675,23 +858,51 @@ export default function InvoiceDetail() {
               {isQueried ? "Send Query Again" : "Send Query"}
             </Button>
           )}
-          {canResolve && !editMode && (
-            <Button size="sm" className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setShowResolveDialog(true)}>
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Resolve
+
+          {/* Staff Approve button */}
+          {canStaffApprove && !editMode && user?.role !== "admin" && (
+            <Button
+              size="sm"
+              className={cn(
+                "gap-2",
+                requiresAdminApproval || !staffCanApproveThisInvoice
+                  ? "opacity-50 cursor-not-allowed bg-gray-400 hover:bg-gray-400 text-white"
+                  : "bg-emerald-600 hover:bg-emerald-700 text-white"
+              )}
+              onClick={() => {
+                if (requiresAdminApproval || !staffCanApproveThisInvoice) {
+                  toast.info("Admin approval is required for this invoice — discrepancy exceeds staff threshold.");
+                  return;
+                }
+                setShowStaffApproveDialog(true);
+              }}
+              disabled={staffApproveMutation.isPending}
+            >
+              {staffApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+              {requiresAdminApproval || !staffCanApproveThisInvoice ? "Admin Approval Required" : "Approve"}
             </Button>
           )}
+
+          {canResolve && !editMode && (
+            <Button size="sm" className="gap-2 bg-sky-600 hover:bg-sky-700 text-white" onClick={() => setShowResolveDialog(true)}>
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Resolve &amp; Push to Xero
+            </Button>
+          )}
+
+          {/* Admin Approve button (admin only) */}
           {canAdminApprove && !editMode && (
             <Button
               size="sm"
-              className="gap-2 bg-sky-600 hover:bg-sky-700 text-white"
+              className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
               onClick={() => setShowApproveDialog(true)}
               disabled={adminApproveMutation.isPending}
             >
-              {adminApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              {adminApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldAlert className="h-3.5 w-3.5" />}
               Admin Approve
             </Button>
           )}
+
           {user?.role === "admin" && !editMode && (
             <Button variant="outline" size="sm" className="gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300" onClick={() => setShowDeleteDialog(true)}>
               <Trash2 className="h-3.5 w-3.5" />
@@ -701,7 +912,7 @@ export default function InvoiceDetail() {
         </div>
       </div>
 
-      {/* Mobile title (shown below header on small screens) */}
+      {/* Mobile title */}
       <div className="sm:hidden">
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-semibold text-foreground tracking-tight">
@@ -720,7 +931,21 @@ export default function InvoiceDetail() {
         </p>
       </div>
 
-      {/* Under-budget banner — billed < PO, safe to approve */}
+      {/* Admin approval required banner */}
+      {requiresAdminApproval && invoice.status !== "approved" && invoice.status !== "resolved" && (
+        <div className="flex items-start gap-3 p-4 bg-violet-50 border border-violet-200 rounded-xl">
+          <ShieldAlert className="h-5 w-5 text-violet-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-violet-800">Admin Approval Required</p>
+            <p className="text-sm text-violet-700 mt-0.5">
+              The discrepancy of <strong>{formatCurrency(invoice.discrepancyAmount)}</strong> on this invoice (total {formatCurrency(invoice.extractedTotal)}) exceeds the staff approval threshold.
+              An administrator must approve this invoice before it can be resolved.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Under-budget banner */}
       {invoice.status === "under_budget" && (
         <div className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
           <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
@@ -740,32 +965,43 @@ export default function InvoiceDetail() {
         <div className="flex items-start gap-3 p-4 bg-sky-50 border border-sky-200 rounded-xl">
           <CheckCircle2 className="h-5 w-5 text-sky-500 shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-semibold text-sky-800">Manually Approved by Admin</p>
+            <p className="text-sm font-semibold text-sky-800">
+              {(invoice as any).adminApproved ? "Approved by Admin" : "Approved"}
+            </p>
             <p className="text-sm text-sky-700 mt-0.5">
-              This invoice has been approved by an administrator and is ready to push to Xero.
+              This invoice has been approved and is ready to push to Xero.
+              {(invoice as any).approvalNotes && ` Notes: ${(invoice as any).approvalNotes}`}
             </p>
           </div>
         </div>
       )}
 
-      {/* Discrepancy Alert — billed > PO, already billed, or PO not found */}
+      {/* Discrepancy Alert */}
       {invoice.hasDiscrepancy && invoice.status === "flagged" && (() => {
-        const poResults: XeroPoResult[] = Array.isArray((invoice as any).xeroPoResults) ? (invoice as any).xeroPoResults : [];
-        const anyAlreadyBilled = poResults.some((r) => (r as any).alreadyBilled);
-        const anyNotFound = poResults.some((r) => !r.found);
-        const anyOverBilled = poResults.some((r) => (r as any).overBilled);
-
         if (anyAlreadyBilled) {
-          const billedPOs = poResults.filter((r) => (r as any).alreadyBilled).map((r) => r.poNumber).join(", ");
+          const billedPOs = poResults.filter((r) => r.alreadyBilled).map((r) => r.poNumber).join(", ");
+          const paidPOs = poResults.filter((r) => r.alreadyBilled && r.isPaid);
           return (
             <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
               <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-red-800">Duplicate Billing Risk — PO Already Billed in Xero</p>
                 <p className="text-sm text-red-700 mt-0.5">
-                  Purchase Order{billedPOs.includes(",") ? "s" : ""} <strong>{billedPOs}</strong> {billedPOs.includes(",") ? "have" : "has"} already been billed in Xero.
-                  This invoice may be a duplicate. Please verify with the supplier before approving.
+                  Purchase Order{billedPOs.includes(",") ? "s" : ""} <strong>{billedPOs}</strong>{" "}
+                  {billedPOs.includes(",") ? "have" : "has"} already been billed in Xero.
                 </p>
+                {paidPOs.length > 0 && (
+                  <p className="text-sm text-red-700 mt-1">
+                    {paidPOs.map((r) => (
+                      <span key={r.poNumber}>
+                        PO <strong>{r.poNumber}</strong> has already been <strong>PAID</strong>
+                        {r.paidAmount ? ` ($${r.paidAmount.toFixed(2)})` : ""}
+                        {r.paidDate ? ` on ${r.paidDate}` : ""}.{" "}
+                      </span>
+                    ))}
+                  </p>
+                )}
+                <p className="text-sm text-red-700 mt-1">This invoice may be a duplicate. Please verify with the supplier before approving.</p>
               </div>
             </div>
           );
@@ -779,14 +1015,13 @@ export default function InvoiceDetail() {
                 <p className="text-sm font-semibold text-amber-800">Purchase Order Not Found in Xero</p>
                 <p className="text-sm text-amber-700 mt-0.5">
                   Purchase Order{notFoundPOs.includes(",") ? "s" : ""} <strong>{notFoundPOs}</strong> could not be found in Xero.
-                  The PO number may be incorrect or the PO has not been raised yet.
                 </p>
               </div>
             </div>
           );
         }
         if (anyOverBilled) {
-          const firstOver = poResults.find((r) => (r as any).overBilled);
+          const firstOver = poResults.find((r) => r.overBilled);
           return (
             <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
               <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
@@ -795,13 +1030,12 @@ export default function InvoiceDetail() {
                 <p className="text-sm text-amber-700 mt-0.5">
                   Invoice total {formatCurrency(invoice.extractedTotal)} exceeds Xero PO total{" "}
                   {formatCurrency(firstOver?.poTotal)} by{" "}
-                  <strong>{formatCurrency(firstOver?.diff)}</strong>. Please query the supplier or obtain a PO amendment.
+                  <strong>{formatCurrency(firstOver?.diff)}</strong>.
                 </p>
               </div>
             </div>
           );
         }
-        // Generic fallback
         return (
           <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
             <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
@@ -837,7 +1071,7 @@ export default function InvoiceDetail() {
         {/* LEFT: Extracted data + line items */}
         <div className="space-y-4">
 
-          {/* Key fields — view or edit mode */}
+          {/* Key fields */}
           <Card className={cn("border shadow-sm", editMode && "ring-2 ring-primary/20")}>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -855,23 +1089,28 @@ export default function InvoiceDetail() {
             </CardHeader>
             <CardContent className="space-y-4">
               {editMode ? (
-                /* ── Edit mode grid ── */
                 <div className="grid grid-cols-2 gap-3">
                   <EditField label="Invoice Number" icon={Hash}
                     value={editFields.extractedInvoiceNumber}
                     onChange={(v) => setEditFields(f => ({ ...f, extractedInvoiceNumber: v }))} />
-                  <EditField label="PO Number" icon={Hash}
-                    value={editFields.extractedPoNumber}
-                    onChange={(v) => setEditFields(f => ({ ...f, extractedPoNumber: v }))}
-                    placeholder="e.g. AD123456" />
-                  <EditField label="Invoice Date" icon={Calendar}
+
+                  {/* Date pickers */}
+                  <DatePickerField
+                    label="Invoice Date"
+                    icon={Calendar}
                     value={editFields.extractedInvoiceDate}
                     onChange={(v) => setEditFields(f => ({ ...f, extractedInvoiceDate: v }))}
-                    placeholder="YYYY-MM-DD" />
-                  <EditField label="Due Date" icon={Calendar}
+                  />
+                  <DatePickerField
+                    label="Due Date"
+                    icon={Calendar}
                     value={editFields.extractedDueDate}
                     onChange={(v) => setEditFields(f => ({ ...f, extractedDueDate: v }))}
-                    placeholder="YYYY-MM-DD" />
+                    issueDate={editFields.extractedInvoiceDate}
+                    showQuickSelect
+                  />
+
+                  {/* Supplier */}
                   <div className="space-y-1.5">
                     <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
                       <Building2 className="h-3.5 w-3.5" />
@@ -916,18 +1155,81 @@ export default function InvoiceDetail() {
                       onChange={(v) => setEditFields(f => ({ ...f, extractedTotal: v }))}
                       placeholder="0.00" />
                   </div>
+
+                  {/* Multi-PO section */}
+                  <div className="col-span-2 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Hash className="h-3 w-3" />
+                        PO Numbers ({editPoNumbers.length}/15)
+                      </Label>
+                      {editPoNumbers.length < 15 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-xs gap-1 px-2"
+                          onClick={handleAddPoField}
+                        >
+                          <Plus className="h-3 w-3" />
+                          Add PO
+                        </Button>
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      {editPoNumbers.map((po, idx) => (
+                        <div key={idx} className="flex items-center gap-1.5">
+                          <span className="text-xs text-muted-foreground w-5 shrink-0 text-right">{idx + 1}.</span>
+                          <Input
+                            value={po}
+                            onChange={(e) => handleUpdatePoField(idx, e.target.value)}
+                            placeholder={`PO number ${idx + 1}`}
+                            className="h-7 text-xs flex-1 font-mono"
+                          />
+                          {editPoNumbers.length > 1 && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              onClick={() => handleRemovePoField(idx)}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               ) : (
                 /* ── View mode ── */
                 <>
                   <div className="grid grid-cols-2 gap-x-6 gap-y-3">
                     <DataRow icon={Hash} label="Invoice Number" value={invoice.extractedInvoiceNumber} />
-                    <DataRow icon={Hash} label="PO Number" value={invoice.extractedPoNumber} highlight={!!invoice.extractedPoNumber} />
-                    <DataRow icon={Calendar} label="Invoice Date" value={formatDate(invoice.extractedInvoiceDate)} />
-                    <DataRow icon={Calendar} label="Due Date" value={formatDate(invoice.extractedDueDate)} />
+                    <DataRow icon={Calendar} label="Invoice Date" value={toDisplayDate(invoice.extractedInvoiceDate)} />
+                    <DataRow icon={Calendar} label="Due Date" value={toDisplayDate(invoice.extractedDueDate)} />
                     <DataRow icon={Building2} label="Supplier" value={invoice.extractedSupplierName} />
                     <DataRow icon={Hash} label="ABN" value={invoice.extractedSupplierAbn} />
                   </div>
+
+                  {/* Multi-PO view */}
+                  {viewPoNumbers.length > 0 && (
+                    <>
+                      <Separator />
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                          <Hash className="h-3.5 w-3.5" />
+                          Purchase Order{viewPoNumbers.length > 1 ? "s" : ""} ({viewPoNumbers.length})
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {viewPoNumbers.map((po) => (
+                            <Badge key={po} variant="outline" className="font-mono text-xs text-primary border-primary/30">
+                              {po}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
 
                   {containers.length > 0 && (
                     <>
@@ -960,7 +1262,6 @@ export default function InvoiceDetail() {
                       )}
                     </p>
 
-                    {/* Invoice totals row */}
                     <div className="grid grid-cols-2 gap-4 mb-4">
                       <div className="space-y-2">
                         <p className="text-xs font-medium text-muted-foreground">Extracted (Invoice)</p>
@@ -970,12 +1271,9 @@ export default function InvoiceDetail() {
                       </div>
                       <div className="space-y-2">
                         <p className="text-xs font-medium text-muted-foreground">
-                          {(() => {
-                            const poResults = (invoice as any).xeroPoResults as XeroPoResult[] | null;
-                            if (!poResults || poResults.length === 0) return "Xero PO";
-                            if (poResults.length === 1) return `Xero PO ${poResults[0].poNumber}`;
-                            return `Xero POs (${poResults.length})`;
-                          })()}
+                          {poResults.length === 0 ? "Xero PO" :
+                           poResults.length === 1 ? `Xero PO ${poResults[0].poNumber}` :
+                           `Xero POs (${poResults.length})`}
                         </p>
                         {invoice.xeroTotal ? (
                           <>
@@ -991,83 +1289,107 @@ export default function InvoiceDetail() {
                       </div>
                     </div>
 
-                    {/* Multi-PO results table */}
-                    {(() => {
-                      const poResults = (invoice as any).xeroPoResults as XeroPoResult[] | null;
-                      if (!poResults || poResults.length === 0) return null;
-                      return (
-                        <div className="space-y-3">
-                          {poResults.map((po) => (
-                            <div key={po.poNumber} className={cn(
-                              "rounded-lg border p-3 text-xs",
-                              !po.found ? "border-red-200 bg-red-50/50" :
-                              po.overBilled ? "border-amber-200 bg-amber-50/50" :
-                              po.underBilled ? "border-emerald-200 bg-emerald-50/50" :
-                              po.discrepancy ? "border-amber-200 bg-amber-50/50" :
-                              "border-emerald-200 bg-emerald-50/50"
-                            )}>
-                              {/* PO header row */}
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-mono font-semibold text-sm">{po.poNumber}</span>
-                                  <XeroPoStatusBadge status={po.status} />
-                                </div>
-                                {po.found && (
-                                  <div className="flex items-center gap-3 text-muted-foreground">
-                                    <span>PO total: <strong className={cn(
-                                      po.overBilled ? "text-amber-700" :
-                                      po.underBilled ? "text-emerald-700" :
-                                      "text-emerald-700"
-                                    )}>{formatCurrency(po.poTotal)}</strong></span>
-                                    {po.overBilled && (
-                                      <span className="text-amber-700 font-medium">⚠️ Over by {formatCurrency(po.diff)}</span>
-                                    )}
-                                    {po.underBilled && (
-                                      <span className="text-emerald-700 font-medium">✓ Under by {formatCurrency(Math.abs(po.diff))}</span>
-                                    )}
-                                  </div>
+                    {/* Per-PO results */}
+                    {poResults.length > 0 && (
+                      <div className="space-y-3">
+                        {poResults.map((po) => (
+                          <div key={po.poNumber} className={cn(
+                            "rounded-lg border p-3 text-xs",
+                            !po.found ? "border-red-200 bg-red-50/50" :
+                            po.alreadyBilled ? "border-red-200 bg-red-50/50" :
+                            po.overBilled ? "border-amber-200 bg-amber-50/50" :
+                            po.underBilled ? "border-emerald-200 bg-emerald-50/50" :
+                            po.discrepancy ? "border-amber-200 bg-amber-50/50" :
+                            "border-emerald-200 bg-emerald-50/50"
+                          )}>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-semibold text-sm">{po.poNumber}</span>
+                                <XeroPoStatusBadge status={po.status} />
+                                {/* Match/no-match indicator */}
+                                {po.found && !po.alreadyBilled && (
+                                  po.discrepancy ? (
+                                    <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 border border-amber-200 rounded px-1.5 py-0.5">
+                                      ✗ Mismatch
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 border border-emerald-200 rounded px-1.5 py-0.5">
+                                      ✓ Match
+                                    </span>
+                                  )
                                 )}
                               </div>
-
-                              {/* PO line items */}
-                              {po.found && po.lineItems && po.lineItems.length > 0 && (
-                                <div className="mt-2">
-                                  <p className="text-xs text-muted-foreground font-medium mb-1.5">PO Line Items</p>
-                                  <div className="overflow-x-auto">
-                                    <table className="w-full text-xs">
-                                      <thead>
-                                        <tr className="text-muted-foreground border-b">
-                                          <th className="text-left pb-1 font-medium pr-3">Description</th>
-                                          <th className="text-right pb-1 font-medium pr-3">Qty</th>
-                                          <th className="text-right pb-1 font-medium pr-3">Unit</th>
-                                          <th className="text-right pb-1 font-medium">Amount</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {po.lineItems.map((li: XeroPOLineItem, idx: number) => (
-                                          <tr key={li.lineItemId || idx} className="border-b border-border/40 last:border-0">
-                                            <td className="py-1 pr-3 text-foreground max-w-[200px] truncate" title={li.description}>
-                                              {li.description || <span className="italic text-muted-foreground">No description</span>}
-                                            </td>
-                                            <td className="py-1 pr-3 text-right tabular-nums">{li.quantity}</td>
-                                            <td className="py-1 pr-3 text-right tabular-nums">{formatCurrency(li.unitAmount)}</td>
-                                            <td className="py-1 text-right tabular-nums font-medium">{formatCurrency(li.lineAmount)}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
+                              {po.found && !po.alreadyBilled && (
+                                <div className="flex items-center gap-3 text-muted-foreground">
+                                  <span>PO total: <strong className={cn(
+                                    po.overBilled ? "text-amber-700" :
+                                    po.underBilled ? "text-emerald-700" :
+                                    "text-emerald-700"
+                                  )}>{formatCurrency(po.poTotal)}</strong></span>
+                                  {po.overBilled && (
+                                    <span className="text-amber-700 font-medium">⚠ Over by {formatCurrency(po.diff)}</span>
+                                  )}
+                                  {po.underBilled && (
+                                    <span className="text-emerald-700 font-medium">✓ Under by {formatCurrency(Math.abs(po.diff))}</span>
+                                  )}
                                 </div>
                               )}
-
-                              {!po.found && (
-                                <p className="text-red-600 mt-1">This PO was not found in Xero. The PO number may be incorrect or the PO has not been raised yet.</p>
-                              )}
                             </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
+
+                            {/* Already billed + payment status */}
+                            {po.alreadyBilled && (
+                              <div className="mt-1 space-y-0.5">
+                                <p className="text-red-700 font-medium">This PO has already been billed in Xero.</p>
+                                {po.isPaid ? (
+                                  <p className="text-red-700">
+                                    <strong>PAID</strong>
+                                    {po.paidAmount ? ` — $${po.paidAmount.toFixed(2)}` : ""}
+                                    {po.paidDate ? ` on ${po.paidDate}` : ""}
+                                  </p>
+                                ) : (
+                                  <p className="text-amber-700">Payment status: <strong>NOT YET PAID</strong></p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* PO line items */}
+                            {po.found && !po.alreadyBilled && po.lineItems && po.lineItems.length > 0 && (
+                              <div className="mt-2">
+                                <p className="text-xs text-muted-foreground font-medium mb-1.5">PO Line Items</p>
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="text-muted-foreground border-b">
+                                        <th className="text-left pb-1 font-medium pr-3">Description</th>
+                                        <th className="text-right pb-1 font-medium pr-3">Qty</th>
+                                        <th className="text-right pb-1 font-medium pr-3">Unit</th>
+                                        <th className="text-right pb-1 font-medium">Amount</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {po.lineItems.map((li: XeroPOLineItem, idx: number) => (
+                                        <tr key={li.lineItemId || idx} className="border-b border-border/40 last:border-0">
+                                          <td className="py-1 pr-3 text-foreground max-w-[200px] truncate" title={li.description}>
+                                            {li.description || <span className="italic text-muted-foreground">No description</span>}
+                                          </td>
+                                          <td className="py-1 pr-3 text-right tabular-nums">{li.quantity}</td>
+                                          <td className="py-1 pr-3 text-right tabular-nums">{formatCurrency(li.unitAmount)}</td>
+                                          <td className="py-1 text-right tabular-nums font-medium">{formatCurrency(li.lineAmount)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {!po.found && (
+                              <p className="text-red-600 mt-1">This PO was not found in Xero. The PO number may be incorrect or the PO has not been raised yet.</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </>
               )}
@@ -1091,11 +1413,7 @@ export default function InvoiceDetail() {
                     onClick={handleAddLineItem}
                     disabled={addLineItemMutation.isPending}
                   >
-                    {addLineItemMutation.isPending ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Plus className="h-3 w-3" />
-                    )}
+                    {addLineItemMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
                     New Line
                   </Button>
                 )}
@@ -1104,17 +1422,9 @@ export default function InvoiceDetail() {
             <CardContent>
               {lineItems.length === 0 ? (
                 <div className="text-center py-4 space-y-2">
-                  <p className="text-xs text-muted-foreground italic">
-                    No line items extracted. Re-extract to populate.
-                  </p>
+                  <p className="text-xs text-muted-foreground italic">No line items extracted. Re-extract to populate.</p>
                   {editMode && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs gap-1.5"
-                      onClick={handleAddLineItem}
-                      disabled={addLineItemMutation.isPending}
-                    >
+                    <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={handleAddLineItem} disabled={addLineItemMutation.isPending}>
                       {addLineItemMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
                       Add First Line
                     </Button>
@@ -1137,46 +1447,19 @@ export default function InvoiceDetail() {
                         ? editLineItems.map((li, idx) => (
                             <tr key={li.id} className="text-foreground">
                               <td className="py-1.5 pr-2">
-                                <Input
-                                  value={li.description}
-                                  onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, description: e.target.value } : x))}
-                                  className="h-7 text-xs"
-                                  placeholder="Description"
-                                />
+                                <Input value={li.description} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, description: e.target.value } : x))} className="h-7 text-xs" placeholder="Description" />
                               </td>
                               <td className="py-1.5 pr-2">
-                                <Input
-                                  value={li.quantity}
-                                  onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, quantity: e.target.value } : x))}
-                                  className="h-7 text-xs text-right w-16"
-                                  placeholder="1"
-                                />
+                                <Input value={li.quantity} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, quantity: e.target.value } : x))} className="h-7 text-xs text-right w-16" placeholder="1" />
                               </td>
                               <td className="py-1.5 pr-2">
-                                <Input
-                                  value={li.unitPrice}
-                                  onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, unitPrice: e.target.value } : x))}
-                                  className="h-7 text-xs text-right w-24"
-                                  placeholder="0.00"
-                                />
+                                <Input value={li.unitPrice} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, unitPrice: e.target.value } : x))} className="h-7 text-xs text-right w-24" placeholder="0.00" />
                               </td>
                               <td className="py-1.5">
-                                <Input
-                                  value={li.amount}
-                                  onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))}
-                                  className="h-7 text-xs text-right w-24"
-                                  placeholder="0.00"
-                                />
+                                <Input value={li.amount} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} className="h-7 text-xs text-right w-24" placeholder="0.00" />
                               </td>
                               <td className="py-1.5 pl-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                  onClick={() => handleDeleteLineItem(li.id)}
-                                  disabled={deleteLineItemMutation.isPending}
-                                  title="Delete line"
-                                >
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteLineItem(li.id)} disabled={deleteLineItemMutation.isPending} title="Delete line">
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                               </td>
@@ -1223,98 +1506,53 @@ export default function InvoiceDetail() {
                 <MessageSquare className="h-4 w-4 text-muted-foreground" />
                 Query Points
                 {queryPoints.length > 0 && (
-                  <Badge variant="secondary" className="text-xs font-normal">{queryPoints.length} {queryPoints.length === 1 ? 'point' : 'points'}</Badge>
+                  <Badge variant="secondary" className="text-xs font-normal">{queryPoints.length} {queryPoints.length === 1 ? "point" : "points"}</Badge>
                 )}
                 <span className="ml-auto text-xs font-normal text-muted-foreground">Reflected in dispute email</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {queryPoints.length === 0 ? (
-                <p className="text-xs text-muted-foreground italic text-center py-2">
-                  No query points added yet. Add specific issues to include in the dispute email.
-                </p>
+                <p className="text-xs text-muted-foreground italic text-center py-2">No query points added yet.</p>
               ) : (
                 <ol className="space-y-2">
                   {queryPoints.map((pt, idx) => (
                     <li key={idx} className="flex items-start gap-2">
-                      <span className="shrink-0 mt-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold">
-                        {idx + 1}
-                      </span>
-                      <Textarea
-                        value={pt}
-                        onChange={(e) => handleUpdateQueryPoint(idx, e.target.value)}
-                        className="flex-1 text-xs min-h-[60px] resize-none"
-                        placeholder={`Query point ${idx + 1}`}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 mt-1 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => handleRemoveQueryPoint(idx)}
-                        title="Remove"
-                      >
+                      <span className="shrink-0 mt-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold">{idx + 1}</span>
+                      <Textarea value={pt} onChange={(e) => handleUpdateQueryPoint(idx, e.target.value)} className="flex-1 text-xs min-h-[60px] resize-none" placeholder={`Query point ${idx + 1}`} />
+                      <Button variant="ghost" size="icon" className="h-7 w-7 mt-1 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleRemoveQueryPoint(idx)} title="Remove">
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </li>
                   ))}
                 </ol>
               )}
-              {/* Quick-add templates */}
               <div className="pt-1">
-                <Select
-                  value=""
-                  onValueChange={(val) => {
-                    if (!val) return;
-                    const updated = [...queryPoints, val];
-                    setQueryPoints(updated);
-                    setQueryPointsSaved(false);
-                    setQueryPointsDirty(true);
-                  }}
-                >
+                <Select value="" onValueChange={(val) => {
+                  if (!val) return;
+                  setQueryPoints(prev => [...prev, val]);
+                  setQueryPointsSaved(false);
+                  setQueryPointsDirty(true);
+                }}>
                   <SelectTrigger className="h-8 text-xs w-full">
                     <SelectValue placeholder="⚡ Quick-add a common dispute reason..." />
                   </SelectTrigger>
                   <SelectContent>
                     {DISPUTE_TEMPLATES.map((tpl) => (
-                      <SelectItem key={tpl} value={tpl} className="text-xs">
-                        {tpl}
-                      </SelectItem>
+                      <SelectItem key={tpl} value={tpl} className="text-xs">{tpl}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex gap-2">
-                <Input
-                  value={newQueryPoint}
-                  onChange={(e) => setNewQueryPoint(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddQueryPoint(); } }}
-                  placeholder="Or type a custom query point and press Enter..."
-                  className="flex-1 text-xs h-8"
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs gap-1.5 shrink-0"
-                  onClick={handleAddQueryPoint}
-                  disabled={!newQueryPoint.trim()}
-                >
+                <Input value={newQueryPoint} onChange={(e) => setNewQueryPoint(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddQueryPoint(); } }} placeholder="Or type a custom query point..." className="flex-1 text-xs h-8" />
+                <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5 shrink-0" onClick={handleAddQueryPoint} disabled={!newQueryPoint.trim()}>
                   <Plus className="h-3 w-3" /> Add
                 </Button>
               </div>
               {(queryPointsDirty || queryPointsSaved) && (
-                <Button
-                  size="sm"
-                  className="w-full h-8 text-xs gap-1.5"
-                  onClick={handleSaveQueryPoints}
-                  disabled={saveQueryPointsMutation.isPending || queryPointsSaved}
-                >
-                  {saveQueryPointsMutation.isPending ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : queryPointsSaved ? (
-                    <CheckCircle2 className="h-3 w-3" />
-                  ) : (
-                    <Save className="h-3 w-3" />
-                  )}
+                <Button size="sm" className="w-full h-8 text-xs gap-1.5" onClick={handleSaveQueryPoints} disabled={saveQueryPointsMutation.isPending || queryPointsSaved}>
+                  {saveQueryPointsMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : queryPointsSaved ? <CheckCircle2 className="h-3 w-3" /> : <Save className="h-3 w-3" />}
                   {queryPointsSaved ? "Saved — email updated" : "Save & Update Email Template"}
                 </Button>
               )}
@@ -1335,30 +1573,10 @@ export default function InvoiceDetail() {
                   <p className="text-sm font-semibold text-foreground">{supplier.name}</p>
                   {supplier.abn && <p className="text-xs text-muted-foreground">ABN: {supplier.abn}</p>}
                   <div className="grid grid-cols-1 gap-1.5 mt-2">
-                    {supplier.contactName && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <User className="h-3 w-3 shrink-0" />
-                        {supplier.contactName}
-                      </div>
-                    )}
-                    {supplier.email && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Mail className="h-3 w-3 shrink-0" />
-                        {supplier.email}
-                      </div>
-                    )}
-                    {supplier.phone && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Phone className="h-3 w-3 shrink-0" />
-                        {supplier.phone}
-                      </div>
-                    )}
-                    {supplier.address && (
-                      <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                        <MapPin className="h-3 w-3 shrink-0 mt-0.5" />
-                        <span className="whitespace-pre-line">{supplier.address}</span>
-                      </div>
-                    )}
+                    {supplier.contactName && <div className="flex items-center gap-2 text-xs text-muted-foreground"><User className="h-3 w-3 shrink-0" />{supplier.contactName}</div>}
+                    {supplier.email && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Mail className="h-3 w-3 shrink-0" />{supplier.email}</div>}
+                    {supplier.phone && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Phone className="h-3 w-3 shrink-0" />{supplier.phone}</div>}
+                    {supplier.address && <div className="flex items-start gap-2 text-xs text-muted-foreground"><MapPin className="h-3 w-3 shrink-0 mt-0.5" /><span className="whitespace-pre-line">{supplier.address}</span></div>}
                   </div>
                 </div>
               </CardContent>
@@ -1375,12 +1593,7 @@ export default function InvoiceDetail() {
                   <FileText className="h-4 w-4 text-muted-foreground" />
                   Invoice PDF
                 </CardTitle>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 h-7 text-xs"
-                  onClick={() => window.open(invoice.fileUrl, "_blank")}
-                >
+                <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => window.open(invoice.fileUrl, "_blank")}>
                   <ExternalLink className="h-3 w-3" />
                   Open
                 </Button>
@@ -1389,12 +1602,7 @@ export default function InvoiceDetail() {
             </CardHeader>
             <CardContent className="p-0 pb-4 px-4">
               <div className="rounded-lg overflow-hidden border bg-muted/20" style={{ height: "560px" }}>
-                <iframe
-                  src={`${invoice.fileUrl}#toolbar=0&navpanes=0&scrollbar=1`}
-                  className="w-full h-full"
-                  title="Invoice PDF Preview"
-                  style={{ border: "none" }}
-                />
+                <iframe src={`${invoice.fileUrl}#toolbar=0&navpanes=0&scrollbar=1`} className="w-full h-full" title="Invoice PDF Preview" style={{ border: "none" }} />
               </div>
             </CardContent>
           </Card>
@@ -1410,16 +1618,12 @@ export default function InvoiceDetail() {
                 <TabsTrigger value="activity" className="text-xs gap-1.5">
                   <MessageSquare className="h-3.5 w-3.5" />
                   Activity & Notes
-                  {notes.length > 0 && (
-                    <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5">{notes.length}</Badge>
-                  )}
+                  {notes.length > 0 && <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5">{notes.length}</Badge>}
                 </TabsTrigger>
                 <TabsTrigger value="emails" className="text-xs gap-1.5">
                   <Mail className="h-3.5 w-3.5" />
                   Email Log
-                  {emails.length > 0 && (
-                    <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5">{emails.length}</Badge>
-                  )}
+                  {emails.length > 0 && <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5">{emails.length}</Badge>}
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -1451,19 +1655,8 @@ export default function InvoiceDetail() {
               </div>
               <Separator className="my-3" />
               <div className="space-y-2">
-                <Textarea
-                  placeholder="Add a note..."
-                  value={noteContent}
-                  onChange={(e) => setNoteContent(e.target.value)}
-                  className="text-sm resize-none min-h-[72px]"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-2"
-                  onClick={handleAddNote}
-                  disabled={!noteContent.trim() || addNoteMutation.isPending}
-                >
+                <Textarea placeholder="Add a note..." value={noteContent} onChange={(e) => setNoteContent(e.target.value)} className="text-sm resize-none min-h-[72px]" />
+                <Button size="sm" variant="outline" className="gap-2" onClick={handleAddNote} disabled={!noteContent.trim() || addNoteMutation.isPending}>
                   {addNoteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                   Add Note
                 </Button>
@@ -1477,66 +1670,40 @@ export default function InvoiceDetail() {
                 <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
                   {emails.map((email) => (
                     <div key={email.id} className="border rounded-lg overflow-hidden">
-                      {/* Outgoing email */}
                       <div className="p-3 space-y-1.5">
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <p className="text-xs font-medium text-foreground">{email.subject}</p>
-                            <p className="text-xs text-muted-foreground">
-                              To: {email.toAddress} · {formatRelativeTime(email.sentAt)}
-                            </p>
+                            <p className="text-xs text-muted-foreground">To: {email.toAddress} · {formatRelativeTime(email.sentAt)}</p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <Badge variant={email.status === "sent" ? "default" : "destructive"} className="text-xs">
-                              {email.status}
-                            </Badge>
+                            <Badge variant={email.status === "sent" ? "default" : "destructive"} className="text-xs">{email.status}</Badge>
                             {!(email as any).replyBody && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-6 text-xs px-2 gap-1 border-blue-200 text-blue-700 hover:bg-blue-50"
-                                onClick={() => handleOpenReplyDialog(email.id)}
-                              >
+                              <Button size="sm" variant="outline" className="h-6 text-xs px-2 gap-1 border-blue-200 text-blue-700 hover:bg-blue-50" onClick={() => handleOpenReplyDialog(email.id)}>
                                 <Mail className="h-3 w-3" />
                                 Log Reply
                               </Button>
                             )}
                           </div>
                         </div>
-                        <p className="text-xs text-muted-foreground whitespace-pre-wrap border-t pt-1.5 mt-1.5 leading-relaxed line-clamp-4">
-                          {email.body}
-                        </p>
+                        <p className="text-xs text-muted-foreground whitespace-pre-wrap border-t pt-1.5 mt-1.5 leading-relaxed line-clamp-4">{email.body}</p>
                       </div>
-                      {/* Supplier reply (if logged) */}
                       {(email as any).replyBody && (
                         <div className="bg-blue-50/50 border-t border-blue-100 p-3">
                           <div className="flex items-center justify-between mb-1.5">
-                            <p className="text-xs font-medium text-blue-700 flex items-center gap-1">
-                              <Mail className="h-3 w-3" />
-                              Supplier Reply
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {formatRelativeTime((email as any).repliedAt)}
-                            </p>
+                            <p className="text-xs font-medium text-blue-700 flex items-center gap-1"><Mail className="h-3 w-3" />Supplier Reply</p>
+                            <p className="text-xs text-muted-foreground">{formatRelativeTime((email as any).repliedAt)}</p>
                           </div>
-                          <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">
-                            {(email as any).replyBody}
-                          </p>
+                          <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">{(email as any).replyBody}</p>
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
               )}
-              {/* Quick re-send from email log tab */}
               {emails.length > 0 && (
                 <div className="mt-3 pt-3 border-t">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-2 border-purple-200 text-purple-700 hover:bg-purple-50"
-                    onClick={() => openEmailDialog(true)}
-                  >
+                  <Button size="sm" variant="outline" className="gap-2 border-purple-200 text-purple-700 hover:bg-purple-50" onClick={() => openEmailDialog(true)}>
                     <Send className="h-3.5 w-3.5" />
                     Send Follow-up (pre-filled with last email)
                   </Button>
@@ -1593,28 +1760,25 @@ export default function InvoiceDetail() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              Resolve Invoice
+              Resolve &amp; Push to Xero
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <p className="text-sm text-muted-foreground">
-              Marking this invoice as resolved will create a draft bill in Xero ready for payment approval.
+              {poResults.length > 0
+                ? `This will convert ${poResults.length} PO${poResults.length > 1 ? "s" : ""} (${poResults.map(r => r.poNumber).join(", ")}) into a bill in Xero and mark them as BILLED.`
+                : "This will create a draft bill in Xero ready for payment approval."}
             </p>
             <div className="space-y-1.5">
               <Label className="text-xs">Resolution Notes (optional)</Label>
-              <Textarea
-                placeholder="Describe how the dispute was resolved..."
-                value={resolutionNotes}
-                onChange={(e) => setResolutionNotes(e.target.value)}
-                className="text-sm min-h-[100px]"
-              />
+              <Textarea placeholder="Describe how the dispute was resolved..." value={resolutionNotes} onChange={(e) => setResolutionNotes(e.target.value)} className="text-sm min-h-[100px]" />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowResolveDialog(false)}>Cancel</Button>
             <Button onClick={handleResolve} disabled={resolveMutation.isPending} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
               {resolveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              Resolve & Push to Xero
+              Resolve &amp; Push to Xero
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1630,23 +1794,12 @@ export default function InvoiceDetail() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            <p className="text-sm text-muted-foreground">
-              Paste or type the supplier's reply below. It will be saved against this email and added to the activity log.
-            </p>
-            <Textarea
-              placeholder="Paste the supplier's reply here..."
-              value={replyBody}
-              onChange={(e) => setReplyBody(e.target.value)}
-              className="text-sm min-h-[140px]"
-            />
+            <p className="text-sm text-muted-foreground">Paste or type the supplier's reply below. It will be saved against this email and added to the activity log.</p>
+            <Textarea placeholder="Paste the supplier's reply here..." value={replyBody} onChange={(e) => setReplyBody(e.target.value)} className="text-sm min-h-[140px]" />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowReplyDialog(false)}>Cancel</Button>
-            <Button
-              onClick={handleLogReply}
-              disabled={!replyBody.trim() || logReplyMutation.isPending}
-              className="gap-2 bg-blue-600 hover:bg-blue-700 text-white"
-            >
+            <Button onClick={handleLogReply} disabled={!replyBody.trim() || logReplyMutation.isPending} className="gap-2 bg-blue-600 hover:bg-blue-700 text-white">
               {logReplyMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
               Save Reply
             </Button>
@@ -1666,9 +1819,7 @@ export default function InvoiceDetail() {
           <div className="py-2">
             <p className="text-sm text-muted-foreground">
               Are you sure you want to permanently delete{" "}
-              <strong className="text-foreground">
-                {invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}
-              </strong>?
+              <strong className="text-foreground">{invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}</strong>?
               This will remove all associated notes, email logs, and line items and cannot be undone.
             </p>
           </div>
@@ -1682,43 +1833,69 @@ export default function InvoiceDetail() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Staff Approve Dialog ── */}
+      <Dialog open={showStaffApproveDialog} onOpenChange={setShowStaffApproveDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              Approve Invoice
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-800">
+              <p className="font-medium">Within staff approval threshold</p>
+              <p className="text-xs mt-1 text-emerald-700">
+                Invoice total: <strong>{formatCurrency(invoice.extractedTotal)}</strong> ·
+                Discrepancy: <strong>{formatCurrency(invoice.discrepancyAmount)}</strong>
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Approval Notes (optional)</Label>
+              <Textarea placeholder="Reason for approval..." value={staffApproveNotes} onChange={(e) => setStaffApproveNotes(e.target.value)} className="text-sm min-h-[80px]" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowStaffApproveDialog(false)}>Cancel</Button>
+            <Button onClick={handleStaffApprove} disabled={staffApproveMutation.isPending} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
+              {staffApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+              Approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Admin Approve Dialog ── */}
       <Dialog open={showApproveDialog} onOpenChange={setShowApproveDialog}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-sky-500" />
+              <ShieldAlert className="h-4 w-4 text-violet-500" />
               Admin Approve Invoice
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
-              You are manually approving{" "}
-              <strong className="text-foreground">
-                {invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}
-              </strong>{" "}
-              without Xero PO verification. Use this for invoices that have no purchase order or where
-              the PO cannot be matched in Xero.
+              You are approving{" "}
+              <strong className="text-foreground">{invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}</strong>{" "}
+              as administrator. This will update the PO details in Xero to match the invoice.
             </p>
+            {invoice.discrepancyAmount && parseFloat(invoice.discrepancyAmount.toString()) > 0 && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+                <p className="font-medium">Discrepancy: {formatCurrency(invoice.discrepancyAmount)}</p>
+                <p className="text-xs mt-1 text-amber-700">Invoice total: {formatCurrency(invoice.extractedTotal)}</p>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label className="text-xs">Approval Notes (optional)</Label>
-              <Textarea
-                placeholder="Reason for manual approval..."
-                value={approveNotes}
-                onChange={(e) => setApproveNotes(e.target.value)}
-                className="text-sm min-h-[80px]"
-              />
+              <Textarea placeholder="Reason for admin approval..." value={approveNotes} onChange={(e) => setApproveNotes(e.target.value)} className="text-sm min-h-[80px]" />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowApproveDialog(false)}>Cancel</Button>
-            <Button
-              onClick={handleAdminApprove}
-              disabled={adminApproveMutation.isPending}
-              className="gap-2 bg-sky-600 hover:bg-sky-700 text-white"
-            >
-              {adminApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              Approve Invoice
+            <Button onClick={handleAdminApprove} disabled={adminApproveMutation.isPending} className="gap-2 bg-violet-600 hover:bg-violet-700 text-white">
+              {adminApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+              Admin Approve
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1775,12 +1952,7 @@ function EditField({
         <Icon className="h-3 w-3" />
         {label}
       </Label>
-      <Input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="h-8 text-sm"
-      />
+      <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="h-8 text-sm" />
     </div>
   );
 }

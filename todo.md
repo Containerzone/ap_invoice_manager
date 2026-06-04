@@ -89,12 +89,20 @@
 - [x] Admin Approve button for invoices without PO numbers that cannot be verified via Xero
 - [x] Push to Xero creates draft bill linked to PO numbers (or standalone bill if no PO)
 - [x] Mark linked Purchase Orders as Billed in Xero after pushing draft bill
-- [ ] Flag invoice when Xero PO status is BILLED — do not compare amounts, show "PO already billed" error
-- [ ] Only compare amounts when PO status is DRAFT, AWAITING_APPROVAL, or AUTHORISED
-- [ ] Push to Xero (verified/under_budget invoice) — create bill in AWAITING PAYMENT stage
-- [ ] Push to Xero (admin-approved invoice) — create bill in AWAITING APPROVAL stage
-- [ ] Auto-detect paid invoices — if invoice has paid date, zero balance, or paid status then mark as PAID in Xero; otherwise use AWAITING APPROVAL
-- [ ] Fix: invoices not being pushed to Xero when resolve + push to Xero is clicked
-- [ ] Fix: wrong error message shown when PO is already billed (shows "Invoice Exceeds PO" instead of "PO Already Billed")
-- [ ] Add "Pushed to Xero" badge next to "Resolved" status on invoice detail
-- [ ] Fix: toast message after resolve+push should mention Xero push result
+- [x] Flag invoice when Xero PO status is BILLED — do not compare amounts, show "PO already billed" error
+- [x] Only compare amounts when PO status is DRAFT, AWAITING_APPROVAL, or AUTHORISED
+- [x] Push to Xero (verified/under_budget invoice) — create bill in AWAITING PAYMENT stage
+- [x] Push to Xero (admin-approved invoice) — create bill in AWAITING APPROVAL stage
+- [x] Auto-detect paid invoices — if invoice has paid date, zero balance, or paid status then mark as PAID in Xero; otherwise use AWAITING APPROVAL
+- [x] Fix: invoices not being pushed to Xero when resolve + push to Xero is clicked
+- [x] Fix: wrong error message shown when PO is already billed (shows "Invoice Exceeds PO" instead of "PO Already Billed")
+- [x] Add "Pushed to Xero" badge next to "Resolved" status on invoice detail
+- [x] Fix: toast message after resolve+push should mention Xero push result
+- [x] BILLED PO message: include paid status and payment date if PO is already paid in Xero
+- [x] Threaded query emails: include full sent+received email history in each subsequent query email
+- [x] Multi-PO fields: dynamic add/remove up to 15 PO number fields in invoice edit form
+- [x] Per-PO match results: individual match/mismatch result for each PO number on the invoice
+- [x] Approval updates PO in Xero: on approval, update PO supplier name, amount, invoice number (reference), description and line items to match invoice
+- [x] Two-layer approval: staff approval for small differences (up to $30 on ≤$500, $50 on $501-$1000, $100 on $1001-$2000), admin approval required outside those thresholds
+- [x] Resolve converts PO to bill: instead of creating a new bill, convert the matched PO(s) into a bill in Xero and mark as BILLED; for multiple POs create one combined bill
+- [x] Date pickers: DD-MM-YY format with calendar popup; due date calendar includes quick-select buttons (7, 14, 21, 30, 60 days from issue date, End of Month)
