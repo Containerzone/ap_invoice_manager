@@ -541,11 +541,11 @@ describe("invoices.verifyWithXero", () => {
   it("flags invoice when one of multiple POs is not found", async () => {
     const { getInvoiceById, updateInvoice } = await import("./db");
     const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
-    const { extractAllPoNumbers } = await import("./extractionService");
-    vi.mocked(extractAllPoNumbers).mockReturnValueOnce(["AD123456", "BD654321"]);
+    // Use extractedPoNumbers (manual list) so the new priority logic picks them up
     vi.mocked(getInvoiceById).mockResolvedValueOnce({
       id: 99,
       extractedPoNumber: "AD123456",
+      extractedPoNumbers: ["AD123456", "BD654321"],
       extractedTotal: "2200.00",
       extractedInvoiceNumber: "INV-003",
       extractedRawData: {
@@ -623,6 +623,7 @@ describe("invoices.verifyWithXero — BILLED PO flagging", () => {
     vi.mocked(getInvoiceById).mockResolvedValueOnce({
       id: 99,
       extractedPoNumber: "AD123456",
+      extractedPoNumbers: ["AD123456"],
       extractedTotal: "1100.00",
       extractedInvoiceNumber: "INV-001",
       extractedRawData: null,
@@ -657,6 +658,7 @@ describe("invoices.verifyWithXero — BILLED PO flagging", () => {
     vi.mocked(getInvoiceById).mockResolvedValueOnce({
       id: 99,
       extractedPoNumber: "AD123456",
+      extractedPoNumbers: ["AD123456"],
       extractedTotal: "1100.00",
       extractedInvoiceNumber: "INV-001",
       extractedRawData: null,

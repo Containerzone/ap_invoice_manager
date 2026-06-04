@@ -405,18 +405,30 @@ export const appRouter = router({
           if (descMatches) descMatches.forEach((m) => poFromDbLineItems.add(m));
         }
 
-        // Also collect from: extractedPoNumbers JSON array, primary field, and raw data
+        // Determine PO numbers — manual overrides take priority
         const rawData = invoice.extractedRawData as any;
         const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
         const primaryPo = invoice.extractedPoNumber;
 
-        // Merge all sources — DB line items take priority (scanned first)
-        const allPoNumbers: string[] = Array.from(new Set([
-          ...Array.from(poFromDbLineItems),
-          ...(extractedPoNumbersJson ?? []),
-          ...(primaryPo ? [primaryPo] : []),
-          ...extractAllPoNumbers(rawData ?? {}),
-        ])).filter(Boolean);
+        // If the user has manually set extractedPoNumbers (or extractedPoNumber), treat that as
+        // the authoritative list and do NOT merge in raw data scan or DB line item scan.
+        // This prevents stale extracted values (e.g. D702706) from overriding manual corrections (ED702706).
+        let allPoNumbers: string[];
+        const hasManualPoList = extractedPoNumbersJson && extractedPoNumbersJson.length > 0;
+        const hasManualPrimaryPo = !!primaryPo;
+        if (hasManualPoList) {
+          // User has explicitly set the PO list — use it as-is
+          allPoNumbers = Array.from(new Set(extractedPoNumbersJson!.map(p => p.trim()).filter(Boolean)));
+        } else if (hasManualPrimaryPo) {
+          // Single manually-set PO
+          allPoNumbers = [primaryPo!];
+        } else {
+          // No manual override — fall back to auto-detection from DB line items and raw data
+          allPoNumbers = Array.from(new Set([
+            ...Array.from(poFromDbLineItems),
+            ...extractAllPoNumbers(rawData ?? {}),
+          ])).filter(Boolean);
+        }
 
         console.log(`[verifyWithXero] Invoice ${input.invoiceId}: found ${allPoNumbers.length} PO(s): ${allPoNumbers.join(", ")} | DB line items: ${invoiceLineItems.length}`);
 
@@ -687,11 +699,12 @@ export const appRouter = router({
           const rawData = invoice.extractedRawData as any;
           const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
           const primaryPo = invoice.extractedPoNumber;
-          const allPoNumbers: string[] = Array.from(new Set([
-            ...(extractedPoNumbersJson ?? []),
-            ...(primaryPo ? [primaryPo] : []),
-            ...extractAllPoNumbers(rawData ?? {}),
-          ])).filter(Boolean);
+          // Manual PO list takes priority — do not merge raw data scan
+          const allPoNumbers: string[] = extractedPoNumbersJson && extractedPoNumbersJson.length > 0
+            ? Array.from(new Set(extractedPoNumbersJson.map(p => p.trim()).filter(Boolean)))
+            : primaryPo
+              ? [primaryPo]
+              : Array.from(new Set(extractAllPoNumbers(rawData ?? {}))).filter(Boolean);
 
           if (allPoNumbers.length > 0) {
             const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
@@ -759,11 +772,12 @@ export const appRouter = router({
           const rawData = invoice.extractedRawData as any;
           const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
           const primaryPo = invoice.extractedPoNumber;
-          const allPoNumbers: string[] = Array.from(new Set([
-            ...(extractedPoNumbersJson ?? []),
-            ...(primaryPo ? [primaryPo] : []),
-            ...extractAllPoNumbers(rawData ?? {}),
-          ])).filter(Boolean);
+          // Manual PO list takes priority — do not merge raw data scan
+          const allPoNumbers: string[] = extractedPoNumbersJson && extractedPoNumbersJson.length > 0
+            ? Array.from(new Set(extractedPoNumbersJson.map(p => p.trim()).filter(Boolean)))
+            : primaryPo
+              ? [primaryPo]
+              : Array.from(new Set(extractAllPoNumbers(rawData ?? {}))).filter(Boolean);
 
           if (allPoNumbers.length > 0) {
             const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
@@ -1061,14 +1075,15 @@ export const appRouter = router({
         let xeroResult: { invoiceId: string; invoiceNumber: string } | null = null;
         let xeroStatus: "DRAFT" | "SUBMITTED" | "AUTHORISED" = "SUBMITTED";
         // Collect all PO numbers up front (used for reference field and marking as Billed)
+        // Manual PO list takes priority — do not merge raw data scan
         const rawData = invoice.extractedRawData as any;
         const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
         const primaryPo = invoice.extractedPoNumber;
-        const allPoNumbers: string[] = Array.from(new Set([
-          ...(extractedPoNumbersJson ?? []),
-          ...(primaryPo ? [primaryPo] : []),
-          ...extractAllPoNumbers(rawData ?? {}),
-        ])).filter(Boolean);
+        const allPoNumbers: string[] = extractedPoNumbersJson && extractedPoNumbersJson.length > 0
+          ? Array.from(new Set(extractedPoNumbersJson.map(p => p.trim()).filter(Boolean)))
+          : primaryPo
+            ? [primaryPo]
+            : Array.from(new Set(extractAllPoNumbers(rawData ?? {}))).filter(Boolean);
 
         if (input.pushToXero) {
           const clientId = process.env.XERO_CLIENT_ID;
