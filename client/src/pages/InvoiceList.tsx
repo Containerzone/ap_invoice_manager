@@ -25,6 +25,7 @@ const STATUS_OPTIONS = [
   { value: "queried_2nd", label: "2nd Query Sent" },
   { value: "queried_3rd", label: "3rd Query Sent" },
   { value: "resolved", label: "Resolved" },
+  { value: "duplicate", label: "Duplicate" },
 ];
 
 export default function InvoiceList() {

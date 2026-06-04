@@ -64,6 +64,13 @@
       "when": 1780550153468,
       "tag": "0008_purple_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1780606362399,
+      "tag": "0009_brainy_outlaw_kid",
+      "breakpoints": true
     }
   ]
 }

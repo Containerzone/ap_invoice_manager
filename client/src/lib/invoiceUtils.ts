@@ -9,7 +9,8 @@ export type InvoiceStatus =
   | "queried"
   | "queried_2nd"
   | "queried_3rd"
-  | "resolved";
+  | "resolved"
+  | "duplicate";
 
 export const STATUS_CONFIG: Record<
   InvoiceStatus,
@@ -26,6 +27,7 @@ export const STATUS_CONFIG: Record<
   queried_2nd: { label: "2nd Query Sent", color: "text-orange-700",  bg: "bg-orange-50 border-orange-200",  icon: "MessageSquare", step: 5 },
   queried_3rd: { label: "3rd Query Sent", color: "text-red-700",     bg: "bg-red-50 border-red-200",        icon: "MessageSquare", step: 5 },
   resolved:    { label: "Resolved",       color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", icon: "CheckCircle2",  step: 6 },
+  duplicate:   { label: "Duplicate",      color: "text-red-700",     bg: "bg-red-50 border-red-200",         icon: "AlertTriangle", step: 0 },
 };
 
 export function formatCurrency(amount: number | string | null | undefined, currency = "AUD"): string {

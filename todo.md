@@ -119,3 +119,6 @@
 - [x] Reports portal: approved invoices PO variance dashboard — show each approved invoice with PO amount, invoice amount, and net over/under per PO and overall
 - [x] Fix approval: update PO in Xero with supplier name, invoice amount, invoice number (→ reference), description, line items; move PO to AUTHORISED stage (skip if already BILLED)
 - [x] Fix resolve: instead of creating bill from scratch, find the approved PO(s) in Xero and use Xero's create-bill-from-PO API; mark each PO as BILLED after bill is created
+- [x] Duplicate invoice detection: on upload, flag if same supplier + invoice number already exists; on approval, block if PO is already matched/approved to another invoice (show which invoice it belongs to)
+- [x] Keep Approve/Admin Approve buttons visible on already-approved invoices so re-approval can re-sync the PO in Xero before pushing
+- [x] Multi-PO approval fix: assign only the line items that reference each specific PO to that PO's update in Xero — not all invoice line items to every PO

@@ -31,6 +31,8 @@ import {
   deleteXeroToken,
   logEmailReply,
   getPoVarianceReport,
+  findDuplicateInvoice,
+  findInvoicesMatchingPoNumbers,
 } from "./db";
 import { storagePut } from "./storage";
 import { extractInvoiceData, extractAllPoNumbers } from "./extractionService";
@@ -312,6 +314,23 @@ export const appRouter = router({
           });
         }
 
+        // ── Duplicate invoice detection ─────────────────────────────────────
+        // Check if another invoice with the same supplier name + invoice number already exists.
+        // We do this after extraction so we have the supplier name and invoice number.
+        let duplicateWarning: string | undefined;
+        if (extracted.supplierName && extracted.invoiceNumber) {
+          const duplicate = await findDuplicateInvoice(
+            extracted.supplierName,
+            extracted.invoiceNumber,
+            input.invoiceId
+          );
+          if (duplicate) {
+            duplicateWarning = `Duplicate detected: Invoice ${duplicate.invoiceNumber} from ${duplicate.supplierName} already exists in the system (Invoice ID #${duplicate.id}, status: ${duplicate.status}).`;
+            // Mark this invoice as a duplicate
+            await updateInvoice(input.invoiceId, { status: "duplicate" as any });
+          }
+        }
+
         const supplierMsg = supplierCreated
           ? `New supplier profile created: "${matchedSupplier?.name}".`
           : matchedSupplier
@@ -322,10 +341,10 @@ export const appRouter = router({
           invoiceId: input.invoiceId,
           authorId: ctx.user.id,
           type: "system",
-          content: `Data extracted (confidence: ${extracted.confidence}). ${supplierMsg}${extracted.poNumber ? ` PO: ${extracted.poNumber}.` : ""}`,
+          content: `Data extracted (confidence: ${extracted.confidence}). ${supplierMsg}${extracted.poNumber ? ` PO: ${extracted.poNumber}.` : ""}${duplicateWarning ? ` ⚠️ ${duplicateWarning}` : ""}`,
         });
 
-        return { extracted, matchedSupplier, supplierCreated };
+        return { extracted, matchedSupplier, supplierCreated, duplicateWarning };
       }),
 
     // Update extracted fields manually
@@ -674,6 +693,27 @@ export const appRouter = router({
           return { success: false, requiresAdminApproval: true, invoiceTotal, discrepancyAmount };
         }
 
+        // Within threshold — check for PO conflicts before approving
+        const staffPoNumbersJsonPre = (invoice as any).extractedPoNumbers as string[] | null;
+        const staffPrimaryPoPre = invoice.extractedPoNumber;
+        const staffPoNumbersPre: string[] =
+          staffPoNumbersJsonPre && staffPoNumbersJsonPre.length > 0
+            ? Array.from(new Set(staffPoNumbersJsonPre.map((p: string) => p.trim()).filter(Boolean)))
+            : staffPrimaryPoPre
+            ? [staffPrimaryPoPre]
+            : [];
+
+        if (staffPoNumbersPre.length > 0) {
+          const conflicts = await findInvoicesMatchingPoNumbers(staffPoNumbersPre, input.invoiceId);
+          if (conflicts.length > 0) {
+            const c = conflicts[0];
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: `This PO has already been matched and approved to Invoice Number ${c.invoiceNumber ?? c.id} from Supplier ${c.supplierName ?? "Unknown"}. Delete that invoice to reassign this PO.`,
+            });
+          }
+        }
+
         // Within threshold — approve
         await updateInvoice(input.invoiceId, {
           status: "approved" as any,
@@ -710,22 +750,39 @@ export const appRouter = router({
           const staffSupplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
           const staffSupplierName = staffSupplier?.name ?? invoice.extractedSupplierName ?? undefined;
           const staffLineItems = await getLineItemsByInvoice(input.invoiceId);
-          const staffXeroLineItems = staffLineItems.length > 0
-            ? staffLineItems.map((li) => {
-                const unitEx = parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0");
-                const taxRate = li.taxRate != null ? parseFloat(li.taxRate.toString()) : 10;
-                return {
-                  description: li.description ?? "Service",
-                  quantity: parseFloat(li.quantity?.toString() ?? "1"),
-                  unitAmount: unitEx,
-                  accountCode: li.accountCode ?? "300",
-                  taxType: taxRate > 0 ? "INPUT" : "NONE",
-                };
-              })
-            : undefined;
-
+          const PO_REGEX_STAFF = /\b([A-Z]{1,2}\d{6})\b/g;
           console.log(`[StaffApproval] Updating ${staffPoNumbers.length} PO(s) in Xero:`, staffPoNumbers);
           for (const poNum of staffPoNumbers) {
+            // Filter line items to only those belonging to this PO
+            const poLineItems = staffLineItems.filter((li) => {
+              if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
+              if (li.custRef) {
+                const matches = (li.custRef.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map(m => m.toUpperCase());
+                if (matches.includes(poNum.toUpperCase())) return true;
+              }
+              if (li.description) {
+                const matches = (li.description.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map(m => m.toUpperCase());
+                if (matches.includes(poNum.toUpperCase())) return true;
+              }
+              return false;
+            });
+            // Fall back to all line items only when there is a single PO (no ambiguity)
+            const itemsForPo = poLineItems.length > 0
+              ? poLineItems
+              : staffPoNumbers.length === 1 ? staffLineItems : [];
+            const staffXeroLineItems = itemsForPo.length > 0
+              ? itemsForPo.map((li) => {
+                  const unitEx = parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0");
+                  const taxRate = li.taxRate != null ? parseFloat(li.taxRate.toString()) : 10;
+                  return {
+                    description: li.description ?? "Service",
+                    quantity: parseFloat(li.quantity?.toString() ?? "1"),
+                    unitAmount: unitEx,
+                    accountCode: li.accountCode ?? "300",
+                    taxType: taxRate > 0 ? "INPUT" : "NONE",
+                  };
+                })
+              : undefined;
             try {
               const result = await updateXeroPODetails(
                 poNum,
@@ -745,8 +802,7 @@ export const appRouter = router({
             }
           }
         }
-
-        const xeroStaffErrors = xeroStaffResults.filter(r => r.status === "ERROR");
+                const xeroStaffErrors = xeroStaffResults.filter(r => r.status === "ERROR");
         return {
           success: true,
           requiresAdminApproval: false,
@@ -765,17 +821,7 @@ export const appRouter = router({
         const invoice = await getInvoiceById(input.invoiceId);
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
 
-        // ── 1. Mark approved in DB first ──────────────────────────────────────
-        await updateInvoice(input.invoiceId, {
-          status: "approved" as any,
-          adminApproved: true,
-          adminApprovedBy: ctx.user.id,
-          adminApprovedAt: new Date(),
-          approvalNotes: input.notes ?? null,
-          requiresAdminApproval: false,
-        } as any);
-
-        // ── 2. Resolve PO numbers (manual list takes priority) ────────────────
+        // ── 1. Resolve PO numbers (manual list takes priority) ────────────────
         const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
         const primaryPo = invoice.extractedPoNumber;
         const allPoNumbers: string[] =
@@ -784,6 +830,28 @@ export const appRouter = router({
             : primaryPo
             ? [primaryPo]
             : [];
+
+        // ── 1b. Check for PO conflicts before marking approved ─────────────────
+        if (allPoNumbers.length > 0) {
+          const conflicts = await findInvoicesMatchingPoNumbers(allPoNumbers, input.invoiceId);
+          if (conflicts.length > 0) {
+            const c = conflicts[0];
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: `This PO has already been matched and approved to Invoice Number ${c.invoiceNumber ?? c.id} from Supplier ${c.supplierName ?? "Unknown"}. Delete that invoice to reassign this PO.`,
+            });
+          }
+        }
+
+        // ── 2. Mark approved in DB ──────────────────────────────────────────────
+        await updateInvoice(input.invoiceId, {
+          status: "approved" as any,
+          adminApproved: true,
+          adminApprovedBy: ctx.user.id,
+          adminApprovedAt: new Date(),
+          approvalNotes: input.notes ?? null,
+          requiresAdminApproval: false,
+        } as any);
 
         // ── 3. Sync each PO in Xero ───────────────────────────────────────────
         const xeroUpdateResults: Array<{ poNumber: string; status: string; error?: string }> = [];
@@ -795,26 +863,39 @@ export const appRouter = router({
           const supplierName = supplier?.name ?? invoice.extractedSupplierName ?? undefined;
           const lineItems = await getLineItemsByInvoice(input.invoiceId);
 
-          // Build Xero line items from the invoice's saved line items
-          // Use GST-inclusive unit amounts (unitPrice * 1.1 if taxRate is null/10)
-          const xeroLineItems = lineItems.length > 0
-            ? lineItems.map((li) => {
-                const unitEx = parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0");
-                const taxRate = li.taxRate != null ? parseFloat(li.taxRate.toString()) : 10;
-                const unitInc = parseFloat((unitEx * (1 + taxRate / 100)).toFixed(2));
-                return {
-                  description: li.description ?? "Service",
-                  quantity: parseFloat(li.quantity?.toString() ?? "1"),
-                  unitAmount: unitEx, // Xero line items use exclusive amounts; tax is applied via TaxType
-                  accountCode: li.accountCode ?? "300",
-                  taxType: taxRate > 0 ? "INPUT" : "NONE",
-                };
-              })
-            : undefined;
-
           console.log(`[Approval] Updating ${allPoNumbers.length} PO(s) in Xero for invoice ${invoice.extractedInvoiceNumber}:`, allPoNumbers);
 
           for (const poNum of allPoNumbers) {
+            // Filter line items to only those belonging to this PO
+            const poLineItems = lineItems.filter((li) => {
+              if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
+              if (li.custRef) {
+                const matches = (li.custRef.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map(m => m.toUpperCase());
+                if (matches.includes(poNum.toUpperCase())) return true;
+              }
+              if (li.description) {
+                const matches = (li.description.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map(m => m.toUpperCase());
+                if (matches.includes(poNum.toUpperCase())) return true;
+              }
+              return false;
+            });
+            // Fall back to all line items only when there is a single PO (no ambiguity)
+            const itemsForPo = poLineItems.length > 0
+              ? poLineItems
+              : allPoNumbers.length === 1 ? lineItems : [];
+            const xeroLineItems = itemsForPo.length > 0
+              ? itemsForPo.map((li) => {
+                  const unitEx = parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0");
+                  const taxRate = li.taxRate != null ? parseFloat(li.taxRate.toString()) : 10;
+                  return {
+                    description: li.description ?? "Service",
+                    quantity: parseFloat(li.quantity?.toString() ?? "1"),
+                    unitAmount: unitEx, // Xero line items use exclusive amounts; tax is applied via TaxType
+                    accountCode: li.accountCode ?? "300",
+                    taxType: taxRate > 0 ? "INPUT" : "NONE",
+                  };
+                })
+              : undefined;
             try {
               const result = await updateXeroPODetails(
                 poNum,
@@ -835,7 +916,7 @@ export const appRouter = router({
               console.error(`[Approval] Failed to update PO ${poNum} in Xero:`, msg);
             }
           }
-        } else if (allPoNumbers.length === 0) {
+                } else if (allPoNumbers.length === 0) {
           console.log(`[Approval] No PO numbers found on invoice ${input.invoiceId} — skipping Xero PO update`);
         } else {
           console.warn(`[Approval] XERO_CLIENT_ID or XERO_CLIENT_SECRET not set — skipping Xero PO update`);

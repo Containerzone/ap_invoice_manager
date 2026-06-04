@@ -519,9 +519,13 @@ export default function InvoiceDetail() {
 
   const handleExtract = async () => {
     try {
-      await extractMutation.mutateAsync({ invoiceId });
+      const result = await extractMutation.mutateAsync({ invoiceId });
       await invalidate();
-      toast.success("Data re-extracted successfully");
+      if ((result as any).duplicateWarning) {
+        toast.warning((result as any).duplicateWarning, { duration: 8000 });
+      } else {
+        toast.success("Data re-extracted successfully");
+      }
     } catch (e: any) {
       toast.error(e?.message ?? "Extraction failed");
     }
@@ -695,10 +699,10 @@ export default function InvoiceDetail() {
   const requiresAdminApproval = !!(invoice as any).requiresAdminApproval;
   const invoiceTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
   const discrepancyAmount = parseFloat(invoice.discrepancyAmount?.toString() ?? "0");
-  // Staff can approve verified/under_budget/flagged invoices
-  const canStaffApprove = ["verified", "under_budget", "flagged"].includes(invoice.status);
-  // Admin can approve any non-resolved invoice
-  const canAdminApprove = user?.role === "admin" && ["extracted", "flagged", "verified", "under_budget"].includes(invoice.status);
+  // Staff can approve verified/under_budget/flagged/approved invoices (re-sync allowed until resolved)
+  const canStaffApprove = ["verified", "under_budget", "flagged", "approved"].includes(invoice.status);
+  // Admin can approve any non-resolved invoice (including re-sync on already-approved)
+  const canAdminApprove = user?.role === "admin" && ["extracted", "flagged", "verified", "under_budget", "approved"].includes(invoice.status);
 
   // Staff threshold check (mirrors server logic)
   function isWithinStaffThreshold(total: number, diff: number): boolean {
@@ -991,6 +995,20 @@ export default function InvoiceDetail() {
                    {formatCurrency(invoice.xeroTotal)} by <strong>{formatCurrency(totalNetDiffAbs)}</strong>. The billed amount is within the approved PO budget.
                    You may proceed to approve and push to Xero.</>
               }
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate invoice banner */}
+      {invoice.status === "duplicate" && (
+        <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+          <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-red-800">Duplicate Invoice Detected</p>
+            <p className="text-sm text-red-700 mt-0.5">
+              This invoice appears to be a duplicate of a previously uploaded invoice with the same supplier name and invoice number.
+              Please verify with the supplier before proceeding.
             </p>
           </div>
         </div>

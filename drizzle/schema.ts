@@ -70,6 +70,7 @@ export const invoices = mysqlTable("invoices", {
     "queried_2nd",
     "queried_3rd",
     "resolved",
+    "duplicate",
   ])
     .default("uploaded")
     .notNull(),

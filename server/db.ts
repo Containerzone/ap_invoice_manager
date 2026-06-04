@@ -418,3 +418,83 @@ export async function getPoVarianceReport(): Promise<PoVarianceRow[]> {
     ["approved", "resolved", "under_budget", "verified"].includes(r.status ?? "")
   );
 }
+
+/**
+ * Finds an existing invoice with the same supplier name AND invoice number.
+ * Used to detect duplicate uploads. Excludes the given invoiceId (so a re-extract
+ * on the same invoice doesn't flag itself).
+ */
+export async function findDuplicateInvoice(
+  supplierName: string,
+  invoiceNumber: string,
+  excludeInvoiceId?: number
+): Promise<{ id: number; status: string; supplierName: string | null; invoiceNumber: string | null } | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const conditions = [
+    eq(invoices.extractedSupplierName, supplierName),
+    eq(invoices.extractedInvoiceNumber, invoiceNumber),
+  ];
+  if (excludeInvoiceId !== undefined) {
+    conditions.push(sql`${invoices.id} != ${excludeInvoiceId}`);
+  }
+  const rows = await db
+    .select({
+      id: invoices.id,
+      status: invoices.status,
+      supplierName: invoices.extractedSupplierName,
+      invoiceNumber: invoices.extractedInvoiceNumber,
+    })
+    .from(invoices)
+    .where(and(...conditions))
+    .limit(1);
+  return rows[0];
+}
+
+/**
+ * Finds invoices that have been approved and whose extractedPoNumbers JSON array
+ * contains any of the given PO numbers. Used to detect PO-already-matched conflicts.
+ * Excludes the given invoiceId.
+ */
+export async function findInvoicesMatchingPoNumbers(
+  poNumbers: string[],
+  excludeInvoiceId: number
+): Promise<Array<{ id: number; invoiceNumber: string | null; supplierName: string | null; status: string | null }>> {
+  const db = await getDb();
+  if (!db) return [];
+  // Fetch all approved/resolved invoices except the current one
+  const rows = await db
+    .select({
+      id: invoices.id,
+      invoiceNumber: invoices.extractedInvoiceNumber,
+      supplierName: invoices.extractedSupplierName,
+      status: invoices.status,
+      extractedPoNumbers: invoices.extractedPoNumbers,
+      staffApproved: invoices.staffApproved,
+      adminApproved: invoices.adminApproved,
+    })
+    .from(invoices)
+    .where(
+      and(
+        sql`${invoices.id} != ${excludeInvoiceId}`,
+        or(
+          eq(invoices.staffApproved, true),
+          eq(invoices.adminApproved, true)
+        )
+      )
+    );
+  // Filter in JS: check if any PO number overlaps
+  const poSet = new Set(poNumbers.map((p) => p.trim().toUpperCase()));
+  return rows
+    .filter((r) => {
+      const stored = (r as any).extractedPoNumbers as string[] | null;
+      if (!stored || stored.length === 0) return false;
+      return stored.some((p: string) => poSet.has(p.trim().toUpperCase()));
+    })
+    .map((r) => ({
+      id: r.id,
+      invoiceNumber: r.invoiceNumber,
+      supplierName: r.supplierName,
+      status: r.status,
+    }));
+}
