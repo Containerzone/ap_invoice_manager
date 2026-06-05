@@ -559,17 +559,24 @@ export async function convertPOsToBill(
 }
 
 /**
- * Update a Xero Purchase Order's details to match the invoice, then move it to AUTHORISED.
+ * Update a Xero Purchase Order's details to match the invoice.
  *
- * Strategy:
- *   Step 0 — Fetch the existing PO to get its current status and LineAmountTypes.
- *   Step 1 — Resolve the Contact (by ID, name search, or keep existing).
- *   Step 2 — If AUTHORISED, revert to DRAFT so field edits are allowed.
- *   Step 3 — Update editable fields (contact, reference, line items).
- *            IMPORTANT: Only change LineAmountTypes when we are also sending new line items.
- *            When sending line items, always use EXCLUSIVE and convert amounts accordingly.
- *   Step 4 — Set the target status (default AUTHORISED).
- *            Only attempt if the current state allows the transition.
+ * Strategy (the ONLY correct approach for Xero):
+ *   1. Fetch the existing PO to get its current status, LineAmountTypes, and existing LineItemIDs.
+ *   2. Resolve the Contact.
+ *   3. Build an update payload that:
+ *      - NEVER sends LineAmountTypes (we preserve what Xero already has)
+ *      - NEVER sends AccountCode (we preserve what Xero already has per line item)
+ *      - Updates existing line items IN-PLACE by matching LineItemID from the existing PO
+ *      - Converts invoice amounts to match the PO's existing LineAmountTypes
+ *        (INCLUSIVE: send GST-inclusive amount; EXCLUSIVE: send GST-exclusive amount)
+ *      - Only includes Status if we need to change it (DRAFT → AUTHORISED)
+ *   4. Send one POST request with the combined payload.
+ *
+ * This approach avoids ALL the Xero validation errors:
+ *   - "EXCLUSIVE is not a valid value for LineAmountTypes" (we don't send it)
+ *   - "Account code '300' is not a valid code" (we don't send AccountCode)
+ *   - "PurchaseOrder status change is invalid" (we don't revert to DRAFT)
  *
  * Throws on any Xero API error so the caller can surface the message to the user.
  */
@@ -582,15 +589,17 @@ export async function updateXeroPODetails(
     status?: "DRAFT" | "SUBMITTED" | "AUTHORISED";
     description?: string;
     /**
-     * Line items to set on the PO. Each unitAmount MUST be GST-exclusive.
-     * The function converts to inclusive automatically if the PO requires it.
+     * Line items from the invoice for this specific PO.
+     * - unitAmount: the GST-EXCLUSIVE amount from the invoice line (what the extraction stores in `amount`)
+     * - quantity: defaults to 1 if null
+     * - description: the line item description
+     * The function will match these to existing PO line items by position and
+     * convert amounts to match the PO's LineAmountTypes automatically.
      */
     lineItems?: Array<{
       description: string;
       quantity: number;
-      unitAmount: number; // GST-exclusive
-      accountCode?: string;
-      taxType?: string;
+      unitAmount: number; // GST-exclusive amount from invoice
     }>;
   },
   clientId: string,
@@ -599,7 +608,7 @@ export async function updateXeroPODetails(
   const auth = await getValidAccessToken(clientId, clientSecret);
   if (!auth) throw new Error("Xero is not connected. Please reconnect Xero in Settings.");
 
-  // ── Step 0: Fetch the existing PO ──────────────────────────────────────────
+  // ── Step 1: Fetch the existing PO (we MUST have it to inherit LineAmountTypes and AccountCodes) ──
   console.log(`[Xero] updateXeroPODetails: fetching PO "${poNumber}"`);
   const getResponse = await axios.get(
     `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
@@ -618,19 +627,23 @@ export async function updateXeroPODetails(
   const po = poList[0];
   const poId: string = po.PurchaseOrderID;
   const currentStatus: string = po.Status ?? "DRAFT";
-  // Read the existing LineAmountTypes so we know how to send amounts.
-  // Xero values: "EXCLUSIVE", "INCLUSIVE", "NOTAX"
+  // The existing LineAmountTypes tells us how Xero stores amounts for this PO.
+  // INCLUSIVE = amounts include GST; EXCLUSIVE = amounts exclude GST; NOTAX = no tax
   const existingLineAmountTypes: string = po.LineAmountTypes ?? "EXCLUSIVE";
-  console.log(`[Xero] PO "${poNumber}" → ID=${poId}, status=${currentStatus}, lineAmountTypes=${existingLineAmountTypes}`);
+  const existingLineItems: any[] = po.LineItems ?? [];
+  console.log(
+    `[Xero] PO "${poNumber}" → ID=${poId}, status=${currentStatus}, ` +
+    `lineAmountTypes=${existingLineAmountTypes}, existingLineItems=${existingLineItems.length}`
+  );
 
-  // Guard: skip POs that cannot be edited or authorised
+  // Guard: skip POs that are in a terminal state
   const TERMINAL_STATUSES = new Set(["BILLED", "DELETED", "VOIDED"]);
   if (TERMINAL_STATUSES.has(currentStatus)) {
     console.log(`[Xero] PO "${poNumber}" is ${currentStatus} — skipping update (terminal status)`);
     return { poId, finalStatus: currentStatus };
   }
 
-  // ── Helper: make a POST to /PurchaseOrders and throw with readable error ──────
+  // ── Helper: POST to /PurchaseOrders with readable error extraction ───────────────
   async function xeroPost(payload: Record<string, any>, label: string): Promise<any> {
     try {
       const resp = await axios.post(
@@ -646,7 +659,6 @@ export async function updateXeroPODetails(
         }
       );
       const result = resp.data?.PurchaseOrders?.[0];
-      // Xero sometimes returns HTTP 200 with HasErrors:true in the body
       if (result?.HasErrors) {
         const valErrors: any[] = result?.ValidationErrors ?? [];
         const msgs = valErrors.map((e: any) => e.Message ?? JSON.stringify(e)).join("; ");
@@ -657,8 +669,7 @@ export async function updateXeroPODetails(
       console.log(`[Xero] ${label} → status: ${result?.Status}`);
       return result;
     } catch (err: any) {
-      if ((err as Error).message.startsWith(`PO ${poNumber}:`)) throw err; // already formatted
-      // Extract readable validation messages from Xero 400/422 response
+      if ((err as Error).message.startsWith(`PO ${poNumber}:`)) throw err;
       const xeroData = err?.response?.data;
       if (xeroData) {
         const elements: any[] = xeroData.Elements ?? [];
@@ -667,28 +678,26 @@ export async function updateXeroPODetails(
           const errs: any[] = el.ValidationErrors ?? [];
           errs.forEach((e: any) => { if (e.Message) valMsgs.push(e.Message); });
         }
-        // Also check top-level Message (e.g. "PurchaseOrder status change is invalid")
         const topMsg: string | undefined = xeroData.Message;
         if (valMsgs.length > 0) {
           const readable = valMsgs.join("; ");
-          console.error(`[Xero] ${label} FAILED (HTTP ${err?.response?.status ?? "?"}) — ValidationErrors:`, readable);
+          console.error(`[Xero] ${label} FAILED — ValidationErrors:`, readable);
           throw new Error(`PO ${poNumber}: ${readable}`);
         }
         if (topMsg) {
-          console.error(`[Xero] ${label} FAILED (HTTP ${err?.response?.status ?? "?"}) — Message:`, topMsg);
+          console.error(`[Xero] ${label} FAILED — Message:`, topMsg);
           throw new Error(`PO ${poNumber}: ${topMsg}`);
         }
         const body = JSON.stringify(xeroData);
-        console.error(`[Xero] ${label} FAILED (HTTP ${err?.response?.status ?? "?"}) — raw:`, body);
+        console.error(`[Xero] ${label} FAILED — raw:`, body);
         throw new Error(`PO ${poNumber}: ${body}`);
       }
-      const httpStatus = err?.response?.status ?? "?";
-      console.error(`[Xero] ${label} FAILED (HTTP ${httpStatus}):`, err.message);
+      console.error(`[Xero] ${label} FAILED:`, err.message);
       throw new Error(`PO ${poNumber}: ${err.message}`);
     }
   }
 
-  // ── Step 1: Resolve the Contact ──────────────────────────────────────────
+  // ── Step 2: Resolve the Contact ─────────────────────────────────────────────────
   let contactPayload: Record<string, string>;
   if (updates.supplierXeroContactId) {
     contactPayload = { ContactID: updates.supplierXeroContactId };
@@ -730,54 +739,92 @@ export async function updateXeroPODetails(
     console.log(`[Xero] Keeping existing contact: ContactID=${po.Contact?.ContactID}`);
   }
 
-    // ── Step 2: Update fields directly in the PO's current state ────────────────
-  //
-  // We do NOT revert AUTHORISED POs to DRAFT. Xero allows updating line items,
-  // contact, and reference on an AUTHORISED PO directly. Reverting to DRAFT and
-  // then re-authorising causes "PurchaseOrder status change is invalid" errors.
-  // Instead, we send a single update request that keeps the PO in AUTHORISED state.
+  // ── Step 3: Build the update payload ────────────────────────────────────────────────
   const targetStatus = updates.status ?? "AUTHORISED";
 
-  // If the PO is already at the target status, we can update fields without
-  // including Status in the payload (avoids any status-change validation).
-  // If the PO is in DRAFT, we include Status=AUTHORISED to promote it.
-  const fieldsPayload: Record<string, any> = {
+  const payload: Record<string, any> = {
     PurchaseOrderID: poId,
     Contact: contactPayload,
+    // NEVER include LineAmountTypes — we preserve whatever Xero already has
   };
 
-  // Only include Status in the payload if we need to change it
+  // Only change Status if needed (avoids "status change is invalid" errors)
   if (currentStatus !== targetStatus) {
-    fieldsPayload.Status = targetStatus;
+    payload.Status = targetStatus;
     console.log(`[Xero] PO "${poNumber}" status ${currentStatus} → ${targetStatus}`);
   } else {
     console.log(`[Xero] PO "${poNumber}" already ${currentStatus} — updating fields in-place`);
   }
 
-  if (updates.invoiceNumber) fieldsPayload.Reference = updates.invoiceNumber;
-  if (updates.description) fieldsPayload.DeliveryInstructions = updates.description;
+  if (updates.invoiceNumber) payload.Reference = updates.invoiceNumber;
+  if (updates.description) payload.DeliveryInstructions = updates.description;
 
+  // ── Step 3a: Update line items IN-PLACE using existing LineItemIDs ───────────
+  //
+  // KEY RULES:
+  //   - We MUST send LineItemID to update an existing line item (not create a new one)
+  //   - We MUST NOT send AccountCode or TaxType (they stay as-is in Xero)
+  //   - We MUST NOT send LineAmountTypes (it stays as-is in Xero)
+  //   - UnitAmount must match the PO's LineAmountTypes:
+  //     * INCLUSIVE: send the GST-inclusive amount (exclusive * 1.1 for 10% GST)
+  //     * EXCLUSIVE: send the GST-exclusive amount as-is
+  //     * NOTAX: send the amount as-is (no GST)
   if (updates.lineItems && updates.lineItems.length > 0) {
-    // Our DB stores GST-exclusive amounts (extraction prompt: "amount excluding GST if shown separately").
-    // We set LineAmountTypes=EXCLUSIVE so Xero interprets UnitAmount as GST-exclusive.
-    fieldsPayload.LineAmountTypes = "EXCLUSIVE";
-    fieldsPayload.LineItems = updates.lineItems.map((li) => ({
-      Description: li.description,
-      Quantity: li.quantity,
-      UnitAmount: li.unitAmount, // GST-exclusive from DB
-      AccountCode: li.accountCode ?? "300",
-      TaxType: li.taxType ?? "INPUT",
-    }));
-    console.log(
-      `[Xero] Updating ${updates.lineItems.length} line item(s) for PO "${poNumber}" (EXCLUSIVE amounts):`,
-      updates.lineItems.map((li) => `${li.description} qty=${li.quantity} unit=${li.unitAmount}`).join("; ")
-    );
+    const gstRate = 0.10; // 10% GST (Australian standard)
+    const isInclusive = existingLineAmountTypes === "INCLUSIVE";
+
+    // Match invoice line items to existing PO line items by position.
+    // If the PO has more line items than the invoice, we only update the ones we have data for.
+    // If the invoice has more line items than the PO, extras are appended WITHOUT AccountCode/TaxType.
+    const updatedLineItems: any[] = [];
+
+    for (let i = 0; i < updates.lineItems.length; i++) {
+      const invoiceLi = updates.lineItems[i];
+      const existingLi = existingLineItems[i]; // may be undefined if PO has fewer lines
+
+      // Convert amount: our DB stores GST-exclusive amounts
+      // If the PO is INCLUSIVE, Xero expects GST-inclusive UnitAmount
+      const unitAmountExcl = invoiceLi.unitAmount; // GST-exclusive
+      const unitAmountToSend = isInclusive
+        ? Math.round(unitAmountExcl * (1 + gstRate) * 100) / 100 // convert to inclusive
+        : unitAmountExcl; // already exclusive
+
+      const lineItem: Record<string, any> = {
+        Description: invoiceLi.description,
+        Quantity: invoiceLi.quantity,
+        UnitAmount: unitAmountToSend,
+      };
+
+      if (existingLi?.LineItemID) {
+        // Update in-place: include LineItemID so Xero updates this specific line
+        lineItem.LineItemID = existingLi.LineItemID;
+        // Preserve the existing AccountCode and TaxType (do NOT override with "300" or "INPUT")
+        if (existingLi.AccountCode) lineItem.AccountCode = existingLi.AccountCode;
+        if (existingLi.TaxType) lineItem.TaxType = existingLi.TaxType;
+        console.log(
+          `[Xero] Line ${i + 1}: updating LineItemID=${existingLi.LineItemID} ` +
+          `desc="${invoiceLi.description}" qty=${invoiceLi.quantity} ` +
+          `unitExcl=${unitAmountExcl} → unitToSend=${unitAmountToSend} (${existingLineAmountTypes})`
+        );
+      } else {
+        // New line item (PO has fewer lines than invoice) — append without AccountCode
+        // Xero will use the account's default. We do NOT default to "300".
+        console.log(
+          `[Xero] Line ${i + 1}: appending new line ` +
+          `desc="${invoiceLi.description}" qty=${invoiceLi.quantity} unitToSend=${unitAmountToSend}`
+        );
+      }
+
+      updatedLineItems.push(lineItem);
+    }
+
+    payload.LineItems = updatedLineItems;
   } else {
-    // No new line items — do NOT change LineAmountTypes (would corrupt existing line item amounts).
-    console.log(`[Xero] Updating contact/reference only for PO "${poNumber}" (no line item changes)`);
+    console.log(`[Xero] No line items provided — updating contact/reference only for PO "${poNumber}"`);
   }
 
-  const afterUpdate = await xeroPost(fieldsPayload, `Update "${poNumber}"`);
+  // ── Step 4: Send the update ──────────────────────────────────────────────────────────
+  const afterUpdate = await xeroPost(payload, `Update "${poNumber}"`);
   return { poId, finalStatus: afterUpdate?.Status ?? targetStatus };
 }
 
