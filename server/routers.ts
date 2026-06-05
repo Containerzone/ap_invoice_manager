@@ -808,7 +808,7 @@ export const appRouter = router({
           requiresAdminApproval: false,
           xeroUpdateResults: xeroStaffResults,
           xeroWarning: xeroStaffErrors.length > 0
-            ? `PO update failed for: ${xeroStaffErrors.map(r => `${r.poNumber}: ${r.error}`).join("; ")}`
+            ? xeroStaffErrors.map(r => r.error ?? `PO ${r.poNumber} update failed`).join("; ")
             : undefined,
         };
       }),
@@ -940,7 +940,7 @@ export const appRouter = router({
           success: true,
           xeroUpdateResults,
           xeroWarning: xeroErrors.length > 0
-            ? `PO update failed for: ${xeroErrors.map(r => `${r.poNumber}: ${r.error}`).join("; ")}`
+            ? xeroErrors.map(r => r.error ?? `PO ${r.poNumber} update failed`).join("; ")
             : undefined,
         };
       }),

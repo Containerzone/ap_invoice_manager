@@ -677,13 +677,39 @@ export async function updateXeroPODetails(
         }
       );
       const result = resp.data?.PurchaseOrders?.[0];
+      // Xero sometimes returns HTTP 200 with HasErrors:true in the body
+      if (result?.HasErrors) {
+        const valErrors: any[] = result?.ValidationErrors ?? [];
+        const msgs = valErrors.map((e: any) => e.Message ?? JSON.stringify(e)).join("; ");
+        const detail = msgs || JSON.stringify(result);
+        console.error(`[Xero] ${label} returned HasErrors=true:`, detail);
+        throw new Error(`PO update failed for: ${poNumber}: ${detail}`);
+      }
       console.log(`[Xero] ${label} → status: ${result?.Status}`);
       return result;
     } catch (err: any) {
-      const body = err?.response?.data ? JSON.stringify(err.response.data) : err.message;
+      if ((err as Error).message.startsWith("PO update failed")) throw err; // already formatted
+      // Extract readable validation messages from Xero 400/422 response
+      const xeroData = err?.response?.data;
+      if (xeroData) {
+        const elements: any[] = xeroData.Elements ?? [];
+        const valMsgs: string[] = [];
+        for (const el of elements) {
+          const errs: any[] = el.ValidationErrors ?? [];
+          errs.forEach((e: any) => { if (e.Message) valMsgs.push(e.Message); });
+        }
+        if (valMsgs.length > 0) {
+          const readable = valMsgs.join("; ");
+          console.error(`[Xero] ${label} FAILED (HTTP ${err?.response?.status ?? "?"}) — ValidationErrors:`, readable);
+          throw new Error(`PO update failed for: ${poNumber}: ${readable}`);
+        }
+        const body = JSON.stringify(xeroData);
+        console.error(`[Xero] ${label} FAILED (HTTP ${err?.response?.status ?? "?"}) — raw:`, body);
+        throw new Error(`PO update failed for: ${poNumber}: ${body}`);
+      }
       const status = err?.response?.status ?? "?";
-      console.error(`[Xero] ${label} FAILED (HTTP ${status}):`, body);
-      throw new Error(`PO update failed for: ${poNumber}: ${body}`);
+      console.error(`[Xero] ${label} FAILED (HTTP ${status}):`, err.message);
+      throw new Error(`PO update failed for: ${poNumber}: ${err.message}`);
     }
   }
 
@@ -698,6 +724,10 @@ export async function updateXeroPODetails(
   const fieldsPayload: Record<string, any> = {
     PurchaseOrderID: poId,
     Contact: contactPayload,
+    // Always send EXCLUSIVE so Xero treats our UnitAmount values as GST-exclusive.
+    // The existing PO may have LineAmountTypes="Inclusive" which would cause Xero
+    // to misinterpret our exclusive amounts and throw a ValidationException.
+    LineAmountTypes: "EXCLUSIVE",
   };
   if (updates.invoiceNumber) fieldsPayload.Reference = updates.invoiceNumber;
   if (updates.description) fieldsPayload.DeliveryInstructions = updates.description;
