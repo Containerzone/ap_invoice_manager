@@ -554,17 +554,25 @@ export default function InvoiceDetail() {
   const handleAdminApprove = async () => {
     try {
       const result = await adminApproveMutation.mutateAsync({ invoiceId, notes: approveNotes || undefined });
-      await utils.invoices.get.invalidate({ id: invoiceId });
       setShowApproveDialog(false);
       setApproveNotes("");
       const xeroResults = (result as any).xeroUpdateResults as Array<{ poNumber: string; status: string; error?: string }> | undefined;
       const xeroWarning = (result as any).xeroWarning as string | undefined;
       if (xeroWarning) {
         toast.warning(`Invoice approved — but Xero PO update failed: ${xeroWarning}`);
+        await utils.invoices.get.invalidate({ id: invoiceId });
       } else if (xeroResults && xeroResults.length > 0) {
+        // Auto re-verify to refresh stale xeroPoResults after PO updates
+        try {
+          await verifyMutation.mutateAsync({ invoiceId });
+          await utils.invoices.get.invalidate({ id: invoiceId });
+        } catch {
+          await utils.invoices.get.invalidate({ id: invoiceId });
+        }
         const summary = xeroResults.map(r => `${r.poNumber} → ${r.status}`).join(", ");
         toast.success(`Invoice approved by admin. Xero POs updated: ${summary}`);
       } else {
+        await utils.invoices.get.invalidate({ id: invoiceId });
         toast.success("Invoice approved by admin");
       }
     } catch (e: any) {
@@ -575,20 +583,29 @@ export default function InvoiceDetail() {
   const handleStaffApprove = async () => {
     try {
       const result = await staffApproveMutation.mutateAsync({ invoiceId, notes: staffApproveNotes || undefined });
-      await utils.invoices.get.invalidate({ id: invoiceId });
       setShowStaffApproveDialog(false);
       setStaffApproveNotes("");
       if ((result as any).requiresAdminApproval) {
+        await utils.invoices.get.invalidate({ id: invoiceId });
         toast.warning("Discrepancy exceeds staff threshold — admin approval required.");
       } else {
         const xeroResults = (result as any).xeroUpdateResults as Array<{ poNumber: string; status: string; error?: string }> | undefined;
         const xeroWarning = (result as any).xeroWarning as string | undefined;
         if (xeroWarning) {
           toast.warning(`Invoice approved — but Xero PO update failed: ${xeroWarning}`);
+          await utils.invoices.get.invalidate({ id: invoiceId });
         } else if (xeroResults && xeroResults.length > 0) {
+          // Auto re-verify to refresh stale xeroPoResults after PO updates
+          try {
+            await verifyMutation.mutateAsync({ invoiceId });
+            await utils.invoices.get.invalidate({ id: invoiceId });
+          } catch {
+            await utils.invoices.get.invalidate({ id: invoiceId });
+          }
           const summary = xeroResults.map(r => `${r.poNumber} → ${r.status}`).join(", ");
           toast.success(`Invoice approved. Xero POs updated: ${summary}`);
         } else {
+          await utils.invoices.get.invalidate({ id: invoiceId });
           toast.success("Invoice approved");
         }
       }
@@ -1434,8 +1451,8 @@ export default function InvoiceDetail() {
                                       <tr className="text-muted-foreground border-b">
                                         <th className="text-left pb-1 font-medium pr-3">Description</th>
                                         <th className="text-right pb-1 font-medium pr-3">Qty</th>
-                                        <th className="text-right pb-1 font-medium pr-3">Unit</th>
-                                        <th className="text-right pb-1 font-medium">Amount</th>
+                                        <th className="text-right pb-1 font-medium pr-3">Unit (excl. GST)</th>
+                                        <th className="text-right pb-1 font-medium">Amount (incl. GST)</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -1446,7 +1463,7 @@ export default function InvoiceDetail() {
                                           </td>
                                           <td className="py-1 pr-3 text-right tabular-nums">{li.quantity}</td>
                                           <td className="py-1 pr-3 text-right tabular-nums">{formatCurrency(li.unitAmount)}</td>
-                                          <td className="py-1 text-right tabular-nums font-medium">{formatCurrency(li.lineAmount)}</td>
+                                          <td className="py-1 text-right tabular-nums font-medium">{formatCurrency(li.lineAmount + (li.taxAmount ?? 0))}</td>
                                         </tr>
                                       ))}
                                     </tbody>

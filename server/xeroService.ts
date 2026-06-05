@@ -565,18 +565,18 @@ export async function convertPOsToBill(
  *   1. Fetch the existing PO to get its current status, LineAmountTypes, and existing LineItemIDs.
  *   2. Resolve the Contact.
  *   3. Build an update payload that:
- *      - NEVER sends LineAmountTypes (we preserve what Xero already has)
- *      - NEVER sends AccountCode (we preserve what Xero already has per line item)
+ *      - ALWAYS sends LineAmountTypes="Exclusive" when line items are included
+ *        (our DB stores GST-exclusive amounts; Xero title-cases this as "Exclusive")
+ *      - NEVER sends AccountCode (we inherit it from the existing Xero line item)
  *      - Updates existing line items IN-PLACE by matching LineItemID from the existing PO
- *      - Converts invoice amounts to match the PO's existing LineAmountTypes
- *        (INCLUSIVE: send GST-inclusive amount; EXCLUSIVE: send GST-exclusive amount)
+ *      - Sends GST-exclusive UnitAmount directly; Xero computes TaxAmount from TaxType
  *      - Only includes Status if we need to change it (DRAFT → AUTHORISED)
  *   4. Send one POST request with the combined payload.
  *
  * This approach avoids ALL the Xero validation errors:
- *   - "EXCLUSIVE is not a valid value for LineAmountTypes" (we don't send it)
- *   - "Account code '300' is not a valid code" (we don't send AccountCode)
- *   - "PurchaseOrder status change is invalid" (we don't revert to DRAFT)
+ *   - "Exclusive is not a valid value" — fixed by using title-case "Exclusive"
+ *   - "Account code '300' is not a valid code" — fixed by inheriting AccountCode from Xero
+ *   - "PurchaseOrder status change is invalid" — fixed by not reverting to DRAFT
  *
  * Throws on any Xero API error so the caller can surface the message to the user.
  */
@@ -627,13 +627,14 @@ export async function updateXeroPODetails(
   const po = poList[0];
   const poId: string = po.PurchaseOrderID;
   const currentStatus: string = po.Status ?? "DRAFT";
-  // The existing LineAmountTypes tells us how Xero stores amounts for this PO.
-  // INCLUSIVE = amounts include GST; EXCLUSIVE = amounts exclude GST; NOTAX = no tax
-  const existingLineAmountTypes: string = po.LineAmountTypes ?? "EXCLUSIVE";
+  // Xero returns LineAmountTypes as "Exclusive", "Inclusive", or "NoTax" (title case).
+  // Normalise to uppercase for safe comparison.
+  const existingLineAmountTypesRaw: string = po.LineAmountTypes ?? "Exclusive";
+  const existingLineAmountTypes: string = existingLineAmountTypesRaw.toUpperCase(); // "EXCLUSIVE" | "INCLUSIVE" | "NOTAX"
   const existingLineItems: any[] = po.LineItems ?? [];
   console.log(
     `[Xero] PO "${poNumber}" → ID=${poId}, status=${currentStatus}, ` +
-    `lineAmountTypes=${existingLineAmountTypes}, existingLineItems=${existingLineItems.length}`
+    `lineAmountTypes=${existingLineAmountTypesRaw} (normalised: ${existingLineAmountTypes}), existingLineItems=${existingLineItems.length}`
   );
 
   // Guard: skip POs that are in a terminal state
@@ -763,31 +764,29 @@ export async function updateXeroPODetails(
   //
   // KEY RULES:
   //   - We MUST send LineItemID to update an existing line item (not create a new one)
-  //   - We MUST NOT send AccountCode or TaxType (they stay as-is in Xero)
-  //   - We MUST NOT send LineAmountTypes (it stays as-is in Xero)
-  //   - UnitAmount must match the PO's LineAmountTypes:
-  //     * INCLUSIVE: send the GST-inclusive amount (exclusive * 1.1 for 10% GST)
-  //     * EXCLUSIVE: send the GST-exclusive amount as-is
-  //     * NOTAX: send the amount as-is (no GST)
+  //   - We MUST preserve AccountCode and TaxType from the existing Xero line item
+  //   - We ALWAYS send LineAmountTypes="Exclusive" so Xero treats our amounts as GST-exclusive
+  //     (our DB always stores GST-exclusive amounts per extraction prompt)
+  //   - We send the GST-exclusive UnitAmount directly — Xero calculates GST from TaxType
   if (updates.lineItems && updates.lineItems.length > 0) {
-    const gstRate = 0.10; // 10% GST (Australian standard)
-    const isInclusive = existingLineAmountTypes === "INCLUSIVE";
+    // Always tell Xero our amounts are exclusive of GST.
+    // This is safe regardless of the PO's existing LineAmountTypes because we are
+    // explicitly declaring the type of amounts we are sending.
+    // Xero title-cases this value: "Exclusive" (NOT "EXCLUSIVE").
+    payload.LineAmountTypes = "Exclusive";
 
     // Match invoice line items to existing PO line items by position.
     // If the PO has more line items than the invoice, we only update the ones we have data for.
-    // If the invoice has more line items than the PO, extras are appended WITHOUT AccountCode/TaxType.
+    // If the invoice has more line items than the PO, extras are appended WITHOUT AccountCode.
     const updatedLineItems: any[] = [];
 
     for (let i = 0; i < updates.lineItems.length; i++) {
       const invoiceLi = updates.lineItems[i];
       const existingLi = existingLineItems[i]; // may be undefined if PO has fewer lines
 
-      // Convert amount: our DB stores GST-exclusive amounts
-      // If the PO is INCLUSIVE, Xero expects GST-inclusive UnitAmount
-      const unitAmountExcl = invoiceLi.unitAmount; // GST-exclusive
-      const unitAmountToSend = isInclusive
-        ? Math.round(unitAmountExcl * (1 + gstRate) * 100) / 100 // convert to inclusive
-        : unitAmountExcl; // already exclusive
+      // Our DB stores GST-exclusive amounts — send as-is.
+      // Xero will compute TaxAmount from the line's TaxType automatically.
+      const unitAmountToSend = Math.round(invoiceLi.unitAmount * 100) / 100;
 
       const lineItem: Record<string, any> = {
         Description: invoiceLi.description,
@@ -798,20 +797,18 @@ export async function updateXeroPODetails(
       if (existingLi?.LineItemID) {
         // Update in-place: include LineItemID so Xero updates this specific line
         lineItem.LineItemID = existingLi.LineItemID;
-        // Preserve the existing AccountCode and TaxType (do NOT override with "300" or "INPUT")
+        // Preserve the existing AccountCode and TaxType — do NOT override
         if (existingLi.AccountCode) lineItem.AccountCode = existingLi.AccountCode;
         if (existingLi.TaxType) lineItem.TaxType = existingLi.TaxType;
         console.log(
           `[Xero] Line ${i + 1}: updating LineItemID=${existingLi.LineItemID} ` +
-          `desc="${invoiceLi.description}" qty=${invoiceLi.quantity} ` +
-          `unitExcl=${unitAmountExcl} → unitToSend=${unitAmountToSend} (${existingLineAmountTypes})`
+          `desc="${invoiceLi.description}" qty=${invoiceLi.quantity} unitExcl=${unitAmountToSend}`
         );
       } else {
-        // New line item (PO has fewer lines than invoice) — append without AccountCode
-        // Xero will use the account's default. We do NOT default to "300".
+        // New line item (PO has fewer lines than invoice) — Xero uses account default
         console.log(
           `[Xero] Line ${i + 1}: appending new line ` +
-          `desc="${invoiceLi.description}" qty=${invoiceLi.quantity} unitToSend=${unitAmountToSend}`
+          `desc="${invoiceLi.description}" qty=${invoiceLi.quantity} unitExcl=${unitAmountToSend}`
         );
       }
 
