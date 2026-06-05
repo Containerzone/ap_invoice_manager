@@ -730,34 +730,36 @@ export async function updateXeroPODetails(
     console.log(`[Xero] Keeping existing contact: ContactID=${po.Contact?.ContactID}`);
   }
 
-  // ── Step 2: If AUTHORISED, revert to DRAFT so field edits are allowed ──────────
-  if (currentStatus === "AUTHORISED") {
-    console.log(`[Xero] PO "${poNumber}" is AUTHORISED — reverting to DRAFT before field update`);
-    await xeroPost({ PurchaseOrderID: poId, Status: "DRAFT" }, `Step 2 revert-to-DRAFT "${poNumber}"`);
-  }
-
-  // ── Step 3+4: Update fields AND set target status in a single atomic request ──
+    // ── Step 2: Update fields directly in the PO's current state ────────────────
   //
-  // IMPORTANT: We combine the field update and status change into ONE Xero API call.
-  // Doing them separately (update fields → then set AUTHORISED) causes a
-  // "PurchaseOrder status change is invalid" error when the PO was previously AUTHORISED
-  // and we reverted it to DRAFT in Step 2. Xero treats the reverted PO differently
-  // and rejects a subsequent separate AUTHORISE call.
-  // Sending {fields + Status=AUTHORISED} in one request avoids this entirely.
+  // We do NOT revert AUTHORISED POs to DRAFT. Xero allows updating line items,
+  // contact, and reference on an AUTHORISED PO directly. Reverting to DRAFT and
+  // then re-authorising causes "PurchaseOrder status change is invalid" errors.
+  // Instead, we send a single update request that keeps the PO in AUTHORISED state.
   const targetStatus = updates.status ?? "AUTHORISED";
 
+  // If the PO is already at the target status, we can update fields without
+  // including Status in the payload (avoids any status-change validation).
+  // If the PO is in DRAFT, we include Status=AUTHORISED to promote it.
   const fieldsPayload: Record<string, any> = {
     PurchaseOrderID: poId,
     Contact: contactPayload,
-    Status: targetStatus, // include target status in the same request as field updates
   };
+
+  // Only include Status in the payload if we need to change it
+  if (currentStatus !== targetStatus) {
+    fieldsPayload.Status = targetStatus;
+    console.log(`[Xero] PO "${poNumber}" status ${currentStatus} → ${targetStatus}`);
+  } else {
+    console.log(`[Xero] PO "${poNumber}" already ${currentStatus} — updating fields in-place`);
+  }
+
   if (updates.invoiceNumber) fieldsPayload.Reference = updates.invoiceNumber;
   if (updates.description) fieldsPayload.DeliveryInstructions = updates.description;
 
   if (updates.lineItems && updates.lineItems.length > 0) {
     // Our DB stores GST-exclusive amounts (extraction prompt: "amount excluding GST if shown separately").
     // We set LineAmountTypes=EXCLUSIVE so Xero interprets UnitAmount as GST-exclusive.
-    // This replaces whatever LineAmountTypes the existing PO had.
     fieldsPayload.LineAmountTypes = "EXCLUSIVE";
     fieldsPayload.LineItems = updates.lineItems.map((li) => ({
       Description: li.description,
@@ -767,15 +769,15 @@ export async function updateXeroPODetails(
       TaxType: li.taxType ?? "INPUT",
     }));
     console.log(
-      `[Xero] Step 3+4 — updating ${updates.lineItems.length} line item(s) + setting Status=${targetStatus} for PO "${poNumber}" (EXCLUSIVE amounts):`,
+      `[Xero] Updating ${updates.lineItems.length} line item(s) for PO "${poNumber}" (EXCLUSIVE amounts):`,
       updates.lineItems.map((li) => `${li.description} qty=${li.quantity} unit=${li.unitAmount}`).join("; ")
     );
   } else {
     // No new line items — do NOT change LineAmountTypes (would corrupt existing line item amounts).
-    console.log(`[Xero] Step 3+4 — updating contact/reference + setting Status=${targetStatus} for PO "${poNumber}" (no line item changes)`);
+    console.log(`[Xero] Updating contact/reference only for PO "${poNumber}" (no line item changes)`);
   }
 
-  const afterUpdate = await xeroPost(fieldsPayload, `Step 3+4 update+authorise "${poNumber}"`);
+  const afterUpdate = await xeroPost(fieldsPayload, `Update "${poNumber}"`);
   return { poId, finalStatus: afterUpdate?.Status ?? targetStatus };
 }
 
