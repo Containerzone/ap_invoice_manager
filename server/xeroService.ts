@@ -736,65 +736,47 @@ export async function updateXeroPODetails(
     await xeroPost({ PurchaseOrderID: poId, Status: "DRAFT" }, `Step 2 revert-to-DRAFT "${poNumber}"`);
   }
 
-  // ── Step 3: Update editable fields ──────────────────────────────────────────────
+  // ── Step 3+4: Update fields AND set target status in a single atomic request ──
+  //
+  // IMPORTANT: We combine the field update and status change into ONE Xero API call.
+  // Doing them separately (update fields → then set AUTHORISED) causes a
+  // "PurchaseOrder status change is invalid" error when the PO was previously AUTHORISED
+  // and we reverted it to DRAFT in Step 2. Xero treats the reverted PO differently
+  // and rejects a subsequent separate AUTHORISE call.
+  // Sending {fields + Status=AUTHORISED} in one request avoids this entirely.
+  const targetStatus = updates.status ?? "AUTHORISED";
+
   const fieldsPayload: Record<string, any> = {
     PurchaseOrderID: poId,
     Contact: contactPayload,
+    Status: targetStatus, // include target status in the same request as field updates
   };
   if (updates.invoiceNumber) fieldsPayload.Reference = updates.invoiceNumber;
   if (updates.description) fieldsPayload.DeliveryInstructions = updates.description;
 
   if (updates.lineItems && updates.lineItems.length > 0) {
-    // We always send EXCLUSIVE amounts to Xero because our DB stores GST-exclusive values.
-    // We explicitly set LineAmountTypes="EXCLUSIVE" so Xero knows how to interpret the amounts.
-    // This overrides whatever the existing PO had (e.g. "Inclusive") — which is correct
-    // because we are replacing the line items entirely with our invoice data.
+    // Our DB stores GST-exclusive amounts (extraction prompt: "amount excluding GST if shown separately").
+    // We set LineAmountTypes=EXCLUSIVE so Xero interprets UnitAmount as GST-exclusive.
+    // This replaces whatever LineAmountTypes the existing PO had.
     fieldsPayload.LineAmountTypes = "EXCLUSIVE";
     fieldsPayload.LineItems = updates.lineItems.map((li) => ({
       Description: li.description,
       Quantity: li.quantity,
-      UnitAmount: li.unitAmount, // already GST-exclusive from DB
+      UnitAmount: li.unitAmount, // GST-exclusive from DB
       AccountCode: li.accountCode ?? "300",
       TaxType: li.taxType ?? "INPUT",
     }));
     console.log(
-      `[Xero] Step 3 — updating ${updates.lineItems.length} line item(s) for PO "${poNumber}" (EXCLUSIVE amounts):`,
+      `[Xero] Step 3+4 — updating ${updates.lineItems.length} line item(s) + setting Status=${targetStatus} for PO "${poNumber}" (EXCLUSIVE amounts):`,
       updates.lineItems.map((li) => `${li.description} qty=${li.quantity} unit=${li.unitAmount}`).join("; ")
     );
   } else {
-    // No new line items — do NOT change LineAmountTypes.
-    // Changing LineAmountTypes without updating line items would corrupt the existing
-    // line item amounts and prevent the PO from being authorised.
-    console.log(`[Xero] Step 3 — updating contact/reference only for PO "${poNumber}" (no line item changes)`);
+    // No new line items — do NOT change LineAmountTypes (would corrupt existing line item amounts).
+    console.log(`[Xero] Step 3+4 — updating contact/reference + setting Status=${targetStatus} for PO "${poNumber}" (no line item changes)`);
   }
 
-  const afterFields = await xeroPost(fieldsPayload, `Step 3 fields-update "${poNumber}"`);
-
-  // ── Step 4: Set target status ──────────────────────────────────────────────────
-  const targetStatus = updates.status ?? "AUTHORISED";
-  const currentAfterStep3 = afterFields?.Status ?? "DRAFT";
-
-  if (currentAfterStep3 === targetStatus) {
-    // Already at the target status — nothing to do
-    return { poId, finalStatus: currentAfterStep3 };
-  }
-
-  // Validate the transition is possible before attempting it
-  const AUTHORISABLE_FROM = new Set(["DRAFT", "SUBMITTED"]);
-  if (targetStatus === "AUTHORISED" && !AUTHORISABLE_FROM.has(currentAfterStep3)) {
-    console.warn(
-      `[Xero] PO "${poNumber}" is in status "${currentAfterStep3}" after Step 3 — ` +
-      `cannot transition to AUTHORISED. Returning current status.`
-    );
-    return { poId, finalStatus: currentAfterStep3 };
-  }
-
-  console.log(`[Xero] Step 4 — setting PO "${poNumber}" Status=${targetStatus} (from ${currentAfterStep3})`);
-  const afterStatus = await xeroPost(
-    { PurchaseOrderID: poId, Status: targetStatus },
-    `Step 4 set-status-${targetStatus} "${poNumber}"`
-  );
-  return { poId, finalStatus: afterStatus?.Status ?? targetStatus };
+  const afterUpdate = await xeroPost(fieldsPayload, `Step 3+4 update+authorise "${poNumber}"`);
+  return { poId, finalStatus: afterUpdate?.Status ?? targetStatus };
 }
 
 /**
