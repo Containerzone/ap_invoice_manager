@@ -465,7 +465,8 @@ export async function convertPOsToBill(
     description: string;
     quantity: number;
     unitAmount: number;
-    accountCode: string;
+    accountCode: string | null;
+    taxType: string | null;
   }> = [];
 
   for (const poNumber of data.poNumbers) {
@@ -496,7 +497,9 @@ export async function convertPOsToBill(
           description: li.Description ?? `PO ${poNumber}`,
           quantity: parseFloat(li.Quantity ?? "1"),
           unitAmount: parseFloat(li.UnitAmount ?? "0"),
-          accountCode: li.AccountCode ?? "300",
+          // Inherit AccountCode and TaxType from the Xero PO — never hardcode
+          accountCode: li.AccountCode ?? null,
+          taxType: li.TaxType ?? null,
         });
       }
     } catch {
@@ -510,7 +513,8 @@ export async function convertPOsToBill(
       description: `Invoice ${data.invoiceNumber} — POs: ${data.poNumbers.join(", ")}`,
       quantity: 1,
       unitAmount: 0,
-      accountCode: "300",
+      accountCode: null,
+      taxType: null,
     });
   }
 
@@ -527,12 +531,20 @@ export async function convertPOsToBill(
     Status: data.xeroStatus ?? "AUTHORISED",
     Reference: data.poNumbers.join(", "),
     CurrencyCode: data.currencyCode ?? "AUD",
-    LineItems: allLineItems.map((li) => ({
-      Description: li.description,
-      Quantity: li.quantity,
-      UnitAmount: li.unitAmount,
-      AccountCode: li.accountCode,
-    })),
+    // LineAmountTypes must match what was set on the PO during approval (we set Exclusive)
+    LineAmountTypes: "Exclusive",
+    LineItems: allLineItems.map((li) => {
+      const item: Record<string, unknown> = {
+        Description: li.description,
+        Quantity: li.quantity,
+        UnitAmount: li.unitAmount,
+      };
+      // Only include AccountCode if we have a real value from the PO
+      if (li.accountCode) item.AccountCode = li.accountCode;
+      // TaxType is mandatory for ACCPAY bills in Xero — inherit from PO line item
+      if (li.taxType) item.TaxType = li.taxType;
+      return item;
+    }),
   };
 
   try {
