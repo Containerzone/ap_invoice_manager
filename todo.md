@@ -122,3 +122,15 @@
 - [x] Duplicate invoice detection: on upload, flag if same supplier + invoice number already exists; on approval, block if PO is already matched/approved to another invoice (show which invoice it belongs to)
 - [x] Keep Approve/Admin Approve buttons visible on already-approved invoices so re-approval can re-sync the PO in Xero before pushing
 - [x] Multi-PO approval fix: assign only the line items that reference each specific PO to that PO's update in Xero — not all invoice line items to every PO
+
+## Improvements & Fixes (Session 3)
+- [x] Workflow enforcement: Verify → Approve/Admin Approve → Push to Xero order must be enforced; cannot skip steps; Send Query allowed at any time before Push
+- [x] Xero duplicate bill check on upload: search Xero Bills by invoice number + fuzzy supplier name (handle name variations like "Pacific National Services Pty Ltd" vs "PN Services Pty Ltd"); flag with bill amount and stage (DRAFT/AUTHORISED/PAID etc)
+- [x] Local duplicate rule: same invoice number + same supplier cannot be uploaded more than once at the same time (existing local duplicate detection)
+- [x] PO already billed: if PO has been billed before, flag for manual rectification with "PO has already been billed" message (existing, verify still works)
+- [x] Fix staff approval thresholds: $1001–$1500 → up to $100 negative variance; $1501–$2000 → up to $150 negative variance
+- [x] Staff role sees only "Approve" button (not "Admin Approve"); admin role sees "Admin Approve" button
+- [x] Increase max queries per invoice from 3 to 5
+- [x] Invoice list columns: Invoice #, PO Number, Supplier Name, Issue Date, Due Date, Received Date, Status (in that order)
+- [x] Reports: store original PO amount on first verification (new DB column); use original PO amount vs final billed amount for variance calculation
+- [x] User management portal: admin can create up to 3 extra users (staff or admin role) from the app UI

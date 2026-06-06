@@ -585,7 +585,7 @@ describe("invoices.adminApprove", () => {
       extractedPoNumber: null,
       extractedTotal: "500.00",
       extractedInvoiceNumber: "INV-NO-PO",
-      status: "extracted",
+      status: "verified", // must be verified before admin can approve
     } as any);
     const caller = appRouter.createCaller(makeAdminCtx());
     const result = await caller.invoices.adminApprove({ invoiceId: 99, notes: "No PO raised — approved by manager" });

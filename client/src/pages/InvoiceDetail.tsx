@@ -526,6 +526,9 @@ export default function InvoiceDetail() {
       } else {
         toast.success("Data re-extracted successfully");
       }
+      if ((result as any).xeroBillDuplicateWarning) {
+        toast.warning(`Xero: ${(result as any).xeroBillDuplicateWarning}`, { duration: 12000 });
+      }
     } catch (e: any) {
       toast.error(e?.message ?? "Extraction failed");
     }
@@ -706,26 +709,40 @@ export default function InvoiceDetail() {
 
   const { invoice, lineItems, notes, emails, supplier } = data;
   const containers = parseContainerNumbers(invoice.extractedContainerNumbers);
-  const canVerify = ["extracted", "verified", "flagged", "under_budget", "approved"].includes(invoice.status);
-  const canQuery = ["flagged", "verified", "extracted", "under_budget", "approved"].includes(invoice.status);
-  const canResolve = ["flagged", "queried", "verified", "under_budget", "approved"].includes(invoice.status);
-  const isQueried = invoice.status === "queried";
+
+  // ── Strict workflow order: Verify → Approve → Push ──────────────────────────
+  // Step 1: Verify — allowed from extracted state onward (not after resolved/duplicate)
+  const canVerify = ["extracted", "verified", "flagged", "under_budget", "approved",
+    "queried", "queried_2nd", "queried_3rd", "queried_4th", "queried_5th"].includes(invoice.status);
+  // Step 2: Approve — only after verification (verified/under_budget/flagged/approved/queried)
+  const hasBeenVerified = ["verified", "under_budget", "flagged", "approved",
+    "queried", "queried_2nd", "queried_3rd", "queried_4th", "queried_5th"].includes(invoice.status);
+  // Step 3: Resolve/Push — only after approval (staffApproved or adminApproved must be true)
+  const hasBeenApproved = !!(invoice as any).staffApproved || !!(invoice as any).adminApproved;
+  // Send Query — allowed at any time before resolved (before or after approval)
+  const canQuery = invoice.status !== "resolved" && invoice.status !== "uploaded" &&
+    invoice.status !== "extracting" && invoice.status !== "duplicate";
+  const canResolve = hasBeenApproved && ["flagged", "queried", "queried_2nd", "queried_3rd",
+    "queried_4th", "queried_5th", "verified", "under_budget", "approved"].includes(invoice.status);
+  const isQueried = ["queried", "queried_2nd", "queried_3rd", "queried_4th", "queried_5th"].includes(invoice.status);
   const hasEmails = emails.length > 0;
 
   // Two-layer approval logic
   const requiresAdminApproval = !!(invoice as any).requiresAdminApproval;
   const invoiceTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
   const discrepancyAmount = parseFloat(invoice.discrepancyAmount?.toString() ?? "0");
-  // Staff can approve verified/under_budget/flagged/approved invoices (re-sync allowed until resolved)
-  const canStaffApprove = ["verified", "under_budget", "flagged", "approved"].includes(invoice.status);
-  // Admin can approve any non-resolved invoice (including re-sync on already-approved)
-  const canAdminApprove = user?.role === "admin" && ["extracted", "flagged", "verified", "under_budget", "approved"].includes(invoice.status);
+  // Staff can approve only after verification; re-sync allowed on already-approved
+  // Staff role (non-admin) sees Approve button; admin sees Admin Approve button
+  const canStaffApprove = hasBeenVerified && user?.role !== "admin";
+  // Admin can approve any verified/flagged/approved invoice
+  const canAdminApprove = user?.role === "admin" && hasBeenVerified;
 
   // Staff threshold check (mirrors server logic)
   function isWithinStaffThreshold(total: number, diff: number): boolean {
     if (total <= 500) return diff <= 30;
     if (total <= 1000) return diff <= 50;
-    if (total <= 2000) return diff <= 100;
+    if (total <= 1500) return diff <= 100;
+    if (total <= 2000) return diff <= 150;
     return false;
   }
   const staffCanApproveThisInvoice = isWithinStaffThreshold(invoiceTotal, discrepancyAmount);

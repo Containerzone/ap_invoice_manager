@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
-import { formatCurrency, formatRelativeTime } from "@/lib/invoiceUtils";
+import { formatRelativeTime } from "@/lib/invoiceUtils";
 import { Upload, Search, FileText, Filter, Users } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -24,9 +24,20 @@ const STATUS_OPTIONS = [
   { value: "queried", label: "1st Query Sent" },
   { value: "queried_2nd", label: "2nd Query Sent" },
   { value: "queried_3rd", label: "3rd Query Sent" },
+  { value: "queried_4th", label: "4th Query Sent" },
+  { value: "queried_5th", label: "5th Query Sent" },
   { value: "resolved", label: "Resolved" },
   { value: "duplicate", label: "Duplicate" },
 ];
+
+function formatShortDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "—";
+  try {
+    return new Date(dateStr).toLocaleDateString("en-AU", { day: "2-digit", month: "short", year: "2-digit" });
+  } catch {
+    return "—";
+  }
+}
 
 export default function InvoiceList() {
   const [, setLocation] = useLocation();
@@ -129,53 +140,76 @@ export default function InvoiceList() {
           </CardContent>
         ) : (
           <>
-            {/* Table header */}
-            <div className="hidden md:grid grid-cols-[1fr_160px_120px_100px_100px] gap-4 px-5 py-2.5 bg-muted/40 border-b text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              <span>Invoice</span>
+            {/* Table header — columns: Invoice#, PO#, Supplier, Issue Date, Due Date, Received Date, Status */}
+            <div className="hidden xl:grid grid-cols-[1.4fr_0.9fr_1.2fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              <span>Invoice #</span>
+              <span>PO Number</span>
               <span>Supplier</span>
-              <span>Amount</span>
-              <span>Date</span>
+              <span>Issue Date</span>
+              <span>Due Date</span>
+              <span>Received</span>
+              <span>Status</span>
+            </div>
+            {/* Mobile/tablet header */}
+            <div className="xl:hidden hidden md:grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              <span>Invoice #</span>
+              <span>Supplier</span>
+              <span>Issue Date</span>
               <span>Status</span>
             </div>
             <div className="divide-y divide-border">
               {invoices?.map((invoice) => (
                 <div
                   key={invoice.id}
-                  className="grid grid-cols-1 md:grid-cols-[1fr_160px_120px_100px_100px] gap-2 md:gap-4 items-center px-5 py-3.5 hover:bg-muted/20 cursor-pointer transition-colors"
+                  className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1fr] xl:grid-cols-[1.4fr_0.9fr_1.2fr_0.8fr_0.8fr_0.8fr_1fr] gap-2 md:gap-3 items-center px-5 py-3.5 hover:bg-muted/20 cursor-pointer transition-colors"
                   onClick={() => setLocation(`/invoices/${invoice.id}`)}
                 >
+                  {/* Col 1: Invoice # */}
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                      <FileText className="h-4 w-4 text-muted-foreground" />
+                    <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center shrink-0 hidden sm:flex">
+                      <FileText className="h-3.5 w-3.5 text-muted-foreground" />
                     </div>
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-foreground truncate">
-                        {invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `Invoice #${invoice.id}`}
+                        {invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `#${invoice.id}`}
                       </p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {invoice.extractedPoNumber && `PO: ${invoice.extractedPoNumber} · `}
-                        {formatRelativeTime(invoice.createdAt)}
+                      <p className="text-xs text-muted-foreground truncate xl:hidden">
+                        {invoice.extractedPoNumber ?? "No PO"}
                       </p>
                     </div>
                   </div>
+
+                  {/* Col 2: PO Number (desktop only) */}
+                  <span className="text-sm text-foreground truncate hidden xl:block">
+                    {invoice.extractedPoNumber ?? "—"}
+                  </span>
+
+                  {/* Col 3: Supplier */}
                   <span className="text-sm text-foreground truncate hidden md:block">
                     {invoice.extractedSupplierName ?? "—"}
                   </span>
-                  <span className="text-sm font-medium text-foreground tabular-nums hidden md:block">
-                    {formatCurrency(invoice.extractedTotal)}
-                  </span>
+
+                  {/* Col 4: Issue Date */}
                   <span className="text-xs text-muted-foreground hidden md:block">
-                    {invoice.extractedInvoiceDate
-                      ? new Date(invoice.extractedInvoiceDate).toLocaleDateString("en-AU", {
-                          day: "2-digit", month: "short",
-                        })
-                      : "—"}
+                    {formatShortDate(invoice.extractedInvoiceDate)}
                   </span>
-                  <div className="flex items-center justify-between md:justify-start">
+
+                  {/* Col 5: Due Date (desktop only) */}
+                  <span className="text-xs text-muted-foreground hidden xl:block">
+                    {formatShortDate(invoice.extractedDueDate)}
+                  </span>
+
+                  {/* Col 6: Received Date (desktop only) — createdAt = upload date */}
+                  <span className="text-xs text-muted-foreground hidden xl:block">
+                    {formatRelativeTime(invoice.createdAt)}
+                  </span>
+
+                  {/* Col 7: Status */}
+                  <div className="flex items-center gap-2">
                     <StatusBadge status={invoice.status} size="sm" />
                     {invoice.hasDiscrepancy && (
-                      <span className="ml-2 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full hidden lg:inline">
-                        Δ {formatCurrency(invoice.discrepancyAmount)}
+                      <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full hidden lg:inline">
+                        Δ
                       </span>
                     )}
                   </div>

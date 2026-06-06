@@ -7,6 +7,10 @@ import { z } from "zod/v4";
 import {
   getAllUsers,
   updateUserRole,
+  getAllPendingInvites,
+  createPendingInvite,
+  deletePendingInvite,
+  countActiveInvites,
   getAllSuppliers,
   getSupplierById,
   createSupplier,
@@ -48,6 +52,7 @@ import {
   convertPOsToBill,
   updateXeroPODetails,
   getXeroPOPaymentStatus,
+  checkXeroBillDuplicate,
 } from "./xeroService";
 import { sendDisputeEmail, generateDisputeEmailTemplate } from "./emailService";
 import { ENV } from "./_core/env";
@@ -67,7 +72,8 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
 function isWithinStaffThreshold(invoiceTotal: number, diffAmount: number): boolean {
   if (invoiceTotal <= 500) return diffAmount <= 30;
   if (invoiceTotal <= 1000) return diffAmount <= 50;
-  if (invoiceTotal <= 2000) return diffAmount <= 100;
+  if (invoiceTotal <= 1500) return diffAmount <= 100;
+  if (invoiceTotal <= 2000) return diffAmount <= 150;
   return false; // > $2000 always requires admin
 }
 
@@ -92,6 +98,31 @@ export const appRouter = router({
     updateRole: adminProcedure
       .input(z.object({ userId: z.number(), role: z.enum(["user", "admin"]) }))
       .mutation(({ input }) => updateUserRole(input.userId, input.role)),
+
+    // Pending invites — admin pre-registers email + role (max 3 active invites)
+    listInvites: adminProcedure.query(() => getAllPendingInvites()),
+    createInvite: adminProcedure
+      .input(z.object({
+        email: z.string().email(),
+        role: z.enum(["user", "admin"]).default("user"),
+        name: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const activeCount = await countActiveInvites();
+        if (activeCount >= 3) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Maximum of 3 pending invites allowed at a time." });
+        }
+        const id = await createPendingInvite({
+          email: input.email.toLowerCase().trim(),
+          role: input.role,
+          name: input.name ?? null,
+          createdBy: ctx.user.id,
+        });
+        return { id };
+      }),
+    deleteInvite: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => deletePendingInvite(input.id)),
   }),
 
   // ─── Suppliers ──────────────────────────────────────────────────────────────
@@ -314,9 +345,8 @@ export const appRouter = router({
           });
         }
 
-        // ── Duplicate invoice detection ─────────────────────────────────────
-        // Check if another invoice with the same supplier name + invoice number already exists.
-        // We do this after extraction so we have the supplier name and invoice number.
+        // ── Local duplicate invoice detection ─────────────────────────────────
+        // Check if another invoice with the same supplier name + invoice number already exists locally.
         let duplicateWarning: string | undefined;
         if (extracted.supplierName && extracted.invoiceNumber) {
           const duplicate = await findDuplicateInvoice(
@@ -331,6 +361,45 @@ export const appRouter = router({
           }
         }
 
+        // ── Xero bill duplicate check ─────────────────────────────────────────
+        // Check if a bill with this invoice number already exists in Xero (regardless of status).
+        // Uses fuzzy supplier name matching to catch manually-created records with name variations.
+        let xeroBillDuplicateWarning: string | undefined;
+        if (extracted.invoiceNumber && extracted.supplierName && !duplicateWarning) {
+          const xeroClientId = process.env.XERO_CLIENT_ID;
+          const xeroClientSecret = process.env.XERO_CLIENT_SECRET;
+          if (xeroClientId && xeroClientSecret) {
+            try {
+              const xeroDup = await checkXeroBillDuplicate(
+                extracted.invoiceNumber,
+                extracted.supplierName,
+                xeroClientId,
+                xeroClientSecret
+              );
+              if (xeroDup) {
+                const xeroStatusLabel = {
+                  DRAFT: "Draft",
+                  SUBMITTED: "Awaiting Approval",
+                  AUTHORISED: "Awaiting Payment",
+                  PAID: "Paid",
+                  VOIDED: "Voided",
+                  DELETED: "Deleted",
+                }[xeroDup.bill.status] ?? xeroDup.bill.status;
+                const amountStr = `$${xeroDup.bill.total.toFixed(2)} ${xeroDup.bill.currencyCode}`;
+                if (xeroDup.supplierNameMatch) {
+                  xeroBillDuplicateWarning = `A bill for invoice ${extracted.invoiceNumber} from "${xeroDup.nameInXero}" already exists in Xero (Amount: ${amountStr}, Stage: ${xeroStatusLabel}).`;
+                } else {
+                  // Invoice number matches but supplier name doesn't — flag as possible duplicate
+                  xeroBillDuplicateWarning = `A bill for invoice number ${extracted.invoiceNumber} exists in Xero under a different supplier name "${xeroDup.nameInXero}" (Amount: ${amountStr}, Stage: ${xeroStatusLabel}). Verify this is not a duplicate.`;
+                }
+                console.log(`[Extract] Xero bill duplicate found: ${xeroBillDuplicateWarning}`);
+              }
+            } catch (xeroErr: any) {
+              console.warn(`[Extract] Xero bill duplicate check failed: ${xeroErr.message}`);
+            }
+          }
+        }
+
         const supplierMsg = supplierCreated
           ? `New supplier profile created: "${matchedSupplier?.name}".`
           : matchedSupplier
@@ -341,10 +410,10 @@ export const appRouter = router({
           invoiceId: input.invoiceId,
           authorId: ctx.user.id,
           type: "system",
-          content: `Data extracted (confidence: ${extracted.confidence}). ${supplierMsg}${extracted.poNumber ? ` PO: ${extracted.poNumber}.` : ""}${duplicateWarning ? ` ⚠️ ${duplicateWarning}` : ""}`,
+          content: `Data extracted (confidence: ${extracted.confidence}). ${supplierMsg}${extracted.poNumber ? ` PO: ${extracted.poNumber}.` : ""}${duplicateWarning ? ` ⚠️ ${duplicateWarning}` : ""}${xeroBillDuplicateWarning ? ` ⚠️ Xero: ${xeroBillDuplicateWarning}` : ""}`,
         });
 
-        return { extracted, matchedSupplier, supplierCreated, duplicateWarning };
+        return { extracted, matchedSupplier, supplierCreated, duplicateWarning, xeroBillDuplicateWarning };
       }),
 
     // Update extracted fields manually
@@ -615,6 +684,19 @@ export const appRouter = router({
         // Use the first found PO for the legacy single-PO summary fields (backwards compat)
         const firstFound = poLookups.find((r) => r.found);
 
+        // Build originalPoAmounts map: { [poNumber]: poTotal } from this verification run
+        // Only store on first verification (when originalPoAmounts is not yet set) to preserve the baseline
+        const existingOriginalPoAmounts = (invoice as any).originalPoAmounts as Record<string, number> | null;
+        const newOriginalPoAmounts: Record<string, number> = existingOriginalPoAmounts ?? {};
+        if (!existingOriginalPoAmounts) {
+          // First verification — capture all found PO totals as the baseline
+          for (const r of poLookups) {
+            if (r.found && !r.alreadyBilled) {
+              newOriginalPoAmounts[r.poNumber] = r.poTotal;
+            }
+          }
+        }
+
         await updateInvoice(input.invoiceId, {
           xeroInvoiceId: firstFound ? (firstFound as any).poNumber : null,
           xeroInvoiceNumber: firstFound ? firstFound.poNumber : null,
@@ -628,6 +710,9 @@ export const appRouter = router({
           totalNetDiff: totalNetDiffRounded.toString(),
           status: newStatus as any,
           xeroPoResults: poLookups as any,
+          ...(!existingOriginalPoAmounts && Object.keys(newOriginalPoAmounts).length > 0
+            ? { originalPoAmounts: newOriginalPoAmounts as any }
+            : {}),
         });
 
         // Build a human-readable summary for the conversation note
@@ -671,6 +756,15 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const invoice = await getInvoiceById(input.invoiceId);
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
+
+        // ── Workflow guard: must be verified before approval ──────────────────────
+        const verifiedStatuses = ["verified", "flagged", "under_budget", "queried_1st", "queried_2nd", "queried_3rd", "queried_4th", "queried_5th"];
+        if (!verifiedStatuses.includes(invoice.status as string)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Invoice must be verified with Xero before it can be approved.",
+          });
+        }
 
         const invoiceTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
         const discrepancyAmount = parseFloat(invoice.discrepancyAmount?.toString() ?? "0");
@@ -818,7 +912,16 @@ export const appRouter = router({
         const invoice = await getInvoiceById(input.invoiceId);
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
 
-        // ── 1. Resolve PO numbers (manual list takes priority) ────────────────
+        // ── Workflow guard: must be verified before admin approval ───────────────
+        const verifiedStatusesAdmin = ["verified", "flagged", "under_budget", "approved", "queried_1st", "queried_2nd", "queried_3rd", "queried_4th", "queried_5th"];
+        if (!verifiedStatusesAdmin.includes(invoice.status as string)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Invoice must be verified with Xero before it can be approved.",
+          });
+        }
+
+        // ── 1. Resolve PO numbers (manual list takes priority) ────────────────────
         const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
         const primaryPo = invoice.extractedPoNumber;
         const allPoNumbers: string[] =
@@ -960,10 +1063,15 @@ export const appRouter = router({
         const currentInvoice = await getInvoiceById(input.invoiceId);
         if (!currentInvoice) throw new TRPCError({ code: "NOT_FOUND" });
         const newQueryCount = (currentInvoice.queryCount ?? 0) + 1;
+        if (newQueryCount > 5) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Maximum of 5 queries per invoice has been reached." });
+        }
         const newStatus =
           newQueryCount === 1 ? "queried" :
           newQueryCount === 2 ? "queried_2nd" :
-          "queried_3rd";
+          newQueryCount === 3 ? "queried_3rd" :
+          newQueryCount === 4 ? "queried_4th" :
+          "queried_5th";
 
         // Build thread history from previous emails for this invoice
         const previousEmails = await getEmailLogsByInvoice(input.invoiceId);
@@ -1114,10 +1222,13 @@ export const appRouter = router({
           const inv = await getInvoiceById(invoiceId);
           if (!inv) continue;
           const newQueryCount = (inv.queryCount ?? 0) + 1;
+          if (newQueryCount > 5) continue; // Skip invoices that have reached the 5-query limit
           const newStatus =
             newQueryCount === 1 ? "queried" :
             newQueryCount === 2 ? "queried_2nd" :
-            "queried_3rd";
+            newQueryCount === 3 ? "queried_3rd" :
+            newQueryCount === 4 ? "queried_4th" :
+            "queried_5th";
           await updateInvoice(invoiceId, { status: newStatus, queryCount: newQueryCount });
           await addNote({
             invoiceId,
@@ -1196,6 +1307,15 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const invoice = await getInvoiceById(input.invoiceId);
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
+
+        // ── Workflow guard: must be approved (staff or admin) before resolving/pushing ───────
+        const approvedStatuses = ["approved", "resolved"];
+        if (!approvedStatuses.includes(invoice.status as string)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Invoice must be approved before it can be resolved and pushed to Xero.",
+          });
+        }
 
         let xeroResult: { invoiceId: string; invoiceNumber: string } | null = null;
         let xeroStatus: "DRAFT" | "SUBMITTED" | "AUTHORISED" = "SUBMITTED";
@@ -1473,32 +1593,49 @@ export const appRouter = router({
       );
       return rows.map((r) => {
         const poResults: any[] = Array.isArray(r.xeroPoResults) ? r.xeroPoResults : [];
+        // originalPoAmounts: { [poNumber]: originalPOAmount } stored at first verification
+        const origAmounts = (r.originalPoAmounts as Record<string, number> | null) ?? {};
         const poBreakdown = poResults
           .filter((p) => p.found && !p.alreadyBilled)
-          .map((p) => ({
-            poNumber: p.poNumber as string,
-            poTotal: p.poTotal as number,
-            invoiceLineItemTotal: (p.invoiceLineItemTotal ?? null) as number | null,
-            rawDiff: (p.rawDiff ?? 0) as number,
-            overBilled: !!(p.overBilled),
-            underBilled: !!(p.underBilled),
-          }));
-        // Compute overall PO total from all per-PO breakdowns (not the legacy xeroTotal field)
-        const computedXeroTotal = poBreakdown.length > 0
-          ? poBreakdown.reduce((s, p) => s + p.poTotal, 0)
-          : r.xeroTotal != null ? parseFloat(r.xeroTotal.toString()) : null;
-        const totalNetDiff = r.totalNetDiff != null
-          ? parseFloat(r.totalNetDiff.toString())
-          : poBreakdown.reduce((s, p) => s + p.rawDiff, 0);
+          .map((p) => {
+            // Use original PO amount as the baseline for variance (if available)
+            const originalPoAmount = origAmounts[p.poNumber as string] ?? (p.poTotal as number);
+            const finalBilled = (p.invoiceLineItemTotal ?? p.poTotal) as number;
+            const varianceDiff = Math.round((finalBilled - originalPoAmount) * 100) / 100;
+            return {
+              poNumber: p.poNumber as string,
+              originalPoAmount,
+              poTotal: p.poTotal as number, // current PO total in Xero (may have changed)
+              invoiceLineItemTotal: (p.invoiceLineItemTotal ?? null) as number | null,
+              rawDiff: (p.rawDiff ?? 0) as number,
+              varianceDiff, // finalBilled - originalPoAmount (the key variance figure)
+              overBilled: varianceDiff > 0,
+              underBilled: varianceDiff < 0,
+            };
+          });
+        // Compute original PO total baseline from stored originalPoAmounts
+        const originalPoTotal = Object.keys(origAmounts).length > 0
+          ? Object.values(origAmounts).reduce((s, v) => s + v, 0)
+          : poBreakdown.length > 0
+            ? poBreakdown.reduce((s, p) => s + p.originalPoAmount, 0)
+            : r.xeroTotal != null ? parseFloat(r.xeroTotal.toString()) : null;
+        const finalBilledTotal = r.extractedTotal != null ? parseFloat(r.extractedTotal.toString()) : null;
+        const totalVariance = originalPoTotal != null && finalBilledTotal != null
+          ? Math.round((finalBilledTotal - originalPoTotal) * 100) / 100
+          : r.totalNetDiff != null ? parseFloat(r.totalNetDiff.toString()) : 0;
         return {
           invoiceId: r.invoiceId,
           invoiceNumber: r.invoiceNumber,
           supplierName: r.supplierName,
           invoiceDate: r.invoiceDate,
           status: r.status,
-          extractedTotal: r.extractedTotal != null ? parseFloat(r.extractedTotal.toString()) : null,
-          xeroTotal: computedXeroTotal != null ? Math.round(computedXeroTotal * 100) / 100 : null,
-          totalNetDiff: Math.round(totalNetDiff * 100) / 100,
+          extractedTotal: finalBilledTotal,
+          originalPoTotal: originalPoTotal != null ? Math.round(originalPoTotal * 100) / 100 : null,
+          xeroTotal: poBreakdown.length > 0
+            ? Math.round(poBreakdown.reduce((s, p) => s + p.poTotal, 0) * 100) / 100
+            : r.xeroTotal != null ? Math.round(parseFloat(r.xeroTotal.toString()) * 100) / 100 : null,
+          totalVariance, // final billed - original PO amount (the key variance figure)
+          totalNetDiff: r.totalNetDiff != null ? Math.round(parseFloat(r.totalNetDiff.toString()) * 100) / 100 : 0,
           poBreakdown,
           staffApproved: r.staffApproved,
           adminApproved: r.adminApproved,

@@ -69,6 +69,8 @@ export const invoices = mysqlTable("invoices", {
     "queried",
     "queried_2nd",
     "queried_3rd",
+    "queried_4th",
+    "queried_5th",
     "resolved",
     "duplicate",
   ])
@@ -116,6 +118,10 @@ export const invoices = mysqlTable("invoices", {
 
   // Multi-PO numbers (up to 15, stored as JSON array)
   extractedPoNumbers: json("extractedPoNumbers"), // string[]
+
+  // Original PO amounts stored on first verification (for variance reports)
+  // { [poNumber]: amount } — immutable after first verify
+  originalPoAmounts: json("originalPoAmounts"), // Record<string, number>
 
   // Two-layer approval
   staffApproved: boolean("staffApproved").default(false),
@@ -208,6 +214,24 @@ export const conversationNotes = mysqlTable("conversation_notes", {
 
 export type ConversationNote = typeof conversationNotes.$inferSelect;
 export type InsertConversationNote = typeof conversationNotes.$inferInsert;
+
+// ─── Pending Invites ─────────────────────────────────────────────────────────
+// Admin pre-registers an email + role; when that user signs in via OAuth,
+// they are automatically assigned the pre-configured role.
+
+export const pendingInvites = mysqlTable("pending_invites", {
+  id: int("id").autoincrement().primaryKey(),
+  email: varchar("email", { length: 320 }).notNull().unique(),
+  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  name: varchar("name", { length: 255 }), // optional display name hint
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  claimedAt: timestamp("claimedAt"), // set when the invited user first signs in
+  claimedBy: int("claimedBy"), // FK to users.id
+});
+
+export type PendingInvite = typeof pendingInvites.$inferSelect;
+export type InsertPendingInvite = typeof pendingInvites.$inferInsert;
 
 // ─── Xero Tokens ─────────────────────────────────────────────────────────────
 

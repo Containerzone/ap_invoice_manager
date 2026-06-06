@@ -197,8 +197,76 @@ export async function findXeroBillByInvoiceNumber(
       status: inv.Status,
       currencyCode: inv.CurrencyCode ?? "AUD",
     };
-  } catch (err: any) {
+    } catch (err: any) {
     console.error("[Xero] Find bill error:", err?.response?.data ?? err.message);
+    return null;
+  }
+}
+
+/**
+ * Check if a bill already exists in Xero for the given invoice number,
+ * with fuzzy supplier name matching to catch manual records with name variations.
+ * Returns the matching bill with a flag indicating if the supplier name matched.
+ */
+export async function checkXeroBillDuplicate(
+  invoiceNumber: string,
+  supplierName: string,
+  clientId: string,
+  clientSecret: string
+): Promise<{ bill: XeroBill; supplierNameMatch: boolean; nameInXero: string } | null> {
+  const auth = await getValidAccessToken(clientId, clientSecret);
+  if (!auth) return null;
+  try {
+    const response = await axios.get(`${XERO_API_BASE}/Invoices`, {
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+        "Xero-tenant-id": auth.tenantId,
+        Accept: "application/json",
+      },
+      params: { InvoiceNumbers: invoiceNumber, Type: "ACCPAY" },
+    });
+    const invoicesList = response.data?.Invoices ?? [];
+    if (invoicesList.length === 0) return null;
+    const inv = invoicesList[0];
+    const nameInXero: string = inv.Contact?.Name ?? "";
+    // Fuzzy name match: normalise both names (lowercase, strip punctuation/common words)
+    const normalise = (s: string) =>
+      s.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .replace(/\b(pty|ltd|limited|services|service|group|australia|aust|au|the|and|&)\b/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    const normXero = normalise(nameInXero);
+    const normSupplier = normalise(supplierName);
+    // Check if either name contains the other (handles abbreviations like PN vs Pacific National)
+    const supplierNameMatch =
+      normXero === normSupplier ||
+      normXero.includes(normSupplier) ||
+      normSupplier.includes(normXero) ||
+      // Word-level overlap: >=50% of words in common
+      (() => {
+        const wordsXero = new Set(normXero.split(" ").filter(Boolean));
+        const wordsSupplier = normSupplier.split(" ").filter(Boolean);
+        if (wordsSupplier.length === 0) return false;
+        const overlap = wordsSupplier.filter((w) => wordsXero.has(w)).length;
+        return overlap / wordsSupplier.length >= 0.5;
+      })();
+    const bill: XeroBill = {
+      invoiceId: inv.InvoiceID,
+      invoiceNumber: inv.InvoiceNumber,
+      reference: inv.Reference ?? "",
+      contact: { contactId: inv.Contact?.ContactID, name: nameInXero },
+      date: inv.DateString ?? inv.Date,
+      dueDate: inv.DueDateString ?? inv.DueDate,
+      subTotal: parseFloat(inv.SubTotal ?? "0"),
+      totalTax: parseFloat(inv.TotalTax ?? "0"),
+      total: parseFloat(inv.Total ?? "0"),
+      status: inv.Status,
+      currencyCode: inv.CurrencyCode ?? "AUD",
+    };
+    return { bill, supplierNameMatch, nameInXero };
+  } catch (err: any) {
+    console.error("[Xero] checkXeroBillDuplicate error:", err?.response?.data ?? err.message);
     return null;
   }
 }

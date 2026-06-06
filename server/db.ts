@@ -7,11 +7,13 @@ import {
   InsertEmailLog,
   InsertInvoice,
   InsertInvoiceLineItem,
+  InsertPendingInvite,
   InsertSupplier,
   InsertUser,
   InsertXeroToken,
   Invoice,
   InvoiceLineItem,
+  PendingInvite,
   Supplier,
   User,
   XeroToken,
@@ -19,6 +21,7 @@ import {
   emailLogs,
   invoiceLineItems,
   invoices,
+  pendingInvites,
   suppliers,
   users,
   xeroTokens,
@@ -383,6 +386,7 @@ export interface PoVarianceRow {
   xeroTotal: string | null;
   totalNetDiff: string | null;
   xeroPoResults: unknown;
+  originalPoAmounts: unknown;
   staffApproved: boolean | null;
   adminApproved: boolean | null;
   staffApprovedAt: Date | null;
@@ -407,6 +411,7 @@ export async function getPoVarianceReport(): Promise<PoVarianceRow[]> {
       xeroTotal: invoices.xeroTotal,
       totalNetDiff: invoices.totalNetDiff,
       xeroPoResults: invoices.xeroPoResults,
+      originalPoAmounts: invoices.originalPoAmounts,
       staffApproved: invoices.staffApproved,
       adminApproved: invoices.adminApproved,
       staffApprovedAt: invoices.staffApprovedAt,
@@ -497,4 +502,55 @@ export async function findInvoicesMatchingPoNumbers(
       supplierName: r.supplierName,
       status: r.status,
     }));
+}
+
+// ─── Pending Invites ─────────────────────────────────────────────────────────
+
+export async function getAllPendingInvites(): Promise<PendingInvite[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pendingInvites).orderBy(desc(pendingInvites.createdAt));
+}
+
+export async function createPendingInvite(data: InsertPendingInvite): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const result = await db.insert(pendingInvites).values(data);
+  return (result[0] as any).insertId;
+}
+
+export async function deletePendingInvite(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(pendingInvites).where(eq(pendingInvites.id, id));
+}
+
+export async function findPendingInviteByEmail(email: string): Promise<PendingInvite | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(pendingInvites)
+    .where(eq(pendingInvites.email, email.toLowerCase().trim()))
+    .limit(1);
+  return result[0];
+}
+
+export async function claimPendingInvite(email: string, userId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(pendingInvites)
+    .set({ claimedAt: new Date(), claimedBy: userId })
+    .where(eq(pendingInvites.email, email.toLowerCase().trim()));
+}
+
+export async function countActiveInvites(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(pendingInvites)
+    .where(isNull(pendingInvites.claimedAt));
+  return Number(result[0]?.count ?? 0);
 }

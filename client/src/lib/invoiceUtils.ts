@@ -9,6 +9,8 @@ export type InvoiceStatus =
   | "queried"
   | "queried_2nd"
   | "queried_3rd"
+  | "queried_4th"
+  | "queried_5th"
   | "resolved"
   | "duplicate";
 
@@ -26,6 +28,8 @@ export const STATUS_CONFIG: Record<
   queried:     { label: "1st Query Sent", color: "text-purple-700",  bg: "bg-purple-50 border-purple-200",  icon: "MessageSquare", step: 5 },
   queried_2nd: { label: "2nd Query Sent", color: "text-orange-700",  bg: "bg-orange-50 border-orange-200",  icon: "MessageSquare", step: 5 },
   queried_3rd: { label: "3rd Query Sent", color: "text-red-700",     bg: "bg-red-50 border-red-200",        icon: "MessageSquare", step: 5 },
+  queried_4th: { label: "4th Query Sent", color: "text-rose-700",    bg: "bg-rose-50 border-rose-200",      icon: "MessageSquare", step: 5 },
+  queried_5th: { label: "5th Query Sent", color: "text-pink-700",    bg: "bg-pink-50 border-pink-200",      icon: "MessageSquare", step: 5 },
   resolved:    { label: "Resolved",       color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", icon: "CheckCircle2",  step: 6 },
   duplicate:   { label: "Duplicate",      color: "text-red-700",     bg: "bg-red-50 border-red-200",         icon: "AlertTriangle", step: 0 },
 };

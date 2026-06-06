@@ -28,13 +28,31 @@ export function registerOAuthRoutes(app: Express) {
         return;
       }
 
+      // Check if this user has a pending invite (matched by email) — apply pre-configured role
+      let inviteRole: "user" | "admin" | undefined;
+      if (userInfo.email) {
+        const invite = await db.findPendingInviteByEmail(userInfo.email);
+        if (invite && !invite.claimedAt) {
+          inviteRole = invite.role;
+        }
+      }
+
       await db.upsertUser({
         openId: userInfo.openId,
         name: userInfo.name || null,
         email: userInfo.email ?? null,
         loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
         lastSignedIn: new Date(),
+        ...(inviteRole ? { role: inviteRole } : {}),
       });
+
+      // Mark invite as claimed
+      if (inviteRole && userInfo.email) {
+        const user = await db.getUserByOpenId(userInfo.openId);
+        if (user) {
+          await db.claimPendingInvite(userInfo.email, user.id);
+        }
+      }
 
       const sessionToken = await sdk.createSessionToken(userInfo.openId, {
         name: userInfo.name || "",
