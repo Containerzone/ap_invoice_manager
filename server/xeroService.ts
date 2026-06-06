@@ -309,6 +309,27 @@ export async function createXeroDraftBill(
   };
 
   try {
+    // Pre-flight: check if a bill with this invoice number already exists in Xero.
+    try {
+      const existingResp = await axios.get(
+        `${XERO_API_BASE}/Invoices?InvoiceNumbers=${encodeURIComponent(data.invoiceNumber)}&Type=ACCPAY`,
+        {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            Accept: "application/json",
+          },
+        }
+      );
+      const existing = existingResp.data?.Invoices?.[0];
+      if (existing && existing.Status !== "VOIDED" && existing.Status !== "DELETED") {
+        console.log(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in Xero (Status=${existing.Status}, ID=${existing.InvoiceID}) — returning existing bill`);
+        return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
+      }
+    } catch (lookupErr: any) {
+      console.warn(`[Xero] createXeroDraftBill: pre-flight lookup failed (${lookupErr.message}) — proceeding with creation`);
+    }
+
     const response = await axios.post(
       `${XERO_API_BASE}/Invoices`,
       { Invoices: [payload] },
@@ -324,6 +345,11 @@ export async function createXeroDraftBill(
 
     const created = response.data?.Invoices?.[0];
     if (!created) throw new Error("Xero returned no invoice in response");
+    // Check for Xero-level validation errors even on HTTP 200
+    if (created.HasErrors) {
+      const errors = (created.ValidationErrors ?? []).map((e: any) => e.Message).join("; ");
+      throw new Error(`Xero bill validation failed: ${errors}`);
+    }
     return { invoiceId: created.InvoiceID, invoiceNumber: created.InvoiceNumber };
   } catch (err: any) {
     const detail = err?.response?.data
@@ -548,6 +574,30 @@ export async function convertPOsToBill(
   };
 
   try {
+    // Pre-flight: check if a bill with this invoice number already exists in Xero.
+    // If it does (and is not VOIDED/DELETED), return it as success instead of trying
+    // to create a duplicate (which would cause "Invoice not of valid status for modification").
+    try {
+      const existingResp = await axios.get(
+        `${XERO_API_BASE}/Invoices?InvoiceNumbers=${encodeURIComponent(data.invoiceNumber)}&Type=ACCPAY`,
+        {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            Accept: "application/json",
+          },
+        }
+      );
+      const existing = existingResp.data?.Invoices?.[0];
+      if (existing && existing.Status !== "VOIDED" && existing.Status !== "DELETED") {
+        console.log(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in Xero (Status=${existing.Status}, ID=${existing.InvoiceID}) — returning existing bill`);
+        return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
+      }
+    } catch (lookupErr: any) {
+      // If the lookup fails, proceed with creation attempt
+      console.warn(`[Xero] convertPOsToBill: pre-flight lookup failed (${lookupErr.message}) — proceeding with creation`);
+    }
+
     const response = await axios.post(
       `${XERO_API_BASE}/Invoices`,
       { Invoices: [payload] },
@@ -562,6 +612,11 @@ export async function convertPOsToBill(
     );
     const created = response.data?.Invoices?.[0];
     if (!created) throw new Error("Xero returned no invoice in response");
+    // Check for Xero-level validation errors even on HTTP 200
+    if (created.HasErrors) {
+      const errors = (created.ValidationErrors ?? []).map((e: any) => e.Message).join("; ");
+      throw new Error(`Xero bill validation failed: ${errors}`);
+    }
     return { invoiceId: created.InvoiceID, invoiceNumber: created.InvoiceNumber };
   } catch (err: any) {
     const detail = err?.response?.data ? JSON.stringify(err.response.data) : err.message;
