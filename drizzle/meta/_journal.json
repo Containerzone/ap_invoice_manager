@@ -85,6 +85,13 @@
       "when": 1780780125236,
       "tag": "0011_flat_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1780833600181,
+      "tag": "0012_easy_khan",
+      "breakpoints": true
     }
   ]
 }

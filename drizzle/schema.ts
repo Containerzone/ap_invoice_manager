@@ -250,3 +250,40 @@ export const xeroTokens = mysqlTable("xero_tokens", {
 
 export type XeroToken = typeof xeroTokens.$inferSelect;
 export type InsertXeroToken = typeof xeroTokens.$inferInsert;
+
+// ─── PO Requests (Vtiger → Xero) ─────────────────────────────────────────────
+// Each row represents one Vtiger Deal webhook event that triggered PO creation.
+
+export const poRequests = mysqlTable("po_requests", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // Vtiger identifiers
+  vtigerDealId: varchar("vtigerDealId", { length: 64 }).notNull(),
+  vtigerDealNumber: varchar("vtigerDealNumber", { length: 64 }),
+  vtigerDealName: varchar("vtigerDealName", { length: 255 }),
+  vtigerQuoteId: varchar("vtigerQuoteId", { length: 64 }),
+  vtigerQuoteNumber: varchar("vtigerQuoteNumber", { length: 64 }),
+
+  // Processing status
+  status: mysqlEnum("status", ["pending", "processing", "completed", "failed", "partial"])
+    .default("pending")
+    .notNull(),
+
+  // Raw webhook payload (for debugging and field discovery)
+  rawPayload: json("rawPayload"),
+
+  // Per-PO results: array of { poNumber, prefix, amount, supplier, accountCode, xeroPoId, xeroPoNumber, status, error }
+  poResults: json("poResults"),
+
+  // Error message if overall processing failed
+  errorMessage: text("errorMessage"),
+
+  // Timestamps
+  receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+  processedAt: timestamp("processedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PoRequest = typeof poRequests.$inferSelect;
+export type InsertPoRequest = typeof poRequests.$inferInsert;

@@ -160,3 +160,14 @@
 - [x] Fix refreshXeroPoResults also now checks custRef field for PO matching (same as verifyWithXero)
 - [x] Fix PDF attachment upload to Xero: maxRedirects was 0 on the PUT call, blocking Xero's internal redirect — changed to 5
 - [x] Clarify LLM extraction prompt: amount field is always excl. GST (net line total before tax)
+
+## Feature: Vtiger → Xero PO Creation (Session 9)
+- [ ] Store Vtiger API credentials as secrets (VTIGER_USERNAME, VTIGER_ACCESS_KEY, VTIGER_URL)
+- [ ] Explore Vtiger API: discover Quote field API names and Deal-Quote relationship
+- [ ] DB schema: po_requests table (dealId, dealNumber, quoteId, status, poResults JSON, errors, timestamps)
+- [ ] Webhook endpoint POST /api/vtiger-webhook: receive Deal Stage 1 trigger, validate, queue processing
+- [ ] vtigerService.ts: fetch Deal → fetch linked Quote → extract cost fields
+- [ ] xeroPoService.ts: create one Xero Draft PO per non-zero cost field using correct prefix/supplier/account mapping
+- [ ] PO Requests page in app: list all webhook events, show per-PO status (created/skipped/error), link to Xero
+- [ ] Add PO Requests nav item to DashboardLayout sidebar
+- [ ] Tests for field mapping logic and PO creation
