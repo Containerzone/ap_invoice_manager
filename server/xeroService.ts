@@ -159,6 +159,43 @@ export interface XeroPurchaseOrder {
   lineItems: XeroPOLineItem[];
 }
 
+/**
+ * Internal helper: find an existing Xero ACCPAY bill by invoice number.
+ * Tries two strategies to handle Xero's inconsistent behaviour with numeric invoice numbers:
+ *   1. GET with Type=ACCPAY filter
+ *   2. GET without Type filter (fallback)
+ * Returns the raw Xero invoice object (not the mapped XeroBill type) or null.
+ */
+async function findExistingXeroBill(
+  invoiceNumber: string,
+  auth: { token: string; tenantId: string }
+): Promise<any | null> {
+  const headers = {
+    Authorization: `Bearer ${auth.token}`,
+    "Xero-tenant-id": auth.tenantId,
+    Accept: "application/json",
+  };
+  // Strategy 1: with Type=ACCPAY
+  try {
+    const r1 = await axios.get(`${XERO_API_BASE}/Invoices`, {
+      headers,
+      params: { InvoiceNumbers: invoiceNumber, Type: "ACCPAY" },
+    });
+    const inv = r1.data?.Invoices?.[0];
+    if (inv && inv.Status !== "VOIDED" && inv.Status !== "DELETED") return inv;
+  } catch { /* fall through */ }
+  // Strategy 2: without Type filter (handles numeric invoice numbers Xero sometimes misses)
+  try {
+    const r2 = await axios.get(`${XERO_API_BASE}/Invoices`, {
+      headers,
+      params: { InvoiceNumbers: invoiceNumber },
+    });
+    const inv = r2.data?.Invoices?.find((i: any) => i.Type === "ACCPAY" && i.Status !== "VOIDED" && i.Status !== "DELETED");
+    if (inv) return inv;
+  } catch { /* fall through */ }
+  return null;
+}
+
 export async function findXeroBillByInvoiceNumber(
   invoiceNumber: string,
   clientId: string,
@@ -380,24 +417,11 @@ export async function createXeroDraftBill(
 
   try {
     // Pre-flight: check if a bill with this invoice number already exists in Xero.
-    try {
-      const existingResp = await axios.get(
-        `${XERO_API_BASE}/Invoices?InvoiceNumbers=${encodeURIComponent(data.invoiceNumber)}&Type=ACCPAY`,
-        {
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Xero-tenant-id": auth.tenantId,
-            Accept: "application/json",
-          },
-        }
-      );
-      const existing = existingResp.data?.Invoices?.[0];
-      if (existing && existing.Status !== "VOIDED" && existing.Status !== "DELETED") {
-        console.log(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in Xero (Status=${existing.Status}, ID=${existing.InvoiceID}) — returning existing bill`);
-        return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
-      }
-    } catch (lookupErr: any) {
-      console.warn(`[Xero] createXeroDraftBill: pre-flight lookup failed (${lookupErr.message}) — proceeding with creation`);
+    // Uses findExistingXeroBill which tries both with and without Type=ACCPAY filter.
+    const preFlight = await findExistingXeroBill(data.invoiceNumber, auth);
+    if (preFlight) {
+      console.log(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in Xero (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
+      return { invoiceId: preFlight.InvoiceID, invoiceNumber: preFlight.InvoiceNumber };
     }
 
     const response = await axios.post(
@@ -422,24 +446,10 @@ export async function createXeroDraftBill(
       // non-editable state (SUBMITTED/AUTHORISED/PAID). Fetch and return the existing bill.
       if (errors.includes("not of valid status for modification")) {
         console.warn(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in non-editable state — fetching existing bill`);
-        try {
-          const fallbackResp = await axios.get(
-            `${XERO_API_BASE}/Invoices?InvoiceNumbers=${encodeURIComponent(data.invoiceNumber)}&Type=ACCPAY`,
-            {
-              headers: {
-                Authorization: `Bearer ${auth.token}`,
-                "Xero-tenant-id": auth.tenantId,
-                Accept: "application/json",
-              },
-            }
-          );
-          const existing = fallbackResp.data?.Invoices?.[0];
-          if (existing) {
-            console.log(`[Xero] createXeroDraftBill: returning existing bill ${existing.InvoiceNumber} (Status=${existing.Status})`);
-            return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
-          }
-        } catch {
-          // Fall through to throw the original error
+        const existing = await findExistingXeroBill(data.invoiceNumber, auth);
+        if (existing) {
+          console.log(`[Xero] createXeroDraftBill: returning existing bill ${existing.InvoiceNumber} (Status=${existing.Status})`);
+          return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
         }
       }
       throw new Error(`Xero bill validation failed: ${errors}`);
@@ -667,27 +677,15 @@ export async function convertPOsToBill(
 
   try {
     // Pre-flight: check if a bill with this invoice number already exists in Xero.
-    // If it does (and is not VOIDED/DELETED), return it as success instead of trying
-    // to create a duplicate (which would cause "Invoice not of valid status for modification").
-    try {
-      const existingResp = await axios.get(
-        `${XERO_API_BASE}/Invoices?InvoiceNumbers=${encodeURIComponent(data.invoiceNumber)}&Type=ACCPAY`,
-        {
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Xero-tenant-id": auth.tenantId,
-            Accept: "application/json",
-          },
-        }
-      );
-      const existing = existingResp.data?.Invoices?.[0];
-      if (existing && existing.Status !== "VOIDED" && existing.Status !== "DELETED") {
-        console.log(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in Xero (Status=${existing.Status}, ID=${existing.InvoiceID}) — returning existing bill`);
-        return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
-      }
-    } catch (lookupErr: any) {
-      // If the lookup fails, proceed with creation attempt
-      console.warn(`[Xero] convertPOsToBill: pre-flight lookup failed (${lookupErr.message}) — proceeding with creation`);
+    // Uses two strategies to handle Xero's inconsistent behaviour with numeric invoice numbers:
+    //   1. GET with Type=ACCPAY filter (standard)
+    //   2. GET without Type filter (fallback — Xero sometimes ignores Type for numeric numbers)
+    // If a non-voided/deleted bill is found, return it immediately to avoid
+    // "Invoice not of valid status for modification" errors.
+    const preFlight = await findExistingXeroBill(data.invoiceNumber, auth);
+    if (preFlight) {
+      console.log(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in Xero (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
+      return { invoiceId: preFlight.InvoiceID, invoiceNumber: preFlight.InvoiceNumber };
     }
 
     const response = await axios.post(
@@ -711,24 +709,10 @@ export async function convertPOsToBill(
       // non-editable state (SUBMITTED/AUTHORISED/PAID). Fetch and return the existing bill.
       if (errors.includes("not of valid status for modification")) {
         console.warn(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in non-editable state — fetching existing bill`);
-        try {
-          const fallbackResp = await axios.get(
-            `${XERO_API_BASE}/Invoices?InvoiceNumbers=${encodeURIComponent(data.invoiceNumber)}&Type=ACCPAY`,
-            {
-              headers: {
-                Authorization: `Bearer ${auth.token}`,
-                "Xero-tenant-id": auth.tenantId,
-                Accept: "application/json",
-              },
-            }
-          );
-          const existing = fallbackResp.data?.Invoices?.[0];
-          if (existing) {
-            console.log(`[Xero] convertPOsToBill: returning existing bill ${existing.InvoiceNumber} (Status=${existing.Status})`);
-            return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
-          }
-        } catch {
-          // Fall through to throw the original error
+        const existing = await findExistingXeroBill(data.invoiceNumber, auth);
+        if (existing) {
+          console.log(`[Xero] convertPOsToBill: returning existing bill ${existing.InvoiceNumber} (Status=${existing.Status})`);
+          return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
         }
       }
       throw new Error(`Xero bill validation failed: ${errors}`);
@@ -1066,23 +1050,30 @@ export async function uploadXeroBillAttachment(opts: {
   try {
     const { token, tenantId } = await getValidAccessToken(opts.clientId, opts.clientSecret);
 
-    // Download the file bytes from storage
-    const fileResp = await axios.get(opts.fileUrl, { responseType: "arraybuffer" });
+    // Download the file bytes from storage (follow redirects, presigned S3 URL)
+    const fileResp = await axios.get(opts.fileUrl, {
+      responseType: "arraybuffer",
+      maxRedirects: 5,
+    });
     const fileBuffer = Buffer.from(fileResp.data);
     const mimeType = opts.mimeType ?? "application/pdf";
 
-    // Sanitise file name for Xero (alphanumeric, dots, dashes, underscores only)
-    const safeName = opts.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    // Sanitise file name for Xero:
+    // - Replace spaces and special chars with underscore
+    // - Brackets must NOT be encoded per Xero docs (other chars must be unencoded)
+    const safeName = opts.fileName.replace(/[<>:"\\|?*\x00+]/g, "_");
 
-    const uploadUrl = `${XERO_API_BASE}/Invoices/${encodeURIComponent(opts.xeroInvoiceId)}/Attachments/${encodeURIComponent(safeName)}`;
+    const uploadUrl = `${XERO_API_BASE}/Invoices/${encodeURIComponent(opts.xeroInvoiceId)}/Attachments/${safeName}`;
 
     await axios.put(uploadUrl, fileBuffer, {
       headers: {
         Authorization: `Bearer ${token}`,
-        "Xero-Tenant-Id": tenantId,
+        "Xero-tenant-id": tenantId,
         "Content-Type": mimeType,
-        "Content-Length": fileBuffer.length,
+        "Content-Length": String(fileBuffer.length),
+        Accept: "application/json",
       },
+      maxRedirects: 0,
     });
 
     console.log(`[Xero] Attachment uploaded to bill ${opts.xeroInvoiceId}: ${safeName}`);

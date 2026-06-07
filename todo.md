@@ -143,3 +143,8 @@
 ## Bug Fixes (Session 5)
 - [x] Fix Xero bill push: line items missing AccountCode and TaxType — Xero rejects with "Account code or ID must be specified" and "TaxType field is mandatory"
 - [x] Fix Xero bill push: "Invoice not of valid status for modification" — bill already exists in SUBMITTED/AUTHORISED state; must update existing bill instead of re-creating
+
+## Bug Fixes (Session 6)
+- [x] Fix "Invoice not of valid status for modification" on A1 Tilt Trays: added robust findExistingXeroBill helper that tries GET with and without Type=ACCPAY filter; both convertPOsToBill and createXeroDraftBill pre-flight and HasErrors fallback now use this helper
+- [x] Fix PDF not uploading to Xero bill: added Accept: application/json header, maxRedirects: 5, and Content-Length as string to uploadXeroBillAttachment
+- [x] Fix PO match amounts not showing after Admin/Staff Approve: added refreshXeroPoResults helper that re-runs PO lookup and saves fresh xeroPoResults to DB; wired into both adminApprove and staffApprove procedures so UI shows updated match amounts immediately after approval without requiring manual re-verify

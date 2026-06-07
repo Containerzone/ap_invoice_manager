@@ -78,8 +78,82 @@ function isWithinStaffThreshold(invoiceTotal: number, diffAmount: number): boole
   return false; // > $2000 always requires admin
 }
 
-// ─── App Router ───────────────────────────────────────────────────────────────
+// ─── Refresh Xero PO results helper ─────────────────────────────────────────
+// Re-runs the PO lookup after approve and saves fresh xeroPoResults to DB.
+// Does NOT change the invoice status — preserves "approved" status.
+async function refreshXeroPoResults(
+  invoiceId: number,
+  clientId: string,
+  clientSecret: string,
+): Promise<void> {
+  try {
+    const invoice = await getInvoiceById(invoiceId);
+    if (!invoice) return;
 
+    const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
+    const primaryPo = invoice.extractedPoNumber;
+    const allPoNumbers: string[] =
+      extractedPoNumbersJson && extractedPoNumbersJson.length > 0
+        ? Array.from(new Set(extractedPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)))
+        : primaryPo
+        ? [primaryPo]
+        : [];
+
+    if (allPoNumbers.length === 0) return;
+
+    // Get invoice line items for grouped total calculation
+    const lineItems = await getLineItemsByInvoice(invoiceId);
+    const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
+
+    const getGroupedTotal = (poNum: string): number | null => {
+      const tagged = lineItems.filter((li) => {
+        if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
+        const descMatches = (li.description?.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map((m) => m.toUpperCase());
+        return descMatches.includes(poNum.toUpperCase());
+      });
+      if (tagged.length === 0) return null;
+      return tagged.reduce((sum, li) => sum + parseFloat(li.amount?.toString() ?? li.unitPrice?.toString() ?? "0"), 0);
+    };
+
+    const COMPARABLE = new Set(["DRAFT", "SUBMITTED", "AUTHORISED"]);
+
+    const poLookups = await Promise.all(
+      allPoNumbers.map(async (poNum) => {
+        const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
+        const groupedTotal = getGroupedTotal(poNum) ?? extractedTotal;
+        if (!po) {
+          return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, alreadyBilled: false, diff: groupedTotal, invoiceLineItemTotal: groupedTotal, lineItems: [] };
+        }
+        if (po.status === "BILLED") {
+          const paymentStatus = await getXeroPOPaymentStatus(poNum, clientId, clientSecret);
+          return { poNumber: poNum, found: true, status: po.status, poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax, discrepancy: true, alreadyBilled: true, isPaid: paymentStatus?.isPaid ?? false, paidAmount: paymentStatus?.paidAmount, paidDate: paymentStatus?.paidDate, overBilled: false, underBilled: false, diff: 0, rawDiff: 0, contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems };
+        }
+        if (!COMPARABLE.has(po.status)) {
+          return { poNumber: poNum, found: true, status: po.status, poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax, discrepancy: true, alreadyBilled: false, overBilled: false, underBilled: false, diff: 0, rawDiff: 0, contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems };
+        }
+        const rawDiff = groupedTotal - po.total;
+        const absDiff = Math.abs(rawDiff);
+        return { poNumber: poNum, found: true, status: po.status, poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax, invoiceLineItemTotal: groupedTotal, discrepancy: absDiff > 0.01, alreadyBilled: false, overBilled: rawDiff > 0.01, underBilled: rawDiff < -0.01, diff: absDiff, rawDiff, contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems };
+      })
+    );
+
+    const firstFound = poLookups.find((r) => r.found);
+    await updateInvoice(invoiceId, {
+      xeroTotal: firstFound ? firstFound.poTotal.toString() : null,
+      xeroSubtotal: firstFound ? firstFound.poSubtotal.toString() : null,
+      xeroTax: firstFound ? firstFound.poTax.toString() : null,
+      xeroStatus: firstFound ? firstFound.status : "NOT_FOUND",
+      xeroVerifiedAt: new Date(),
+      xeroPoResults: poLookups as any,
+    });
+    console.log(`[refreshXeroPoResults] Updated xeroPoResults for invoice ${invoiceId}`);
+  } catch (err: any) {
+    // Non-fatal — log and continue
+    console.error(`[refreshXeroPoResults] Failed for invoice ${invoiceId}:`, err?.message);
+  }
+}
+
+// ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
   system: systemRouter,
 
@@ -917,6 +991,11 @@ export const appRouter = router({
             }
           }
         }
+
+        // Refresh xeroPoResults in DB so UI shows updated match amounts immediately after approve
+        if (staffClientId && staffClientSecret && staffPoNumbers.length > 0) {
+          await refreshXeroPoResults(input.invoiceId, staffClientId, staffClientSecret);
+        }
                 const xeroStaffErrors = xeroStaffResults.filter(r => r.status === "ERROR");
         return {
           success: true,
@@ -1041,6 +1120,11 @@ export const appRouter = router({
           console.log(`[Approval] No PO numbers found on invoice ${input.invoiceId} — skipping Xero PO update`);
         } else {
           console.warn(`[Approval] XERO_CLIENT_ID or XERO_CLIENT_SECRET not set — skipping Xero PO update`);
+        }
+
+        // Refresh xeroPoResults in DB so UI shows updated match amounts immediately after approve
+        if (clientId && clientSecret && allPoNumbers.length > 0) {
+          await refreshXeroPoResults(input.invoiceId, clientId, clientSecret);
         }
 
         // ── 4. Log the result ─────────────────────────────────────────────────
