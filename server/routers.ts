@@ -108,11 +108,23 @@ async function refreshXeroPoResults(
     const getGroupedTotal = (poNum: string): number | null => {
       const tagged = lineItems.filter((li) => {
         if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
+        // Also check custRef for PO number (e.g. "CBHU4279322 P702739")
+        if ((li as any).custRef) {
+          const custRefMatches = ((li as any).custRef as string).match(/\b([A-Z]{1,2}\d{6})\b/g) ?? [];
+          if (custRefMatches.map((m) => m.toUpperCase()).includes(poNum.toUpperCase())) return true;
+        }
         const descMatches = (li.description?.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map((m) => m.toUpperCase());
         return descMatches.includes(poNum.toUpperCase());
       });
       if (tagged.length === 0) return null;
-      return tagged.reduce((sum, li) => sum + parseFloat(li.amount?.toString() ?? li.unitPrice?.toString() ?? "0"), 0);
+      // Use GST-inclusive total — amount in DB is excl. GST, taxRate defaults to 10% (Australian standard)
+      const total = tagged.reduce((sum, li) => {
+        const excl = parseFloat(li.amount?.toString() ?? "0");
+        const rate = li.taxRate != null ? parseFloat(li.taxRate.toString()) : 10;
+        const incl = excl * (1 + rate / 100);
+        return sum + incl;
+      }, 0);
+      return Math.round(total * 100) / 100;
     };
 
     const COMPARABLE = new Set(["DRAFT", "SUBMITTED", "AUTHORISED"]);

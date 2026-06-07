@@ -237,7 +237,7 @@ const EXTRACTION_PROMPT = `Extract all data from this invoice PDF and return it 
       "description": "full line item description text",
       "quantity": number|null,
       "unitPrice": number|null,
-      "amount": number|null (the line item amount/total, excluding GST if shown separately),
+      "amount": number|null (the line item amount/total EXCLUDING GST — always the net/excl amount before tax; do NOT include GST in this value),
       "taxRate": number|null (e.g. 10 for 10% GST),
       "poNumber": "PO number for THIS specific line item — 1-2 uppercase letters + 6 digits (e.g. P702739, SL123456). Look in the Cust Ref column, reference column, or any column adjacent to this line. Extract ONLY the PO number token, not the full ref. null if not found.",
       "custRef": "The full raw customer reference string for this line item (e.g. 'CBHU4279322 P702739'). This is the entire Cust Ref / Customer Reference field value for this line. null if not found."

@@ -1079,7 +1079,7 @@ export async function uploadXeroBillAttachment(opts: {
         "Content-Length": String(fileBuffer.length),
         Accept: "application/json",
       },
-      maxRedirects: 0,
+      maxRedirects: 5,
     });
 
     console.log(`[Xero] Attachment uploaded to bill ${opts.xeroInvoiceId}: ${safeName}`);

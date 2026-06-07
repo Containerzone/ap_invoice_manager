@@ -154,3 +154,9 @@
 - [x] Bug 2: VicFreight PO update leaving AccountCode/TaxType blank — default to account 310 (Transport Vendors) and INPUT (GST on Expenses) for new appended line items in updateXeroPODetails
 - [x] Bug 3: PO match amounts not showing after Admin/Staff Approve — return fresh xeroPoResults in mutation response and apply to tRPC cache immediately (no re-verify needed)
 - [x] Bug 4: PDF not uploading to Xero bill — fixed storage key mismatch (storagePut appends hash suffix; was storing pre-hash key in DB); now stores actual key from storagePut; added fileUrl-based fallback for existing invoices
+
+## Bug Fixes (Session 8)
+- [x] Fix GST flip on Admin Approve: refreshXeroPoResults was summing raw excl-GST amounts instead of applying GST (×1.1) — now uses identical GST-inclusive calculation as verifyWithXero (default 10% when taxRate is null)
+- [x] Fix refreshXeroPoResults also now checks custRef field for PO matching (same as verifyWithXero)
+- [x] Fix PDF attachment upload to Xero: maxRedirects was 0 on the PUT call, blocking Xero's internal redirect — changed to 5
+- [x] Clarify LLM extraction prompt: amount field is always excl. GST (net line total before tax)
