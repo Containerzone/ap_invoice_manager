@@ -22,7 +22,7 @@ import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
   LayoutDashboard, LogOut, PanelLeft, Users, FileText,
-  Building2, Settings, ShieldCheck, BarChart3
+  Building2, Settings, ShieldCheck, BarChart3, ShoppingCart
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -31,12 +31,13 @@ import { Button } from "./ui/button";
 import { useAuth } from "@/_core/hooks/useAuth";
 
 const menuItems = [
-  { icon: LayoutDashboard, label: "Dashboard",  path: "/",          adminOnly: false },
-  { icon: FileText,        label: "Invoices",   path: "/invoices",  adminOnly: false },
-  { icon: BarChart3,       label: "Reports",    path: "/reports",   adminOnly: false },
-  { icon: Building2,       label: "Suppliers",  path: "/suppliers", adminOnly: false },
-  { icon: Users,           label: "Users",      path: "/users",     adminOnly: true  },
-  { icon: Settings,        label: "Settings",   path: "/settings",  adminOnly: true  },
+  { icon: LayoutDashboard, label: "Dashboard",   path: "/",            adminOnly: false },
+  { icon: FileText,        label: "Invoices",    path: "/invoices",    adminOnly: false },
+  { icon: BarChart3,       label: "Reports",     path: "/reports",     adminOnly: false },
+  { icon: ShoppingCart,    label: "PO Requests", path: "/po-requests", adminOnly: false },
+  { icon: Building2,       label: "Suppliers",   path: "/suppliers",   adminOnly: false },
+  { icon: Users,           label: "Users",       path: "/users",       adminOnly: true  },
+  { icon: Settings,        label: "Settings",    path: "/settings",    adminOnly: true  },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";

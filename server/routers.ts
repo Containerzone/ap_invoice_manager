@@ -57,6 +57,8 @@ import {
 } from "./xeroService";
 import { sendDisputeEmail, generateDisputeEmailTemplate, sendInviteEmail } from "./emailService";
 import { ENV } from "./_core/env";
+import { poRequests } from "../drizzle/schema";
+import { desc, eq } from "drizzle-orm";
 
 // ─── Admin guard ──────────────────────────────────────────────────────────────
 
@@ -1802,6 +1804,72 @@ export const appRouter = router({
         };
       });
     }),
+  }),
+
+  // ─── PO Requests (Vtiger → Xero) ─────────────────────────────────────────────
+  poRequests: router({
+    list: protectedProcedure
+      .input(
+        z.object({
+          limit: z.number().min(1).max(100).default(50),
+          offset: z.number().min(0).default(0),
+        })
+      )
+      .query(async ({ input }) => {
+        const db = await (await import("./db")).getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const rows = await db
+          .select()
+          .from(poRequests)
+          .orderBy(desc(poRequests.createdAt))
+          .limit(input.limit)
+          .offset(input.offset);
+        return rows;
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const db = await (await import("./db")).getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const rows = await db.select().from(poRequests).where(eq(poRequests.id, input.id)).limit(1);
+        if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "PO request not found" });
+        return rows[0];
+      }),
+
+    retry: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const db = await (await import("./db")).getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const rows = await db.select().from(poRequests).where(eq(poRequests.id, input.id)).limit(1);
+        if (!rows.length) throw new TRPCError({ code: "NOT_FOUND", message: "PO request not found" });
+        const row = rows[0];
+        if (!row.rawPayload) throw new TRPCError({ code: "BAD_REQUEST", message: "No payload to retry" });
+
+        await db.update(poRequests).set({ status: "processing", errorMessage: null }).where(eq(poRequests.id, input.id));
+
+        setImmediate(async () => {
+          try {
+            const { processVtigerWebhook } = await import("./vtigerPoService");
+            const result = await processVtigerWebhook(row.rawPayload as Record<string, any>);
+            await db!.update(poRequests).set({
+              status: result.overallStatus,
+              vtigerDealNumber: result.dealNumber,
+              poResults: result.poResults as any,
+              processedAt: new Date(),
+            }).where(eq(poRequests.id, input.id));
+          } catch (err: any) {
+            await db!.update(poRequests).set({
+              status: "failed",
+              errorMessage: err.message,
+              processedAt: new Date(),
+            }).where(eq(poRequests.id, input.id));
+          }
+        });
+
+        return { success: true };
+      }),
   }),
 });
 

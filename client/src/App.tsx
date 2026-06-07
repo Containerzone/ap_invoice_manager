@@ -20,6 +20,7 @@ import Settings from "./pages/Settings";
 import XeroCallback from "./pages/XeroCallback";
 import BulkQuery from "./pages/BulkQuery";
 import Reports from "./pages/Reports";
+import PoRequests from "./pages/PoRequests";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -80,6 +81,7 @@ function AppRoutes() {
                 <AdminGuard><Settings /></AdminGuard>
               </Route>
               <Route path="/reports" component={Reports} />
+              <Route path="/po-requests" component={PoRequests} />
               <Route component={NotFound} />
             </Switch>
           </DashboardLayout>

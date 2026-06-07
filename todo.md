@@ -162,12 +162,13 @@
 - [x] Clarify LLM extraction prompt: amount field is always excl. GST (net line total before tax)
 
 ## Feature: Vtiger → Xero PO Creation (Session 9)
-- [ ] Store Vtiger API credentials as secrets (VTIGER_USERNAME, VTIGER_ACCESS_KEY, VTIGER_URL)
-- [ ] Explore Vtiger API: discover Quote field API names and Deal-Quote relationship
-- [ ] DB schema: po_requests table (dealId, dealNumber, quoteId, status, poResults JSON, errors, timestamps)
-- [ ] Webhook endpoint POST /api/vtiger-webhook: receive Deal Stage 1 trigger, validate, queue processing
-- [ ] vtigerService.ts: fetch Deal → fetch linked Quote → extract cost fields
-- [ ] xeroPoService.ts: create one Xero Draft PO per non-zero cost field using correct prefix/supplier/account mapping
-- [ ] PO Requests page in app: list all webhook events, show per-PO status (created/skipped/error), link to Xero
-- [ ] Add PO Requests nav item to DashboardLayout sidebar
-- [ ] Tests for field mapping logic and PO creation
+- [x] Store Vtiger API credentials as secrets (VTIGER_USERNAME, VTIGER_ACCESS_KEY, VTIGER_URL)
+- [x] Webhook payload discovery: built /api/vtiger-webhook endpoint, received test payload, confirmed all field names
+- [x] DB schema: po_requests table (dealId, dealNumber, status, rawPayload, poResults JSON, errorMessage, timestamps)
+- [x] Webhook endpoint POST /api/vtiger-webhook: receives Deal Stage 1 trigger, stores payload, processes async
+- [x] vtigerPoService.ts: full field mapping for 12 carrier cost fields, PO number construction, supplier/account mapping
+- [x] GST-exclusive amounts, EXCLUSIVE tax mode, INPUT tax type, skip zero fields, duplicate PO check
+- [x] PO Requests page in app: list all webhook events, per-PO status (created/skipped/error/duplicate), detail dialog
+- [x] Retry mutation for failed/partial requests
+- [x] Add PO Requests nav item to DashboardLayout sidebar
+- [x] Auto-refresh every 10s to catch async processing results

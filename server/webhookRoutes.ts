@@ -9,6 +9,8 @@
 import { Router, Request, Response } from "express";
 import { getDb } from "./db";
 import { poRequests } from "../drizzle/schema";
+import { processVtigerWebhook } from "./vtigerPoService";
+import { eq } from "drizzle-orm";
 
 const router = Router();
 
@@ -74,6 +76,40 @@ router.post("/api/vtiger-webhook", async (req: Request, res: Response) => {
 
     // Respond 200 immediately so Vtiger does not retry
     res.status(200).json({ success: true, message: "Webhook received" });
+
+    // Process PO creation asynchronously (after response sent)
+    setImmediate(async () => {
+      // Find the row we just inserted by dealId — get the latest one
+      const allRows = await db
+        .select()
+        .from(poRequests)
+        .where(eq(poRequests.vtigerDealId, String(dealId)))
+        .limit(10);
+      const row = allRows.sort((a, b) => b.id - a.id)[0];
+      if (!row) return;
+
+      try {
+        await db.update(poRequests).set({ status: "processing" }).where(eq(poRequests.id, row.id));
+
+        const result = await processVtigerWebhook(body);
+
+        await db.update(poRequests).set({
+          status: result.overallStatus,
+          vtigerDealNumber: result.dealNumber,
+          poResults: result.poResults,
+          processedAt: new Date(),
+        }).where(eq(poRequests.id, row.id));
+
+        console.log(`[Vtiger Webhook] PO creation complete for deal ${result.dealNumber}: ${result.overallStatus}`);
+      } catch (err: any) {
+        console.error(`[Vtiger Webhook] PO creation failed for deal ${dealId}:`, err.message);
+        await db.update(poRequests).set({
+          status: "failed",
+          errorMessage: err.message,
+          processedAt: new Date(),
+        }).where(eq(poRequests.id, row.id));
+      }
+    });
   } catch (err: any) {
     console.error("[Vtiger Webhook] Error storing payload:", err.message);
     // Still return 200 to prevent Vtiger from retrying indefinitely
