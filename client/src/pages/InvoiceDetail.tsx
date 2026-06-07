@@ -561,6 +561,14 @@ export default function InvoiceDetail() {
       setApproveNotes("");
       const xeroResults = (result as any).xeroUpdateResults as Array<{ poNumber: string; status: string; error?: string }> | undefined;
       const xeroWarning = (result as any).xeroWarning as string | undefined;
+      // Apply fresh xeroPoResults from the mutation response directly to the cache
+      // so the UI shows updated match amounts without requiring a re-verify
+      const freshPoResults = (result as any).xeroPoResults;
+      if (freshPoResults) {
+        utils.invoices.get.setData({ id: invoiceId }, (old: any) =>
+          old ? { ...old, invoice: { ...old.invoice, xeroPoResults: freshPoResults } } : old
+        );
+      }
       await utils.invoices.get.invalidate({ id: invoiceId });
       if (xeroWarning) {
         toast.warning(`Invoice approved — but Xero PO update failed: ${xeroWarning}`);
@@ -586,6 +594,14 @@ export default function InvoiceDetail() {
       } else {
         const xeroResults = (result as any).xeroUpdateResults as Array<{ poNumber: string; status: string; error?: string }> | undefined;
         const xeroWarning = (result as any).xeroWarning as string | undefined;
+        // Apply fresh xeroPoResults from the mutation response directly to the cache
+        // so the UI shows updated match amounts without requiring a re-verify
+        const freshPoResults = (result as any).xeroPoResults;
+        if (freshPoResults) {
+          utils.invoices.get.setData({ id: invoiceId }, (old: any) =>
+            old ? { ...old, invoice: { ...old.invoice, xeroPoResults: freshPoResults } } : old
+          );
+        }
         await utils.invoices.get.invalidate({ id: invoiceId });
         if (xeroWarning) {
           toast.warning(`Invoice approved — but Xero PO update failed: ${xeroWarning}`);

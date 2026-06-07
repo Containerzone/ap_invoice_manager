@@ -148,3 +148,9 @@
 - [x] Fix "Invoice not of valid status for modification" on A1 Tilt Trays: added robust findExistingXeroBill helper that tries GET with and without Type=ACCPAY filter; both convertPOsToBill and createXeroDraftBill pre-flight and HasErrors fallback now use this helper
 - [x] Fix PDF not uploading to Xero bill: added Accept: application/json header, maxRedirects: 5, and Content-Length as string to uploadXeroBillAttachment
 - [x] Fix PO match amounts not showing after Admin/Staff Approve: added refreshXeroPoResults helper that re-runs PO lookup and saves fresh xeroPoResults to DB; wired into both adminApprove and staffApprove procedures so UI shows updated match amounts immediately after approval without requiring manual re-verify
+
+## Bug Fixes (Session 7)
+- [x] Bug 1: Duplicate not flagged on upload — surface xeroBillDuplicateWarning and duplicateWarning in InvoiceUpload.tsx with 10s warning toast before navigation
+- [x] Bug 2: VicFreight PO update leaving AccountCode/TaxType blank — default to account 310 (Transport Vendors) and INPUT (GST on Expenses) for new appended line items in updateXeroPODetails
+- [x] Bug 3: PO match amounts not showing after Admin/Staff Approve — return fresh xeroPoResults in mutation response and apply to tRPC cache immediately (no re-verify needed)
+- [x] Bug 4: PDF not uploading to Xero bill — fixed storage key mismatch (storagePut appends hash suffix; was storing pre-hash key in DB); now stores actual key from storagePut; added fileUrl-based fallback for existing invoices

@@ -67,13 +67,24 @@ export default function InvoiceUpload() {
       setStep("extracting");
 
       // Run extraction
-      await extractMutation.mutateAsync({ invoiceId });
+      const extractResult = await extractMutation.mutateAsync({ invoiceId });
 
       setStep("done");
-      toast.success("Invoice uploaded and data extracted successfully");
 
-      // Navigate to invoice detail after short delay
-      setTimeout(() => setLocation(`/invoices/${invoiceId}`), 1500);
+      // Surface duplicate warnings before navigating
+      const localDup = (extractResult as any).duplicateWarning as string | undefined;
+      const xeroDup = (extractResult as any).xeroBillDuplicateWarning as string | undefined;
+
+      if (localDup) {
+        toast.warning(`Duplicate detected: ${localDup}`, { duration: 10000 });
+      } else if (xeroDup) {
+        toast.warning(`Possible duplicate in Xero: ${xeroDup}`, { duration: 10000 });
+      } else {
+        toast.success("Invoice uploaded and data extracted successfully");
+      }
+
+      // Navigate to invoice detail after short delay (longer if duplicate warning shown)
+      setTimeout(() => setLocation(`/invoices/${invoiceId}`), localDup || xeroDup ? 3000 : 1500);
     } catch (err: any) {
       toast.error(err?.message ?? "Upload failed");
       setStep("select");

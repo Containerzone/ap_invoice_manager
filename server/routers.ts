@@ -304,12 +304,11 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         // Decode base64 and upload to S3
         const buffer = Buffer.from(input.fileBase64, "base64");
-        const fileKey = `invoices/${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-        const { url } = await storagePut(fileKey, buffer, input.mimeType);
-
+                const fileKeyInput = `invoices/${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        const { key: actualFileKey, url } = await storagePut(fileKeyInput, buffer, input.mimeType);
         // Create invoice record
         const invoiceId = await createInvoice({
-          fileKey,
+          fileKey: actualFileKey,
           fileUrl: url,
           originalFileName: input.fileName,
           status: "extracting",
@@ -996,11 +995,14 @@ export const appRouter = router({
         if (staffClientId && staffClientSecret && staffPoNumbers.length > 0) {
           await refreshXeroPoResults(input.invoiceId, staffClientId, staffClientSecret);
         }
-                const xeroStaffErrors = xeroStaffResults.filter(r => r.status === "ERROR");
+        // Re-fetch the invoice to get the fresh xeroPoResults that refreshXeroPoResults just wrote
+        const updatedInvoiceStaff = await getInvoiceById(input.invoiceId);
+        const xeroStaffErrors = xeroStaffResults.filter(r => r.status === "ERROR");
         return {
           success: true,
           requiresAdminApproval: false,
           xeroUpdateResults: xeroStaffResults,
+          xeroPoResults: (updatedInvoiceStaff as any)?.xeroPoResults ?? null,
           xeroWarning: xeroStaffErrors.length > 0
             ? xeroStaffErrors.map(r => r.error ?? `PO ${r.poNumber} update failed`).join("; ")
             : undefined,
@@ -1122,11 +1124,12 @@ export const appRouter = router({
           console.warn(`[Approval] XERO_CLIENT_ID or XERO_CLIENT_SECRET not set — skipping Xero PO update`);
         }
 
-        // Refresh xeroPoResults in DB so UI shows updated match amounts immediately after approve
+                // Refresh xeroPoResults in DB so UI shows updated match amounts immediately after approve
         if (clientId && clientSecret && allPoNumbers.length > 0) {
           await refreshXeroPoResults(input.invoiceId, clientId, clientSecret);
         }
-
+        // Re-fetch the invoice to get the fresh xeroPoResults that refreshXeroPoResults just wrote
+        const updatedInvoiceAdmin = await getInvoiceById(input.invoiceId);
         // ── 4. Log the result ─────────────────────────────────────────────────
         const xeroSummary = xeroUpdateResults.length > 0
           ? ` Xero PO updates: ${xeroUpdateResults.map(r => `${r.poNumber}=${r.status}${r.error ? ` (${r.error})` : ""}`).join(", ")}`
@@ -1142,14 +1145,14 @@ export const appRouter = router({
 
         const xeroErrors = xeroUpdateResults.filter(r => r.status === "ERROR");
         return {
-          success: true,
+                    success: true,
           xeroUpdateResults,
+          xeroPoResults: (updatedInvoiceAdmin as any)?.xeroPoResults ?? null,
           xeroWarning: xeroErrors.length > 0
             ? xeroErrors.map(r => r.error ?? `PO ${r.poNumber} update failed`).join("; ")
             : undefined,
         };
       }),
-
     // Send dispute email
     sendQuery: protectedProcedure
       .input(
@@ -1556,9 +1559,14 @@ export const appRouter = router({
         // ── Upload original invoice PDF as attachment to the Xero bill ────────────
         let attachmentUploaded = false;
         let attachmentError: string | undefined;
-        if (xeroResult?.invoiceId && invoice.fileKey && clientId && clientSecret) {
+        // Derive the actual storage key: fileKey is the correct key for new invoices.
+        // For invoices uploaded before the hash-suffix fix, fall back to stripping /manus-storage/ from fileUrl.
+        const resolvedAttachKey = invoice.fileKey && !invoice.fileKey.startsWith("/manus-storage/")
+          ? invoice.fileKey
+          : invoice.fileUrl?.replace(/^\/manus-storage\//, "") ?? "";
+        if (xeroResult?.invoiceId && resolvedAttachKey && clientId && clientSecret) {
           try {
-            const signedUrl = await storageGetSignedUrl(invoice.fileKey);
+            const signedUrl = await storageGetSignedUrl(resolvedAttachKey);
             const fileName = (invoice as any).originalFileName ?? `invoice-${invoice.id}.pdf`;
             const attachResult = await uploadXeroBillAttachment({
               clientId,

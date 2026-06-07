@@ -972,10 +972,16 @@ export async function updateXeroPODetails(
           `desc="${invoiceLi.description}" qty=${invoiceLi.quantity} unitExcl=${unitAmountToSend}`
         );
       } else {
-        // New line item (PO has fewer lines than invoice) — Xero uses account default
+        // New line item (PO has fewer lines than invoice).
+        // Always set AccountCode and TaxType — Xero does not reliably apply account defaults
+        // for programmatically-created lines. Business rule: transport invoices use
+        // account 310 (Transport Vendors) and INPUT (GST on Expenses).
+        lineItem.AccountCode = "310";
+        lineItem.TaxType = "INPUT";
         console.log(
           `[Xero] Line ${i + 1}: appending new line ` +
-          `desc="${invoiceLi.description}" qty=${invoiceLi.quantity} unitExcl=${unitAmountToSend}`
+          `desc="${invoiceLi.description}" qty=${invoiceLi.quantity} unitExcl=${unitAmountToSend} ` +
+          `AccountCode=310 TaxType=INPUT (defaults for new transport lines)`
         );
       }
 
