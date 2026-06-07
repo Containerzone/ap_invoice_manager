@@ -366,13 +366,15 @@ export async function createXeroDraftBill(
     Status: data.xeroStatus ?? "DRAFT",
     Reference: data.reference ?? "",
     CurrencyCode: data.currencyCode ?? "AUD",
+    LineAmountTypes: "Exclusive",
     LineItems: data.lineItems.map((li) => ({
       Description: li.description,
       Quantity: li.quantity,
       UnitAmount: li.unitAmount,
-      // 300 = Purchases (expense account) — correct for AP bills in Australian Xero orgs
-      // TaxType is omitted to let Xero use the account's default tax rate
-      AccountCode: li.accountCode ?? "300",
+      // TaxType is mandatory for ACCPAY bills in Xero — always set it
+      TaxType: li.taxType ?? "INPUT",
+      // AccountCode is mandatory — use provided value or default to 310 (Purchases)
+      AccountCode: li.accountCode ?? "310",
     })),
   };
 
@@ -416,6 +418,30 @@ export async function createXeroDraftBill(
     // Check for Xero-level validation errors even on HTTP 200
     if (created.HasErrors) {
       const errors = (created.ValidationErrors ?? []).map((e: any) => e.Message).join("; ");
+      // "Invoice not of valid status for modification" means the bill already exists in a
+      // non-editable state (SUBMITTED/AUTHORISED/PAID). Fetch and return the existing bill.
+      if (errors.includes("not of valid status for modification")) {
+        console.warn(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in non-editable state — fetching existing bill`);
+        try {
+          const fallbackResp = await axios.get(
+            `${XERO_API_BASE}/Invoices?InvoiceNumbers=${encodeURIComponent(data.invoiceNumber)}&Type=ACCPAY`,
+            {
+              headers: {
+                Authorization: `Bearer ${auth.token}`,
+                "Xero-tenant-id": auth.tenantId,
+                Accept: "application/json",
+              },
+            }
+          );
+          const existing = fallbackResp.data?.Invoices?.[0];
+          if (existing) {
+            console.log(`[Xero] createXeroDraftBill: returning existing bill ${existing.InvoiceNumber} (Status=${existing.Status})`);
+            return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
+          }
+        } catch {
+          // Fall through to throw the original error
+        }
+      }
       throw new Error(`Xero bill validation failed: ${errors}`);
     }
     return { invoiceId: created.InvoiceID, invoiceNumber: created.InvoiceNumber };
@@ -607,8 +633,9 @@ export async function convertPOsToBill(
       description: `Invoice ${data.invoiceNumber} — POs: ${data.poNumbers.join(", ")}`,
       quantity: 1,
       unitAmount: 0,
-      accountCode: null,
-      taxType: null,
+      // Default to account 310 (Purchases) and INPUT (GST on Expenses) for placeholder lines
+      accountCode: "310",
+      taxType: "INPUT",
     });
   }
 
@@ -627,18 +654,15 @@ export async function convertPOsToBill(
     CurrencyCode: data.currencyCode ?? "AUD",
     // LineAmountTypes must match what was set on the PO during approval (we set Exclusive)
     LineAmountTypes: "Exclusive",
-    LineItems: allLineItems.map((li) => {
-      const item: Record<string, unknown> = {
-        Description: li.description,
-        Quantity: li.quantity,
-        UnitAmount: li.unitAmount,
-      };
-      // Only include AccountCode if we have a real value from the PO
-      if (li.accountCode) item.AccountCode = li.accountCode;
-      // TaxType is mandatory for ACCPAY bills in Xero — inherit from PO line item
-      if (li.taxType) item.TaxType = li.taxType;
-      return item;
-    }),
+    LineItems: allLineItems.map((li) => ({
+      Description: li.description,
+      Quantity: li.quantity,
+      UnitAmount: li.unitAmount,
+      // TaxType is mandatory for ACCPAY bills — always set it; inherit from PO or default to INPUT (GST on Expenses)
+      TaxType: li.taxType ?? "INPUT",
+      // AccountCode is mandatory — inherit from PO or default to 310 (Purchases)
+      AccountCode: li.accountCode ?? "310",
+    })),
   };
 
   try {
@@ -683,6 +707,30 @@ export async function convertPOsToBill(
     // Check for Xero-level validation errors even on HTTP 200
     if (created.HasErrors) {
       const errors = (created.ValidationErrors ?? []).map((e: any) => e.Message).join("; ");
+      // "Invoice not of valid status for modification" means the bill already exists in a
+      // non-editable state (SUBMITTED/AUTHORISED/PAID). Fetch and return the existing bill.
+      if (errors.includes("not of valid status for modification")) {
+        console.warn(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in non-editable state — fetching existing bill`);
+        try {
+          const fallbackResp = await axios.get(
+            `${XERO_API_BASE}/Invoices?InvoiceNumbers=${encodeURIComponent(data.invoiceNumber)}&Type=ACCPAY`,
+            {
+              headers: {
+                Authorization: `Bearer ${auth.token}`,
+                "Xero-tenant-id": auth.tenantId,
+                Accept: "application/json",
+              },
+            }
+          );
+          const existing = fallbackResp.data?.Invoices?.[0];
+          if (existing) {
+            console.log(`[Xero] convertPOsToBill: returning existing bill ${existing.InvoiceNumber} (Status=${existing.Status})`);
+            return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
+          }
+        } catch {
+          // Fall through to throw the original error
+        }
+      }
       throw new Error(`Xero bill validation failed: ${errors}`);
     }
     return { invoiceId: created.InvoiceID, invoiceNumber: created.InvoiceNumber };

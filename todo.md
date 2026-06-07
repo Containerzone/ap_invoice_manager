@@ -139,3 +139,7 @@
 - [x] Fix resolve workflow guard: both "approved" (staff) and "admin_approved" status must be accepted before push to Xero — investigate exact status values written by adminApprove vs staffApprove
 - [x] Fix invite email: send email notification to invited user's email address when admin creates an invite
 - [x] Upload PDF copy of invoice to Xero bill file attachments after successful push to Xero
+
+## Bug Fixes (Session 5)
+- [x] Fix Xero bill push: line items missing AccountCode and TaxType — Xero rejects with "Account code or ID must be specified" and "TaxType field is mandatory"
+- [x] Fix Xero bill push: "Invoice not of valid status for modification" — bill already exists in SUBMITTED/AUTHORISED state; must update existing bill instead of re-creating
