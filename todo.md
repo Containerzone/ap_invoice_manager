@@ -134,3 +134,8 @@
 - [x] Invoice list columns: Invoice #, PO Number, Supplier Name, Issue Date, Due Date, Received Date, Status (in that order)
 - [x] Reports: store original PO amount on first verification (new DB column); use original PO amount vs final billed amount for variance calculation
 - [x] User management portal: admin can create up to 3 extra users (staff or admin role) from the app UI
+
+## Bug Fixes & Features (Session 4)
+- [x] Fix resolve workflow guard: both "approved" (staff) and "admin_approved" status must be accepted before push to Xero — investigate exact status values written by adminApprove vs staffApprove
+- [x] Fix invite email: send email notification to invited user's email address when admin creates an invite
+- [x] Upload PDF copy of invoice to Xero bill file attachments after successful push to Xero

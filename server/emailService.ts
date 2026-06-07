@@ -123,6 +123,45 @@ admin@containerzone.com.au`;
   return { subject, body };
 }
 
+export interface SendInviteEmailOptions {
+  to: string;
+  name?: string | null;
+  role: "user" | "admin";
+  appUrl: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPass: string;
+  fromAddress?: string;
+}
+
+export async function sendInviteEmail(opts: SendInviteEmailOptions): Promise<{ success: boolean; error?: string }> {
+  const roleLabel = opts.role === "admin" ? "Administrator" : "Staff";
+  const displayName = opts.name ? ` ${opts.name}` : "";
+  const subject = `You have been invited to ContainerZone AP Invoice Manager`;
+  const body = `Hello${displayName},\n\nYou have been invited to join the ContainerZone AP Invoice Manager as a ${roleLabel}.\n\nPlease click the link below to sign in and activate your account:\n\n${opts.appUrl}\n\nIf you did not expect this invitation, you can safely ignore this email.\n\nKind regards,\nContainerZone Administration\nadmin@containerzone.com.au`;
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: opts.smtpHost,
+      port: opts.smtpPort,
+      secure: opts.smtpPort === 465,
+      auth: { user: opts.smtpUser, pass: opts.smtpPass },
+    });
+    await transporter.sendMail({
+      from: `"ContainerZone AP" <${opts.fromAddress ?? FROM_ADDRESS}>`,
+      to: opts.to,
+      subject,
+      html: body.replace(/\n/g, "<br>"),
+      text: body,
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Invite Email] Failed to send invite email:", error?.message);
+    return { success: false, error: error?.message ?? "Unknown error" };
+  }
+}
+
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(amount);
 }

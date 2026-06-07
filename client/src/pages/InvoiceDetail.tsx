@@ -561,21 +561,13 @@ export default function InvoiceDetail() {
       setApproveNotes("");
       const xeroResults = (result as any).xeroUpdateResults as Array<{ poNumber: string; status: string; error?: string }> | undefined;
       const xeroWarning = (result as any).xeroWarning as string | undefined;
+      await utils.invoices.get.invalidate({ id: invoiceId });
       if (xeroWarning) {
         toast.warning(`Invoice approved — but Xero PO update failed: ${xeroWarning}`);
-        await utils.invoices.get.invalidate({ id: invoiceId });
       } else if (xeroResults && xeroResults.length > 0) {
-        // Auto re-verify to refresh stale xeroPoResults after PO updates
-        try {
-          await verifyMutation.mutateAsync({ invoiceId });
-          await utils.invoices.get.invalidate({ id: invoiceId });
-        } catch {
-          await utils.invoices.get.invalidate({ id: invoiceId });
-        }
         const summary = xeroResults.map(r => `${r.poNumber} → ${r.status}`).join(", ");
         toast.success(`Invoice approved by admin. Xero POs updated: ${summary}`);
       } else {
-        await utils.invoices.get.invalidate({ id: invoiceId });
         toast.success("Invoice approved by admin");
       }
     } catch (e: any) {
@@ -594,21 +586,13 @@ export default function InvoiceDetail() {
       } else {
         const xeroResults = (result as any).xeroUpdateResults as Array<{ poNumber: string; status: string; error?: string }> | undefined;
         const xeroWarning = (result as any).xeroWarning as string | undefined;
+        await utils.invoices.get.invalidate({ id: invoiceId });
         if (xeroWarning) {
           toast.warning(`Invoice approved — but Xero PO update failed: ${xeroWarning}`);
-          await utils.invoices.get.invalidate({ id: invoiceId });
         } else if (xeroResults && xeroResults.length > 0) {
-          // Auto re-verify to refresh stale xeroPoResults after PO updates
-          try {
-            await verifyMutation.mutateAsync({ invoiceId });
-            await utils.invoices.get.invalidate({ id: invoiceId });
-          } catch {
-            await utils.invoices.get.invalidate({ id: invoiceId });
-          }
           const summary = xeroResults.map(r => `${r.poNumber} → ${r.status}`).join(", ");
           toast.success(`Invoice approved. Xero POs updated: ${summary}`);
         } else {
-          await utils.invoices.get.invalidate({ id: invoiceId });
           toast.success("Invoice approved");
         }
       }
@@ -674,7 +658,12 @@ export default function InvoiceDetail() {
       await invalidate();
       setShowResolveDialog(false);
       if (result.xeroResult) {
-        toast.success(`Resolved — Bill ${result.xeroResult.invoiceNumber} pushed to Xero`);
+        const attachMsg = (result as any).attachmentUploaded
+          ? " PDF attached."
+          : (result as any).attachmentError
+            ? " (PDF attachment failed — please attach manually in Xero)"
+            : "";
+        toast.success(`Resolved — Bill ${result.xeroResult.invoiceNumber} pushed to Xero.${attachMsg}`);
       } else {
         toast.success("Invoice marked as resolved");
       }

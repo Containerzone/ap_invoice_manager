@@ -1001,3 +1001,47 @@ export async function getXeroPOPaymentStatus(
     return null;
   }
 }
+
+/**
+ * Upload a file attachment to a Xero bill (ACCPAY invoice).
+ * Xero Attachments API: PUT /Invoices/{InvoiceID}/Attachments/{FileName}
+ * The file is fetched from a signed S3 URL and streamed to Xero.
+ */
+export async function uploadXeroBillAttachment(opts: {
+  clientId: string;
+  clientSecret: string;
+  xeroInvoiceId: string;
+  fileName: string;
+  fileUrl: string; // publicly accessible URL (signed S3 URL)
+  mimeType?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { token, tenantId } = await getValidAccessToken(opts.clientId, opts.clientSecret);
+
+    // Download the file bytes from storage
+    const fileResp = await axios.get(opts.fileUrl, { responseType: "arraybuffer" });
+    const fileBuffer = Buffer.from(fileResp.data);
+    const mimeType = opts.mimeType ?? "application/pdf";
+
+    // Sanitise file name for Xero (alphanumeric, dots, dashes, underscores only)
+    const safeName = opts.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+
+    const uploadUrl = `${XERO_API_BASE}/Invoices/${encodeURIComponent(opts.xeroInvoiceId)}/Attachments/${encodeURIComponent(safeName)}`;
+
+    await axios.put(uploadUrl, fileBuffer, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Xero-Tenant-Id": tenantId,
+        "Content-Type": mimeType,
+        "Content-Length": fileBuffer.length,
+      },
+    });
+
+    console.log(`[Xero] Attachment uploaded to bill ${opts.xeroInvoiceId}: ${safeName}`);
+    return { success: true };
+  } catch (err: any) {
+    const detail = err?.response?.data ? JSON.stringify(err.response.data) : err?.message;
+    console.error(`[Xero] Attachment upload failed:`, detail);
+    return { success: false, error: detail };
+  }
+}

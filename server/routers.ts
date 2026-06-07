@@ -38,7 +38,7 @@ import {
   findDuplicateInvoice,
   findInvoicesMatchingPoNumbers,
 } from "./db";
-import { storagePut } from "./storage";
+import { storagePut, storageGetSignedUrl } from "./storage";
 import { extractInvoiceData, extractAllPoNumbers } from "./extractionService";
 import {
   getXeroAuthUrl,
@@ -53,8 +53,9 @@ import {
   updateXeroPODetails,
   getXeroPOPaymentStatus,
   checkXeroBillDuplicate,
+  uploadXeroBillAttachment,
 } from "./xeroService";
-import { sendDisputeEmail, generateDisputeEmailTemplate } from "./emailService";
+import { sendDisputeEmail, generateDisputeEmailTemplate, sendInviteEmail } from "./emailService";
 import { ENV } from "./_core/env";
 
 // ─── Admin guard ──────────────────────────────────────────────────────────────
@@ -106,6 +107,7 @@ export const appRouter = router({
         email: z.string().email(),
         role: z.enum(["user", "admin"]).default("user"),
         name: z.string().optional(),
+        appUrl: z.string().optional(), // passed from frontend so email contains correct login URL
       }))
       .mutation(async ({ input, ctx }) => {
         const activeCount = await countActiveInvites();
@@ -118,6 +120,28 @@ export const appRouter = router({
           name: input.name ?? null,
           createdBy: ctx.user.id,
         });
+
+        // Send invite email (non-blocking — failure doesn't prevent invite creation)
+        const smtpHost = process.env.SMTP_HOST;
+        if (smtpHost) {
+          const smtpPort = parseInt(process.env.SMTP_PORT ?? "587");
+          const smtpUser = process.env.SMTP_USER ?? "";
+          const smtpPass = process.env.SMTP_PASS ?? "";
+          const appUrl = input.appUrl ?? "https://manus.space";
+          sendInviteEmail({
+            to: input.email.toLowerCase().trim(),
+            name: input.name ?? null,
+            role: input.role,
+            appUrl,
+            smtpHost,
+            smtpPort,
+            smtpUser,
+            smtpPass,
+          }).catch((err) => console.error("[Invite Email] Async send error:", err?.message));
+        } else {
+          console.warn("[Invite Email] SMTP_HOST not configured — invite email not sent for", input.email);
+        }
+
         return { id };
       }),
     deleteInvite: adminProcedure
@@ -758,7 +782,7 @@ export const appRouter = router({
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
 
         // ── Workflow guard: must be verified before approval ──────────────────────
-        const verifiedStatuses = ["verified", "flagged", "under_budget", "queried_1st", "queried_2nd", "queried_3rd", "queried_4th", "queried_5th"];
+        const verifiedStatuses = ["verified", "flagged", "under_budget", "queried", "queried_2nd", "queried_3rd", "queried_4th", "queried_5th"];
         if (!verifiedStatuses.includes(invoice.status as string)) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -913,7 +937,7 @@ export const appRouter = router({
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
 
         // ── Workflow guard: must be verified before admin approval ───────────────
-        const verifiedStatusesAdmin = ["verified", "flagged", "under_budget", "approved", "queried_1st", "queried_2nd", "queried_3rd", "queried_4th", "queried_5th"];
+        const verifiedStatusesAdmin = ["verified", "flagged", "under_budget", "approved", "queried", "queried_2nd", "queried_3rd", "queried_4th", "queried_5th"];
         if (!verifiedStatusesAdmin.includes(invoice.status as string)) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -1330,9 +1354,10 @@ export const appRouter = router({
             ? [primaryPo]
             : Array.from(new Set(extractAllPoNumbers(rawData ?? {}))).filter(Boolean);
 
+        const clientId = process.env.XERO_CLIENT_ID;
+        const clientSecret = process.env.XERO_CLIENT_SECRET;
+
         if (input.pushToXero) {
-          const clientId = process.env.XERO_CLIENT_ID;
-          const clientSecret = process.env.XERO_CLIENT_SECRET;
           console.log(`[Resolve] pushToXero=true, clientId=${clientId ? clientId.slice(0,8)+"..." : "MISSING"}, clientSecret=${clientSecret ? "set" : "MISSING"}`);
 
           if (clientId && clientSecret) {
@@ -1444,18 +1469,48 @@ export const appRouter = router({
           xeroFinalBillNumber: xeroResult?.invoiceNumber ?? undefined,
         });
 
+        // ── Upload original invoice PDF as attachment to the Xero bill ────────────
+        let attachmentUploaded = false;
+        let attachmentError: string | undefined;
+        if (xeroResult?.invoiceId && invoice.fileKey && clientId && clientSecret) {
+          try {
+            const signedUrl = await storageGetSignedUrl(invoice.fileKey);
+            const fileName = (invoice as any).originalFileName ?? `invoice-${invoice.id}.pdf`;
+            const attachResult = await uploadXeroBillAttachment({
+              clientId,
+              clientSecret,
+              xeroInvoiceId: xeroResult.invoiceId,
+              fileName,
+              fileUrl: signedUrl,
+              mimeType: "application/pdf",
+            });
+            attachmentUploaded = attachResult.success;
+            if (!attachResult.success) {
+              attachmentError = attachResult.error;
+              console.error(`[Resolve] PDF attachment upload failed:`, attachResult.error);
+            }
+          } catch (attachErr: any) {
+            attachmentError = attachErr?.message;
+            console.error(`[Resolve] PDF attachment upload exception:`, attachErr?.message);
+          }
+        }
+
         const xeroStatusLabel = xeroStatus === "AUTHORISED" ? "AWAITING PAYMENT" : "AWAITING APPROVAL";
+        const attachmentNote = xeroResult?.invoiceId
+          ? (attachmentUploaded ? " PDF invoice attached to Xero bill." : attachmentError ? ` PDF attachment failed: ${attachmentError}` : "")
+          : "";
+
         await createConversationNote({
           invoiceId: input.invoiceId,
           authorId: ctx.user.id,
           type: "status_change",
           content: xeroResult
-            ? `Invoice resolved. Bill created in Xero as ${xeroStatusLabel}: ${xeroResult.invoiceNumber}${allPoNumbers.length > 0 ? `. POs marked as Billed: ${allPoNumbers.join(", ")}` : ""}. ${input.resolutionNotes ?? ""}`
+            ? `Invoice resolved. Bill created in Xero as ${xeroStatusLabel}: ${xeroResult.invoiceNumber}${allPoNumbers.length > 0 ? `. POs marked as Billed: ${allPoNumbers.join(", ")}` : ""}.${attachmentNote} ${input.resolutionNotes ?? ""}`
             : `Invoice resolved. ${input.resolutionNotes ?? ""}`,
-          metadata: { xeroResult, poNumbers: allPoNumbers, xeroStatus },
+          metadata: { xeroResult, poNumbers: allPoNumbers, xeroStatus, attachmentUploaded, attachmentError },
         });
 
-        return { success: true, xeroResult };
+        return { success: true, xeroResult, attachmentUploaded, attachmentError };
       }),
 
     // Save query points (numbered dispute reasons)

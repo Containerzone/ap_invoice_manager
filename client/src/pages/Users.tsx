@@ -55,7 +55,7 @@ export default function Users() {
   const handleCreateInvite = async () => {
     if (!inviteEmail) return;
     try {
-      await createInviteMutation.mutateAsync({ email: inviteEmail, role: inviteRole, name: inviteName || undefined });
+      await createInviteMutation.mutateAsync({ email: inviteEmail, role: inviteRole, name: inviteName || undefined, appUrl: window.location.origin });
       await utils.users.listInvites.invalidate();
       toast.success(`Invite created for ${inviteEmail}`);
       setInviteOpen(false);
