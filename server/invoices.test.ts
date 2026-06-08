@@ -410,7 +410,7 @@ describe("invoices.verifyWithXero", () => {
   });
 
   it("flags invoice (over-billed) when invoice total exceeds PO total", async () => {
-    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { getInvoiceById, updateInvoice, getLineItemsByInvoice } = await import("./db");
     const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
     vi.mocked(getInvoiceById).mockResolvedValueOnce({
       id: 99,
@@ -419,6 +419,10 @@ describe("invoices.verifyWithXero", () => {
       extractedInvoiceNumber: "INV-001",
       extractedRawData: null,
     } as any);
+    // Line item with PO number AD123456: excl=$1136.36, GST-incl=$1250 (1136.36 * 1.1 ≈ 1250)
+    vi.mocked(getLineItemsByInvoice).mockResolvedValueOnce([
+      { id: 1, invoiceId: 99, poNumber: "AD123456", description: "Freight", quantity: 1, unitPrice: "1136.36", amount: "1136.36", taxRate: null } as any,
+    ]);
     vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
       purchaseOrderId: "po-uuid-1",
       purchaseOrderNumber: "AD123456",
@@ -446,7 +450,7 @@ describe("invoices.verifyWithXero", () => {
   });
 
   it("sets under_budget status when invoice total is less than PO total", async () => {
-    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { getInvoiceById, updateInvoice, getLineItemsByInvoice } = await import("./db");
     const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
     vi.mocked(getInvoiceById).mockResolvedValueOnce({
       id: 99,
@@ -455,6 +459,10 @@ describe("invoices.verifyWithXero", () => {
       extractedInvoiceNumber: "INV-001",
       extractedRawData: null,
     } as any);
+    // Line item with PO number AD123456: excl=$863.64, GST-incl=$950 (863.64 * 1.1 ≈ 950)
+    vi.mocked(getLineItemsByInvoice).mockResolvedValueOnce([
+      { id: 1, invoiceId: 99, poNumber: "AD123456", description: "Freight", quantity: 1, unitPrice: "863.64", amount: "863.64", taxRate: null } as any,
+    ]);
     vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
       purchaseOrderId: "po-uuid-1",
       purchaseOrderNumber: "AD123456",

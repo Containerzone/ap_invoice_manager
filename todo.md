@@ -172,3 +172,8 @@
 - [x] Retry mutation for failed/partial requests
 - [x] Add PO Requests nav item to DashboardLayout sidebar
 - [x] Auto-refresh every 10s to catch async processing results
+
+## Bug Fixes (Session 10)
+- [x] Fix #1: Use line-item poNumber as source of truth for PO list — replace extractedPoNumbers with unique set from line items in verifyWithXero, refreshXeroPoResults, and adminApprove/staffApprove
+- [x] Fix #2: Never fall back to full invoice total for multi-PO invoices — if no line item matches a PO, show null/unknown instead of extractedTotal
+- [x] Fix #3: Throttle parallel Xero PO lookups to max 3 concurrent with 200ms delay between batches

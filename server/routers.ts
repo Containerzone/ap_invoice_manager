@@ -92,34 +92,55 @@ async function refreshXeroPoResults(
     const invoice = await getInvoiceById(invoiceId);
     if (!invoice) return;
 
+    // ── Fix #1: Build PO list from line items (source of truth) ──────────────
+    // Line items are always correct — they come from what is physically printed
+    // on the invoice. extractedPoNumbers (LLM header scan) can misread letters
+    // (e.g. DD→BD), so we never use it as the primary PO list source.
+    const lineItems = await getLineItemsByInvoice(invoiceId);
+    const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+    const poFromLineItems = new Set<string>();
+    for (const li of lineItems) {
+      if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) {
+        poFromLineItems.add(li.poNumber);
+      } else if ((li as any).custRef) {
+        const m = ((li as any).custRef as string).match(PO_PATTERN);
+        if (m) m.forEach((p: string) => poFromLineItems.add(p));
+      } else if (li.description) {
+        const m = li.description.match(PO_PATTERN);
+        if (m) m.forEach((p: string) => poFromLineItems.add(p));
+      }
+    }
+    // Fall back to extractedPoNumbers/extractedPoNumber only when invoice has no line items at all
     const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
     const primaryPo = invoice.extractedPoNumber;
-    const allPoNumbers: string[] =
-      extractedPoNumbersJson && extractedPoNumbersJson.length > 0
-        ? Array.from(new Set(extractedPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)))
-        : primaryPo
-        ? [primaryPo]
-        : [];
+    let allPoNumbers: string[];
+    if (poFromLineItems.size > 0) {
+      allPoNumbers = Array.from(poFromLineItems);
+    } else if (extractedPoNumbersJson && extractedPoNumbersJson.length > 0) {
+      allPoNumbers = Array.from(new Set(extractedPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)));
+    } else if (primaryPo) {
+      allPoNumbers = [primaryPo];
+    } else {
+      allPoNumbers = [];
+    }
 
     if (allPoNumbers.length === 0) return;
 
-    // Get invoice line items for grouped total calculation
-    const lineItems = await getLineItemsByInvoice(invoiceId);
-    const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
-
+    // ── Fix #2: Never fall back to invoice total for multi-PO invoices ────────
+    // If no line item is tagged with a PO, return null — do not use the full
+    // invoice total as a substitute (that would compare the wrong amount).
     const getGroupedTotal = (poNum: string): number | null => {
       const tagged = lineItems.filter((li) => {
         if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
-        // Also check custRef for PO number (e.g. "CBHU4279322 P702739")
         if ((li as any).custRef) {
           const custRefMatches = ((li as any).custRef as string).match(/\b([A-Z]{1,2}\d{6})\b/g) ?? [];
-          if (custRefMatches.map((m) => m.toUpperCase()).includes(poNum.toUpperCase())) return true;
+          if (custRefMatches.map((m: string) => m.toUpperCase()).includes(poNum.toUpperCase())) return true;
         }
-        const descMatches = (li.description?.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map((m) => m.toUpperCase());
+        const descMatches = (li.description?.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map((m: string) => m.toUpperCase());
         return descMatches.includes(poNum.toUpperCase());
       });
-      if (tagged.length === 0) return null;
-      // Use GST-inclusive total — amount in DB is excl. GST, taxRate defaults to 10% (Australian standard)
+      if (tagged.length === 0) return null; // No fallback to invoice total
+      // Use GST-inclusive total — amount in DB is excl. GST, taxRate defaults to 10%
       const total = tagged.reduce((sum, li) => {
         const excl = parseFloat(li.amount?.toString() ?? "0");
         const rate = li.taxRate != null ? parseFloat(li.taxRate.toString()) : 10;
@@ -131,25 +152,78 @@ async function refreshXeroPoResults(
 
     const COMPARABLE = new Set(["DRAFT", "SUBMITTED", "AUTHORISED"]);
 
-    const poLookups = await Promise.all(
-      allPoNumbers.map(async (poNum) => {
-        const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
-        const groupedTotal = getGroupedTotal(poNum) ?? extractedTotal;
-        if (!po) {
-          return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, alreadyBilled: false, diff: groupedTotal, invoiceLineItemTotal: groupedTotal, lineItems: [] };
-        }
-        if (po.status === "BILLED") {
-          const paymentStatus = await getXeroPOPaymentStatus(poNum, clientId, clientSecret);
-          return { poNumber: poNum, found: true, status: po.status, poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax, discrepancy: true, alreadyBilled: true, isPaid: paymentStatus?.isPaid ?? false, paidAmount: paymentStatus?.paidAmount, paidDate: paymentStatus?.paidDate, overBilled: false, underBilled: false, diff: 0, rawDiff: 0, contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems };
-        }
-        if (!COMPARABLE.has(po.status)) {
-          return { poNumber: poNum, found: true, status: po.status, poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax, discrepancy: true, alreadyBilled: false, overBilled: false, underBilled: false, diff: 0, rawDiff: 0, contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems };
-        }
-        const rawDiff = groupedTotal - po.total;
-        const absDiff = Math.abs(rawDiff);
-        return { poNumber: poNum, found: true, status: po.status, poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax, invoiceLineItemTotal: groupedTotal, discrepancy: absDiff > 0.01, alreadyBilled: false, overBilled: rawDiff > 0.01, underBilled: rawDiff < -0.01, diff: absDiff, rawDiff, contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems };
-      })
-    );
+    // ── Fix #3: Throttle Xero API calls — max 3 concurrent, 200ms between batches
+    const BATCH_SIZE = 3;
+    const BATCH_DELAY_MS = 200;
+    const allResults: any[] = [];
+    for (let i = 0; i < allPoNumbers.length; i += BATCH_SIZE) {
+      if (i > 0) await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+      const batch = allPoNumbers.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (poNum) => {
+          const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
+          const groupedTotal = getGroupedTotal(poNum);
+          const safeTotal = groupedTotal ?? 0; // for NOT_FOUND diff display only
+
+          if (!po) {
+            return {
+              poNumber: poNum, found: false, status: "NOT_FOUND",
+              poTotal: 0, poSubtotal: 0, poTax: 0,
+              discrepancy: true, alreadyBilled: false,
+              diff: safeTotal,
+              invoiceLineItemTotal: groupedTotal ?? undefined,
+              lineItems: [],
+            };
+          }
+          if (po.status === "BILLED") {
+            const paymentStatus = await getXeroPOPaymentStatus(poNum, clientId, clientSecret);
+            return {
+              poNumber: poNum, found: true, status: po.status,
+              poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax,
+              discrepancy: true, alreadyBilled: true,
+              isPaid: paymentStatus?.isPaid ?? false,
+              paidAmount: paymentStatus?.paidAmount,
+              paidDate: paymentStatus?.paidDate,
+              overBilled: false, underBilled: false, diff: 0, rawDiff: 0,
+              contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems,
+            };
+          }
+          if (!COMPARABLE.has(po.status)) {
+            return {
+              poNumber: poNum, found: true, status: po.status,
+              poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax,
+              discrepancy: true, alreadyBilled: false,
+              overBilled: false, underBilled: false, diff: 0, rawDiff: 0,
+              contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems,
+            };
+          }
+          if (groupedTotal === null) {
+            // No line items tagged with this PO — cannot compare, show as unknown
+            return {
+              poNumber: poNum, found: true, status: po.status,
+              poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax,
+              invoiceLineItemTotal: null, discrepancy: false, alreadyBilled: false,
+              overBilled: false, underBilled: false, diff: 0, rawDiff: 0,
+              noLineItemMatch: true,
+              contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems,
+            };
+          }
+          const rawDiff = groupedTotal - po.total;
+          const absDiff = Math.abs(rawDiff);
+          return {
+            poNumber: poNum, found: true, status: po.status,
+            poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax,
+            invoiceLineItemTotal: groupedTotal,
+            discrepancy: absDiff > 0.01, alreadyBilled: false,
+            overBilled: rawDiff > 0.01, underBilled: rawDiff < -0.01,
+            diff: absDiff, rawDiff,
+            contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems,
+          };
+        }),
+      );
+      allResults.push(...batchResults);
+    }
+    const poLookups = allResults;
 
     const firstFound = poLookups.find((r) => r.found);
     await updateInvoice(invoiceId, {
@@ -604,29 +678,27 @@ export const appRouter = router({
           if (descMatches) descMatches.forEach((m) => poFromDbLineItems.add(m));
         }
 
-        // Determine PO numbers — manual overrides take priority
-        const rawData = invoice.extractedRawData as any;
+        // ── Fix #1: PO list from line items (source of truth) ──────────────────────
+        // Line items are always correct — they come from what is physically printed on the invoice.
+        // extractedPoNumbers (LLM header scan) can misread letters (e.g. DD→BD).
+        // We use line items as the definitive source; fall back to extractedPoNumbers only when
+        // the invoice has no line items at all.
         const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
         const primaryPo = invoice.extractedPoNumber;
-
-        // If the user has manually set extractedPoNumbers (or extractedPoNumber), treat that as
-        // the authoritative list and do NOT merge in raw data scan or DB line item scan.
-        // This prevents stale extracted values (e.g. D702706) from overriding manual corrections (ED702706).
         let allPoNumbers: string[];
-        const hasManualPoList = extractedPoNumbersJson && extractedPoNumbersJson.length > 0;
-        const hasManualPrimaryPo = !!primaryPo;
-        if (hasManualPoList) {
-          // User has explicitly set the PO list — use it as-is
-          allPoNumbers = Array.from(new Set(extractedPoNumbersJson!.map(p => p.trim()).filter(Boolean)));
-        } else if (hasManualPrimaryPo) {
-          // Single manually-set PO
-          allPoNumbers = [primaryPo!];
+        if (poFromDbLineItems.size > 0) {
+          // Line items found — use them as the authoritative PO list
+          allPoNumbers = Array.from(poFromDbLineItems);
+        } else if (extractedPoNumbersJson && extractedPoNumbersJson.length > 0) {
+          // No line items — fall back to extractedPoNumbers (LLM-extracted or manually set)
+          allPoNumbers = Array.from(new Set(extractedPoNumbersJson.map(p => p.trim()).filter(Boolean)));
+        } else if (primaryPo) {
+          // Single PO from primary field
+          allPoNumbers = [primaryPo];
         } else {
-          // No manual override — fall back to auto-detection from DB line items and raw data
-          allPoNumbers = Array.from(new Set([
-            ...Array.from(poFromDbLineItems),
-            ...extractAllPoNumbers(rawData ?? {}),
-          ])).filter(Boolean);
+          // Last resort: scan raw data
+          const rawData = invoice.extractedRawData as any;
+          allPoNumbers = extractAllPoNumbers(rawData ?? {});
         }
 
         console.log(`[verifyWithXero] Invoice ${input.invoiceId}: found ${allPoNumbers.length} PO(s): ${allPoNumbers.join(", ")} | DB line items: ${invoiceLineItems.length}`);
@@ -679,19 +751,24 @@ export const appRouter = router({
         // Xero PO statuses that allow amount comparison
         const COMPARABLE_STATUSES = new Set(["DRAFT", "SUBMITTED", "AUTHORISED"]);
 
-        // Look up each PO in Xero in parallel
-        const poLookups = await Promise.all(
-          allPoNumbers.map(async (poNum) => {
+        // ── Fix #3: Throttle Xero API calls — max 3 concurrent, 200ms between batches ──
+        const VERIFY_BATCH_SIZE = 3;
+        const VERIFY_BATCH_DELAY_MS = 200;
+        const verifyAllResults: any[] = [];
+        for (let _bi = 0; _bi < allPoNumbers.length; _bi += VERIFY_BATCH_SIZE) {
+          if (_bi > 0) await new Promise((r) => setTimeout(r, VERIFY_BATCH_DELAY_MS));
+          const _batch = allPoNumbers.slice(_bi, _bi + VERIFY_BATCH_SIZE);
+          const _batchResults = await Promise.all(_batch.map(async (poNum) => {
             const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
 
-            // Determine the comparison amount for this PO:
-            // Always try to use the sum of line items tagged with this PO number.
-            // This correctly handles both single-PO and multi-PO invoices.
-            // Falls back to invoice total only when no line items contain this PO number.
-            const groupedTotal = getGroupedLineItemTotal(poNum) ?? extractedTotal;
+            // Determine the comparison amount for this PO.
+            // Returns null when no line items are tagged with this PO — do NOT fall back to
+            // invoice total (that would compare the wrong amount for multi-PO invoices).
+            const groupedTotal = getGroupedLineItemTotal(poNum);
+            const safeTotal = groupedTotal ?? 0; // used only for NOT_FOUND diff display
 
             if (!po) {
-              return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, alreadyBilled: false, diff: groupedTotal, invoiceLineItemTotal: groupedTotal, lineItems: [] };
+              return { poNumber: poNum, found: false, status: "NOT_FOUND", poTotal: 0, poSubtotal: 0, poTax: 0, discrepancy: true, alreadyBilled: false, diff: safeTotal, invoiceLineItemTotal: groupedTotal ?? undefined, lineItems: [] };
             }
             // Rule 2: If PO is already BILLED, flag immediately — also check payment status
             if (po.status === "BILLED") {
@@ -741,6 +818,17 @@ export const appRouter = router({
                 lineItems: po.lineItems,
               };
             }
+            // If no line items match this PO, we cannot compare — show as unknown
+            if (groupedTotal === null) {
+              return {
+                poNumber: poNum, found: true, status: po.status,
+                poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax,
+                invoiceLineItemTotal: null, discrepancy: false, alreadyBilled: false,
+                overBilled: false, underBilled: false, diff: 0, rawDiff: 0,
+                noLineItemMatch: true,
+                contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems,
+              };
+            }
             // Use grouped line-item total for this PO (multi-PO) or invoice total (single PO)
             const rawDiff = groupedTotal - po.total; // positive = billed more than PO, negative = billed less
             const absDiff = Math.abs(rawDiff);
@@ -762,8 +850,10 @@ export const appRouter = router({
               currencyCode: po.currencyCode,
               lineItems: po.lineItems,
             };
-          })
-        );
+          }));
+          verifyAllResults.push(..._batchResults);
+        }
+        const poLookups = verifyAllResults;
 
         const anyAlreadyBilled = poLookups.some((r) => (r as any).alreadyBilled);
         const anyOverBilled = poLookups.some((r) => (r as any).overBilled);   // ANY single PO over-billed → flag
@@ -899,14 +989,22 @@ export const appRouter = router({
         }
 
         // Within threshold — check for PO conflicts before approving
+        // Build PO list from line items (source of truth), fall back to extractedPoNumbers
+        const staffLineItemsPre = await getLineItemsByInvoice(input.invoiceId);
+        const staffPoPatternPre = /\b([A-Z]{1,2}\d{6})\b/g;
+        const staffPoFromLineItemsPre = new Set<string>();
+        for (const li of staffLineItemsPre) {
+          if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsPre.add(li.poNumber);
+          else if (li.custRef) { const m = li.custRef.match(staffPoPatternPre); if (m) m.forEach((p) => staffPoFromLineItemsPre.add(p)); }
+          else if (li.description) { const m = li.description.match(staffPoPatternPre); if (m) m.forEach((p) => staffPoFromLineItemsPre.add(p)); }
+        }
         const staffPoNumbersJsonPre = (invoice as any).extractedPoNumbers as string[] | null;
         const staffPrimaryPoPre = invoice.extractedPoNumber;
-        const staffPoNumbersPre: string[] =
-          staffPoNumbersJsonPre && staffPoNumbersJsonPre.length > 0
+        const staffPoNumbersPre: string[] = staffPoFromLineItemsPre.size > 0
+          ? Array.from(staffPoFromLineItemsPre)
+          : staffPoNumbersJsonPre && staffPoNumbersJsonPre.length > 0
             ? Array.from(new Set(staffPoNumbersJsonPre.map((p: string) => p.trim()).filter(Boolean)))
-            : staffPrimaryPoPre
-            ? [staffPrimaryPoPre]
-            : [];
+            : staffPrimaryPoPre ? [staffPrimaryPoPre] : [];
 
         if (staffPoNumbersPre.length > 0) {
           const conflicts = await findInvoicesMatchingPoNumbers(staffPoNumbersPre, input.invoiceId);
@@ -942,19 +1040,26 @@ export const appRouter = router({
         const staffClientId = process.env.XERO_CLIENT_ID;
         const staffClientSecret = process.env.XERO_CLIENT_SECRET;
 
+        // Build PO list from line items (source of truth), fall back to extractedPoNumbers
+        const staffPoPatternXero = /\b([A-Z]{1,2}\d{6})\b/g;
+        const staffPoFromLineItemsXero = new Set<string>();
+        for (const li of staffLineItemsPre) {
+          if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsXero.add(li.poNumber);
+          else if (li.custRef) { const m = li.custRef.match(staffPoPatternXero); if (m) m.forEach((p) => staffPoFromLineItemsXero.add(p)); }
+          else if (li.description) { const m = li.description.match(staffPoPatternXero); if (m) m.forEach((p) => staffPoFromLineItemsXero.add(p)); }
+        }
         const staffPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
         const staffPrimaryPo = invoice.extractedPoNumber;
-        const staffPoNumbers: string[] =
-          staffPoNumbersJson && staffPoNumbersJson.length > 0
+        const staffPoNumbers: string[] = staffPoFromLineItemsXero.size > 0
+          ? Array.from(staffPoFromLineItemsXero)
+          : staffPoNumbersJson && staffPoNumbersJson.length > 0
             ? Array.from(new Set(staffPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)))
-            : staffPrimaryPo
-            ? [staffPrimaryPo]
-            : [];
+            : staffPrimaryPo ? [staffPrimaryPo] : [];
 
         if (staffClientId && staffClientSecret && staffPoNumbers.length > 0) {
           const staffSupplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
           const staffSupplierName = staffSupplier?.name ?? invoice.extractedSupplierName ?? undefined;
-          const staffLineItems = await getLineItemsByInvoice(input.invoiceId);
+          const staffLineItems = staffLineItemsPre; // already fetched above
           const PO_REGEX_STAFF = /\b([A-Z]{1,2}\d{6})\b/g;
           console.log(`[StaffApproval] Updating ${staffPoNumbers.length} PO(s) in Xero:`, staffPoNumbers);
           for (const poNum of staffPoNumbers) {
@@ -1040,15 +1145,23 @@ export const appRouter = router({
           });
         }
 
-        // ── 1. Resolve PO numbers (manual list takes priority) ────────────────────
+        // ── 1. Resolve PO numbers from line items (source of truth) ────────────────
+        // Build from line items first; fall back to extractedPoNumbers only when no line items exist
+        const adminLineItemsForPo = await getLineItemsByInvoice(input.invoiceId);
+        const adminPoPattern = /\b([A-Z]{1,2}\d{6})\b/g;
+        const adminPoFromLineItems = new Set<string>();
+        for (const li of adminLineItemsForPo) {
+          if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) adminPoFromLineItems.add(li.poNumber);
+          else if (li.custRef) { const m = li.custRef.match(adminPoPattern); if (m) m.forEach((p) => adminPoFromLineItems.add(p)); }
+          else if (li.description) { const m = li.description.match(adminPoPattern); if (m) m.forEach((p) => adminPoFromLineItems.add(p)); }
+        }
         const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
         const primaryPo = invoice.extractedPoNumber;
-        const allPoNumbers: string[] =
-          extractedPoNumbersJson && extractedPoNumbersJson.length > 0
+        const allPoNumbers: string[] = adminPoFromLineItems.size > 0
+          ? Array.from(adminPoFromLineItems)
+          : extractedPoNumbersJson && extractedPoNumbersJson.length > 0
             ? Array.from(new Set(extractedPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)))
-            : primaryPo
-            ? [primaryPo]
-            : [];
+            : primaryPo ? [primaryPo] : [];
 
         // ── 1b. Check for PO conflicts before marking approved ─────────────────
         if (allPoNumbers.length > 0) {
@@ -1080,7 +1193,7 @@ export const appRouter = router({
         if (clientId && clientSecret && allPoNumbers.length > 0) {
           const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
           const supplierName = supplier?.name ?? invoice.extractedSupplierName ?? undefined;
-          const lineItems = await getLineItemsByInvoice(input.invoiceId);
+          const lineItems = adminLineItemsForPo; // already fetched above
 
           console.log(`[Approval] Updating ${allPoNumbers.length} PO(s) in Xero for invoice ${invoice.extractedInvoiceNumber}:`, allPoNumbers);
 
