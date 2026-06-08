@@ -180,3 +180,6 @@
 
 ## Bug Fixes (Session 11)
 - [x] Add poNumberEdited flag to invoice_line_items: when a user manually edits a line item's PO number, always use the edited value and ignore custRef/description scan for that line
+
+## Bug Fixes (Session 12)
+- [x] Fix Amount Comparison Xero totals: sum all found PO totals instead of using only the first found PO for xeroTotal/xeroSubtotal/xeroTax

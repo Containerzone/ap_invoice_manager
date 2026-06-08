@@ -236,10 +236,21 @@ async function refreshXeroPoResults(
     const poLookups = allResults;
 
     const firstFound = poLookups.find((r) => r.found);
+    const foundPOsRefresh = poLookups.filter((r) => r.found);
+    // Sum across all found POs so the Amount Comparison card shows the correct aggregate total
+    const refreshSumSubtotal = foundPOsRefresh.length > 0
+      ? Math.round(foundPOsRefresh.reduce((s, r) => s + (r.poSubtotal ?? 0), 0) * 100) / 100
+      : null;
+    const refreshSumTax = foundPOsRefresh.length > 0
+      ? Math.round(foundPOsRefresh.reduce((s, r) => s + (r.poTax ?? 0), 0) * 100) / 100
+      : null;
+    const refreshSumTotal = foundPOsRefresh.length > 0
+      ? Math.round(foundPOsRefresh.reduce((s, r) => s + (r.poTotal ?? 0), 0) * 100) / 100
+      : null;
     await updateInvoice(invoiceId, {
-      xeroTotal: firstFound ? firstFound.poTotal.toString() : null,
-      xeroSubtotal: firstFound ? firstFound.poSubtotal.toString() : null,
-      xeroTax: firstFound ? firstFound.poTax.toString() : null,
+      xeroTotal: refreshSumTotal !== null ? refreshSumTotal.toString() : null,
+      xeroSubtotal: refreshSumSubtotal !== null ? refreshSumSubtotal.toString() : null,
+      xeroTax: refreshSumTax !== null ? refreshSumTax.toString() : null,
       xeroStatus: firstFound ? firstFound.status : "NOT_FOUND",
       xeroVerifiedAt: new Date(),
       xeroPoResults: poLookups as any,
@@ -904,8 +915,20 @@ export const appRouter = router({
           newStatus = "verified";
         }
 
-        // Use the first found PO for the legacy single-PO summary fields (backwards compat)
+        // Use the first found PO for legacy single-value fields; sum ALL found POs for totals
         const firstFound = poLookups.find((r) => r.found);
+        const foundPOs = poLookups.filter((r) => r.found);
+        // Sum subtotal, tax, and total across all found POs so the Amount Comparison card
+        // shows the correct aggregate Xero figure for multi-PO invoices.
+        const sumXeroSubtotal = foundPOs.length > 0
+          ? Math.round(foundPOs.reduce((s, r) => s + ((r as any).poSubtotal ?? 0), 0) * 100) / 100
+          : null;
+        const sumXeroTax = foundPOs.length > 0
+          ? Math.round(foundPOs.reduce((s, r) => s + ((r as any).poTax ?? 0), 0) * 100) / 100
+          : null;
+        const sumXeroTotal = foundPOs.length > 0
+          ? Math.round(foundPOs.reduce((s, r) => s + ((r as any).poTotal ?? 0), 0) * 100) / 100
+          : null;
 
         // Build originalPoAmounts map: { [poNumber]: poTotal } from this verification run
         // Only store on first verification (when originalPoAmounts is not yet set) to preserve the baseline
@@ -923,9 +946,9 @@ export const appRouter = router({
         await updateInvoice(input.invoiceId, {
           xeroInvoiceId: firstFound ? (firstFound as any).poNumber : null,
           xeroInvoiceNumber: firstFound ? firstFound.poNumber : null,
-          xeroTotal: firstFound ? firstFound.poTotal.toString() : null,
-          xeroSubtotal: firstFound ? firstFound.poSubtotal.toString() : null,
-          xeroTax: firstFound ? firstFound.poTax.toString() : null,
+          xeroTotal: sumXeroTotal !== null ? sumXeroTotal.toString() : null,
+          xeroSubtotal: sumXeroSubtotal !== null ? sumXeroSubtotal.toString() : null,
+          xeroTax: sumXeroTax !== null ? sumXeroTax.toString() : null,
           xeroStatus: firstFound ? firstFound.status : "NOT_FOUND",
           xeroVerifiedAt: new Date(),
           hasDiscrepancy: anyDiscrepancy,
