@@ -390,6 +390,9 @@ export default function InvoiceDetail() {
     quantity: string;
     unitPrice: string;
     amount: string;
+    poNumber: string;
+    poNumberEdited: boolean;
+    custRef: string;
   }>>([]);
 
   // Populate edit fields when data loads or edit mode is toggled on
@@ -425,6 +428,8 @@ export default function InvoiceDetail() {
           unitPrice: li.unitPrice ?? "",
           amount: li.amount ?? "",
           poNumber: (li as any).poNumber ?? "",
+          // Preserve the existing edited flag so re-opening edit mode doesn't reset it
+          poNumberEdited: (li as any).poNumberEdited ?? false,
           custRef: (li as any).custRef ?? "",
         }))
       );
@@ -480,6 +485,9 @@ export default function InvoiceDetail() {
             unitPrice: li.unitPrice || null,
             amount: li.amount || null,
             poNumber: (li as any).poNumber || null,
+            // If the user changed the PO number in this edit session, mark it as edited
+            // so the backend always uses this value and ignores custRef/description scan
+            poNumberEdited: (li as any).poNumberEdited === true ? true : undefined,
             custRef: (li as any).custRef || null,
           })
         )
@@ -1566,7 +1574,7 @@ export default function InvoiceDetail() {
                                 <Input value={li.description} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, description: e.target.value } : x))} className="h-7 text-xs" placeholder="Description" />
                               </td>
                               <td className="py-1.5 pr-2">
-                                <Input value={(li as any).poNumber ?? ""} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, poNumber: e.target.value } : x))} className="h-7 text-xs w-28" placeholder="P702739" title="PO number for this line" />
+                                 <Input value={(li as any).poNumber ?? ""} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, poNumber: e.target.value, poNumberEdited: true } : x))} className="h-7 text-xs w-28" placeholder="P702739" title="PO number for this line (editing marks this as authoritative)" />
                               </td>
                               <td className="py-1.5 pr-2">
                                 <Input value={li.quantity} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, quantity: e.target.value } : x))} className="h-7 text-xs text-right w-16" placeholder="1" />

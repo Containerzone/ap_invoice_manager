@@ -177,3 +177,6 @@
 - [x] Fix #1: Use line-item poNumber as source of truth for PO list — replace extractedPoNumbers with unique set from line items in verifyWithXero, refreshXeroPoResults, and adminApprove/staffApprove
 - [x] Fix #2: Never fall back to full invoice total for multi-PO invoices — if no line item matches a PO, show null/unknown instead of extractedTotal
 - [x] Fix #3: Throttle parallel Xero PO lookups to max 3 concurrent with 200ms delay between batches
+
+## Bug Fixes (Session 11)
+- [x] Add poNumberEdited flag to invoice_line_items: when a user manually edits a line item's PO number, always use the edited value and ignore custRef/description scan for that line

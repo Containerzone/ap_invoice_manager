@@ -1,0 +1,1 @@
+ALTER TABLE `invoice_line_items` ADD `poNumberEdited` boolean DEFAULT false;

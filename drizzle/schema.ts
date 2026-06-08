@@ -165,6 +165,9 @@ export const invoiceLineItems = mysqlTable("invoice_line_items", {
   accountCode: varchar("accountCode", { length: 50 }),
   // PO number associated with this specific line item (e.g. from "Cust Ref" column on Pacific National invoices)
   poNumber: varchar("poNumber", { length: 50 }),
+  // Set to true when a user manually edits the poNumber field — signals that the edited value is
+  // authoritative and the original custRef/description scan should be ignored for this line.
+  poNumberEdited: boolean("poNumberEdited").default(false),
   // Raw customer reference field from invoice (may contain container number + PO number)
   custRef: varchar("custRef", { length: 200 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

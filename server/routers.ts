@@ -100,6 +100,12 @@ async function refreshXeroPoResults(
     const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
     const poFromLineItems = new Set<string>();
     for (const li of lineItems) {
+      // Rule: poNumberEdited=true means the user manually corrected this PO number.
+      // Always use the edited value and skip custRef/description scan for this line.
+      if ((li as any).poNumberEdited && li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) {
+        poFromLineItems.add(li.poNumber);
+        continue; // do not also scan custRef/description — edited value is authoritative
+      }
       if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) {
         poFromLineItems.add(li.poNumber);
       } else if ((li as any).custRef) {
@@ -131,6 +137,10 @@ async function refreshXeroPoResults(
     // invoice total as a substitute (that would compare the wrong amount).
     const getGroupedTotal = (poNum: string): number | null => {
       const tagged = lineItems.filter((li) => {
+        // If user edited this line's PO number, only match by the edited poNumber field
+        if ((li as any).poNumberEdited) {
+          return !!(li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase());
+        }
         if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
         if ((li as any).custRef) {
           const custRefMatches = ((li as any).custRef as string).match(/\b([A-Z]{1,2}\d{6})\b/g) ?? [];
@@ -663,6 +673,14 @@ export const appRouter = router({
         // Scan DB line items for PO numbers — check all fields (most reliable source)
         const poFromDbLineItems = new Set<string>();
         for (const li of invoiceLineItems) {
+          // Rule: poNumberEdited=true means the user manually corrected this PO number.
+          // Always use the edited value and skip custRef/description scan for this line.
+          if ((li as any).poNumberEdited) {
+            if ((li as any).poNumber && /^[A-Z]{1,2}\d{6}$/.test((li as any).poNumber)) {
+              poFromDbLineItems.add((li as any).poNumber);
+            }
+            continue; // edited value is authoritative — do not also scan custRef/description
+          }
           // Priority 1: structured per-line poNumber field (e.g. from Cust Ref column)
           if ((li as any).poNumber && /^[A-Z]{1,2}\d{6}$/.test((li as any).poNumber)) {
             poFromDbLineItems.add((li as any).poNumber);
@@ -721,6 +739,10 @@ export const appRouter = router({
         function getGroupedLineItemTotal(poNum: string): number | null {
           if (invoiceLineItems.length === 0) return null;
           const matched = invoiceLineItems.filter((li) => {
+            // If user edited this line's PO number, only match by the edited poNumber field
+            if ((li as any).poNumberEdited) {
+              return !!(li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase());
+            }
             // Priority 1: structured per-line poNumber field
             if (li.poNumber && li.poNumber === poNum) return true;
             // Priority 2: custRef text scan (e.g. "CBHU4279322 P702739")
@@ -994,6 +1016,10 @@ export const appRouter = router({
         const staffPoPatternPre = /\b([A-Z]{1,2}\d{6})\b/g;
         const staffPoFromLineItemsPre = new Set<string>();
         for (const li of staffLineItemsPre) {
+          if ((li as any).poNumberEdited) {
+            if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsPre.add(li.poNumber);
+            continue; // edited value is authoritative
+          }
           if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsPre.add(li.poNumber);
           else if (li.custRef) { const m = li.custRef.match(staffPoPatternPre); if (m) m.forEach((p) => staffPoFromLineItemsPre.add(p)); }
           else if (li.description) { const m = li.description.match(staffPoPatternPre); if (m) m.forEach((p) => staffPoFromLineItemsPre.add(p)); }
@@ -1044,6 +1070,10 @@ export const appRouter = router({
         const staffPoPatternXero = /\b([A-Z]{1,2}\d{6})\b/g;
         const staffPoFromLineItemsXero = new Set<string>();
         for (const li of staffLineItemsPre) {
+          if ((li as any).poNumberEdited) {
+            if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsXero.add(li.poNumber);
+            continue; // edited value is authoritative
+          }
           if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsXero.add(li.poNumber);
           else if (li.custRef) { const m = li.custRef.match(staffPoPatternXero); if (m) m.forEach((p) => staffPoFromLineItemsXero.add(p)); }
           else if (li.description) { const m = li.description.match(staffPoPatternXero); if (m) m.forEach((p) => staffPoFromLineItemsXero.add(p)); }
@@ -1151,6 +1181,10 @@ export const appRouter = router({
         const adminPoPattern = /\b([A-Z]{1,2}\d{6})\b/g;
         const adminPoFromLineItems = new Set<string>();
         for (const li of adminLineItemsForPo) {
+          if ((li as any).poNumberEdited) {
+            if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) adminPoFromLineItems.add(li.poNumber);
+            continue; // edited value is authoritative
+          }
           if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) adminPoFromLineItems.add(li.poNumber);
           else if (li.custRef) { const m = li.custRef.match(adminPoPattern); if (m) m.forEach((p) => adminPoFromLineItems.add(p)); }
           else if (li.description) { const m = li.description.match(adminPoPattern); if (m) m.forEach((p) => adminPoFromLineItems.add(p)); }
@@ -1780,6 +1814,8 @@ export const appRouter = router({
           amount: z.string().optional().nullable(),
           taxRate: z.string().optional().nullable(),
           poNumber: z.string().optional().nullable(),
+          // Set to true when the user manually edits the PO number field
+          poNumberEdited: z.boolean().optional(),
           custRef: z.string().optional().nullable(),
         })
       )
