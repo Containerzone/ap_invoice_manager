@@ -81,26 +81,26 @@ const FIELD_MAP: Record<string, PoFieldConfig> = {
     accountCode: "310",
     description: "Empty Container Dehire",
   },
-  // Straitlink Bass Straight (SL)
+  // Straitlink Bass Straight (SL) — no D between prefix and digits → SL702118
   "straitlinkbassstraight": {
     poPrefix: "SL",
-    includeD: true,
+    includeD: false,
     supplier: "Straitlink",
     accountCode: "310",
     description: "Straitlink Bass Straight",
   },
-  // Tasmanian Rail (TR)
+  // Tasmanian Rail (TR) — no D between prefix and digits → TR702118
   "tasmanianrail": {
     poPrefix: "TR",
-    includeD: true,
+    includeD: false,
     supplier: "Tasmanian Railway",
     accountCode: "310",
     description: "Tasmanian Rail Cost",
   },
-  // Aurizon Rail (AZ)
+  // Aurizon Rail (AZ) — no D between prefix and digits → AZ702118
   "aurizon rail": {
     poPrefix: "AZ",
-    includeD: true,
+    includeD: false,
     supplier: "Aurizon",
     accountCode: "310",
     description: "Aurizon Rail Cost",
@@ -122,10 +122,10 @@ const FIELD_MAP: Record<string, PoFieldConfig> = {
     accountCode: "310",
     description: "Hub Transfer 2",
   },
-  // Regional Connect
+  // Regional Connect (RC) — no D between prefix and digits → RC702118
   "regional connect": {
     poPrefix: "RC",
-    includeD: true,
+    includeD: false,
     supplier: "CONTAINERZONE",
     accountCode: "310",
     description: "Regional Connect",
@@ -307,7 +307,7 @@ async function createXeroDraftPO(opts: {
         Contact: contactPayload,
         PurchaseOrderNumber: opts.poNumber,
         Status: "DRAFT",
-        LineAmountTypes: "EXCLUSIVE", // GST exclusive
+        LineAmountTypes: "Exclusive", // GST exclusive — Xero requires title-case (not EXCLUSIVE)
         LineItems: [
           {
             Description: opts.description,
@@ -321,14 +321,33 @@ async function createXeroDraftPO(opts: {
     ],
   };
 
-  const resp = await axios.post(`${XERO_API_BASE}/PurchaseOrders`, body, {
-    headers: {
-      Authorization: `Bearer ${opts.auth.token}`,
-      "Xero-tenant-id": opts.auth.tenantId,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-  });
+  let resp: any;
+  try {
+    resp = await axios.post(`${XERO_API_BASE}/PurchaseOrders`, body, {
+      headers: {
+        Authorization: `Bearer ${opts.auth.token}`,
+        "Xero-tenant-id": opts.auth.tenantId,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+    });
+  } catch (err: any) {
+    // Extract detailed Xero error from HTTP 4xx/5xx response body
+    const xeroData = err?.response?.data;
+    if (xeroData) {
+      const elements: any[] = xeroData.Elements ?? [];
+      const valMsgs: string[] = [];
+      for (const el of elements) {
+        const errs: any[] = el.ValidationErrors ?? [];
+        errs.forEach((e: any) => { if (e.Message) valMsgs.push(e.Message); });
+      }
+      const topMsg: string | undefined = xeroData.Message;
+      const detail = valMsgs.length > 0 ? valMsgs.join("; ") : topMsg ?? JSON.stringify(xeroData);
+      console.error(`[Vtiger PO] createXeroDraftPO HTTP error for ${opts.poNumber}:`, detail);
+      throw new Error(`Xero PO creation failed: ${detail}`);
+    }
+    throw err;
+  }
 
   const created = resp.data?.PurchaseOrders?.[0];
   if (!created || created.HasErrors) {

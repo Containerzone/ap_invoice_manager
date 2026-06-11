@@ -183,3 +183,7 @@
 
 ## Bug Fixes (Session 12)
 - [x] Fix Amount Comparison Xero totals: sum all found PO totals instead of using only the first found PO for xeroTotal/xeroSubtotal/xeroTax
+
+## Bug Fixes (Session 13)
+- [x] Diagnose 400 error in Xero PO creation — deep search full creation flow
+- [x] Strip trailing "D" from 3-letter-prefix PO numbers (e.g. AZD702766 → AZ702766) before sending to Xero
