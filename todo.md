@@ -187,3 +187,8 @@
 ## Bug Fixes (Session 13)
 - [x] Diagnose 400 error in Xero PO creation — deep search full creation flow
 - [x] Strip trailing "D" from 3-letter-prefix PO numbers (e.g. AZD702766 → AZ702766) before sending to Xero
+
+## Bug Fixes (Session 14)
+- [x] Fix duplicate PO Ref column in invoice line item edit form
+- [x] Fix qty/unit price field swap on save (qty becomes blank, unit price gets qty value)
+- [x] Fix Xero PO line receiving GST-inclusive amount instead of GST-exclusive unit price ($3,600 instead of $3,000)

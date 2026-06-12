@@ -1555,11 +1555,10 @@ export default function InvoiceDetail() {
                     <thead>
                       <tr className="border-b text-muted-foreground">
                         <th className="text-left pb-2.5 font-medium pr-3">Description</th>
-                        {/* Show PO Ref column when any line item has a poNumber or custRef */}
-                        {lineItems.some((li) => (li as any).poNumber || (li as any).custRef) && (
+                        {/* Show PO Ref column when any line item has a poNumber/custRef, OR when in edit mode (so user can set PO numbers) */}
+                        {(editMode || lineItems.some((li) => (li as any).poNumber || (li as any).custRef)) && (
                           <th className="text-left pb-2.5 font-medium w-28">PO Ref</th>
                         )}
-                        {editMode && <th className="text-left pb-2.5 font-medium w-28">PO Ref</th>}
                         <th className="text-right pb-2.5 font-medium w-16">Qty</th>
                         <th className="text-right pb-2.5 font-medium w-24">Unit Price</th>
                         <th className="text-right pb-2.5 font-medium w-24">Amount</th>

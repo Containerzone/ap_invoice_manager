@@ -1136,12 +1136,19 @@ export const appRouter = router({
 // Build line items: pass only description/quantity/unitAmount (GST-exclusive).
             // updateXeroPODetails inherits AccountCode and TaxType from the existing Xero PO line items.
             const staffXeroLineItems = itemsForPo.length > 0
-              ? itemsForPo.map((li) => ({
-                  description: li.description ?? "Service",
-                  quantity: parseFloat(li.quantity?.toString() ?? "1"),
-                  // unitPrice and amount are both GST-exclusive per extraction prompt
-                  unitAmount: parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0"),
-                }))
+              ? itemsForPo.map((li) => {
+                  const qty = parseFloat(li.quantity?.toString() ?? "1") || 1;
+                  // `amount` is always GST-exclusive per extraction prompt (line total excl. GST).
+                  // `unitPrice` may be GST-inclusive on some invoices, so we derive the
+                  // per-unit exclusive amount from amount/qty to guarantee correctness.
+                  const exclTotal = parseFloat(li.amount?.toString() ?? "0");
+                  const unitAmountExcl = Math.round((exclTotal / qty) * 100) / 100;
+                  return {
+                    description: li.description ?? "Service",
+                    quantity: qty,
+                    unitAmount: unitAmountExcl,
+                  };
+                })
               : undefined;
             try {
               const result = await updateXeroPODetails(
@@ -1272,15 +1279,22 @@ export const appRouter = router({
             const itemsForPo = poLineItems.length > 0
               ? poLineItems
               : allPoNumbers.length === 1 ? lineItems : [];
-// Build line items: pass only description/quantity/unitAmount (GST-exclusive).
+            // Build line items: pass only description/quantity/unitAmount (GST-exclusive).
             // updateXeroPODetails inherits AccountCode and TaxType from the existing Xero PO line items.
             const xeroLineItems = itemsForPo.length > 0
-              ? itemsForPo.map((li) => ({
-                  description: li.description ?? "Service",
-                  quantity: parseFloat(li.quantity?.toString() ?? "1"),
-                  // unitPrice and amount are both GST-exclusive per extraction prompt
-                  unitAmount: parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0"),
-                }))
+              ? itemsForPo.map((li) => {
+                  const qty = parseFloat(li.quantity?.toString() ?? "1") || 1;
+                  // `amount` is always GST-exclusive per extraction prompt (line total excl. GST).
+                  // Derive per-unit exclusive amount from amount/qty to avoid using unitPrice
+                  // which may be GST-inclusive on some invoices.
+                  const exclTotal = parseFloat(li.amount?.toString() ?? "0");
+                  const unitAmountExcl = Math.round((exclTotal / qty) * 100) / 100;
+                  return {
+                    description: li.description ?? "Service",
+                    quantity: qty,
+                    unitAmount: unitAmountExcl,
+                  };
+                })
               : undefined;
             try {
               const result = await updateXeroPODetails(
