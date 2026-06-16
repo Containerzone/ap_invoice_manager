@@ -192,3 +192,11 @@
 - [x] Fix duplicate PO Ref column in invoice line item edit form
 - [x] Fix qty/unit price field swap on save (qty becomes blank, unit price gets qty value)
 - [x] Fix Xero PO line receiving GST-inclusive amount instead of GST-exclusive unit price ($3,600 instead of $3,000)
+
+## Bug Fixes (Session 15)
+- [ ] Xero PO line still shows $3,600 (incl. GST) after Session 14 fix — diagnose and correct the unit amount sent to Xero for invoice HC1807
+
+## UX Improvements (Session 16)
+- [x] Clickable sortable column headers on Invoices page (asc/desc toggle with indicator)
+- [x] Multi-select status filter (allow selecting more than one status at a time)
+- [x] Resolved invoices automatically sorted to the bottom of the list

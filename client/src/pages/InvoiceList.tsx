@@ -1,19 +1,17 @@
-import { useState } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatRelativeTime } from "@/lib/invoiceUtils";
-import { Upload, Search, FileText, Filter, Users } from "lucide-react";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { Upload, Search, FileText, Filter, Users, ChevronUp, ChevronDown, ChevronsUpDown, X } from "lucide-react";
 
+// ── Status options ────────────────────────────────────────────────────────────
 const STATUS_OPTIONS = [
-  { value: "all", label: "All Statuses" },
   { value: "uploaded", label: "Uploaded" },
   { value: "extracting", label: "Extracting" },
   { value: "extracted", label: "Extracted" },
@@ -30,6 +28,10 @@ const STATUS_OPTIONS = [
   { value: "duplicate", label: "Duplicate" },
 ];
 
+// ── Sort config ───────────────────────────────────────────────────────────────
+type SortKey = "invoiceNumber" | "poNumber" | "supplier" | "issueDate" | "dueDate" | "received" | "status";
+type SortDir = "asc" | "desc";
+
 function formatShortDate(dateStr: string | null | undefined): string {
   if (!dateStr) return "—";
   try {
@@ -39,15 +41,168 @@ function formatShortDate(dateStr: string | null | undefined): string {
   }
 }
 
+function getSortValue(invoice: any, key: SortKey): string | number {
+  switch (key) {
+    case "invoiceNumber": return invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `${invoice.id}`;
+    case "poNumber": return invoice.extractedPoNumber ?? "";
+    case "supplier": return invoice.extractedSupplierName ?? "";
+    case "issueDate": return invoice.extractedInvoiceDate ? new Date(invoice.extractedInvoiceDate).getTime() : 0;
+    case "dueDate": return invoice.extractedDueDate ? new Date(invoice.extractedDueDate).getTime() : 0;
+    case "received": return invoice.createdAt ? new Date(invoice.createdAt).getTime() : 0;
+    case "status": return invoice.status ?? "";
+    default: return "";
+  }
+}
+
+// ── Sort icon component ───────────────────────────────────────────────────────
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  if (!active) return <ChevronsUpDown className="h-3 w-3 ml-1 opacity-40" />;
+  return dir === "asc"
+    ? <ChevronUp className="h-3 w-3 ml-1 text-foreground" />
+    : <ChevronDown className="h-3 w-3 ml-1 text-foreground" />;
+}
+
+// ── Multi-select status dropdown ──────────────────────────────────────────────
+function StatusMultiSelect({
+  selected,
+  onChange,
+}: {
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const toggle = (value: string) => {
+    const next = new Set(selected);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    onChange(next);
+  };
+
+  const label =
+    selected.size === 0
+      ? "All Statuses"
+      : selected.size === 1
+      ? STATUS_OPTIONS.find((o) => o.value === Array.from(selected)[0])?.label ?? "1 selected"
+      : `${selected.size} statuses`;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground shadow-sm hover:bg-muted/50 transition-colors min-w-[11rem] justify-between"
+      >
+        <span className="flex items-center gap-1.5 text-muted-foreground">
+          <Filter className="h-3.5 w-3.5" />
+          <span className={selected.size > 0 ? "text-foreground font-medium" : ""}>{label}</span>
+        </span>
+        <span className="flex items-center gap-1">
+          {selected.size > 0 && (
+            <span
+              role="button"
+              tabIndex={0}
+              className="rounded-full hover:bg-muted p-0.5"
+              onClick={(e) => { e.stopPropagation(); onChange(new Set()); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onChange(new Set()); } }}
+            >
+              <X className="h-3 w-3" />
+            </span>
+          )}
+          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-52 rounded-md border border-border bg-popover shadow-md py-1 max-h-72 overflow-y-auto">
+          {STATUS_OPTIONS.map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-muted/50 text-sm select-none"
+            >
+              <Checkbox
+                checked={selected.has(opt.value)}
+                onCheckedChange={() => toggle(opt.value)}
+                className="h-3.5 w-3.5"
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function InvoiceList() {
   const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = useState<SortKey>("received");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const { data: invoices, isLoading } = trpc.invoices.list.useQuery({
-    status: statusFilter !== "all" ? statusFilter : undefined,
     search: search || undefined,
   });
+
+  // ── Client-side filter + sort ─────────────────────────────────────────────
+  const displayedInvoices = useMemo(() => {
+    if (!invoices) return [];
+
+    // 1. Status filter
+    let filtered = selectedStatuses.size === 0
+      ? invoices
+      : invoices.filter((inv) => selectedStatuses.has(inv.status ?? ""));
+
+    // 2. Sort — resolved always goes to the bottom regardless of sort key
+    filtered = [...filtered].sort((a, b) => {
+      const aResolved = a.status === "resolved";
+      const bResolved = b.status === "resolved";
+      if (aResolved && !bResolved) return 1;
+      if (!aResolved && bResolved) return -1;
+
+      const aVal = getSortValue(a, sortKey);
+      const bVal = getSortValue(b, sortKey);
+      let cmp = 0;
+      if (typeof aVal === "number" && typeof bVal === "number") {
+        cmp = aVal - bVal;
+      } else {
+        cmp = String(aVal).localeCompare(String(bVal), undefined, { numeric: true, sensitivity: "base" });
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+
+    return filtered;
+  }, [invoices, selectedStatuses, sortKey, sortDir]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  // ── Sortable header cell ──────────────────────────────────────────────────
+  const SortHeader = ({ col, label, className }: { col: SortKey; label: string; className?: string }) => (
+    <button
+      onClick={() => handleSort(col)}
+      className={`flex items-center gap-0.5 uppercase tracking-wider text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group ${className ?? ""}`}
+    >
+      {label}
+      <SortIcon active={sortKey === col} dir={sortDir} />
+    </button>
+  );
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -56,7 +211,7 @@ export default function InvoiceList() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground tracking-tight">Invoices</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {invoices?.length ?? 0} invoice{invoices?.length !== 1 ? "s" : ""} total
+            {displayedInvoices.length} invoice{displayedInvoices.length !== 1 ? "s" : ""} total
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -86,19 +241,7 @@ export default function InvoiceList() {
             className="pl-9 h-9"
           />
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-44 h-9 gap-2">
-            <Filter className="h-3.5 w-3.5 text-muted-foreground" />
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {STATUS_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <StatusMultiSelect selected={selectedStatuses} onChange={setSelectedStatuses} />
       </div>
 
       {/* Table */}
@@ -117,16 +260,16 @@ export default function InvoiceList() {
               </div>
             ))}
           </div>
-        ) : invoices?.length === 0 ? (
+        ) : displayedInvoices.length === 0 ? (
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <FileText className="h-12 w-12 text-muted-foreground/25 mb-4" />
             <p className="text-base font-medium text-foreground">No invoices found</p>
             <p className="text-sm text-muted-foreground mt-1 mb-4">
-              {search || statusFilter !== "all"
+              {search || selectedStatuses.size > 0
                 ? "Try adjusting your filters"
                 : "Upload your first invoice to get started"}
             </p>
-            {!search && statusFilter === "all" && (
+            {!search && selectedStatuses.size === 0 && (
               <Button
                 variant="outline"
                 size="sm"
@@ -140,28 +283,29 @@ export default function InvoiceList() {
           </CardContent>
         ) : (
           <>
-            {/* Table header — columns: Invoice#, PO#, Supplier, Issue Date, Due Date, Received Date, Status */}
-            <div className="hidden xl:grid grid-cols-[1.4fr_0.9fr_1.2fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              <span>Invoice #</span>
-              <span>PO Number</span>
-              <span>Supplier</span>
-              <span>Issue Date</span>
-              <span>Due Date</span>
-              <span>Received</span>
-              <span>Status</span>
+            {/* Desktop table header — sortable */}
+            <div className="hidden xl:grid grid-cols-[1.4fr_0.9fr_1.2fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
+              <SortHeader col="invoiceNumber" label="Invoice #" />
+              <SortHeader col="poNumber" label="PO Number" />
+              <SortHeader col="supplier" label="Supplier" />
+              <SortHeader col="issueDate" label="Issue Date" />
+              <SortHeader col="dueDate" label="Due Date" />
+              <SortHeader col="received" label="Received" />
+              <SortHeader col="status" label="Status" />
             </div>
-            {/* Mobile/tablet header */}
-            <div className="xl:hidden hidden md:grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              <span>Invoice #</span>
-              <span>Supplier</span>
-              <span>Issue Date</span>
-              <span>Status</span>
+            {/* Tablet header */}
+            <div className="xl:hidden hidden md:grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
+              <SortHeader col="invoiceNumber" label="Invoice #" />
+              <SortHeader col="supplier" label="Supplier" />
+              <SortHeader col="issueDate" label="Issue Date" />
+              <SortHeader col="status" label="Status" />
             </div>
+
             <div className="divide-y divide-border">
-              {invoices?.map((invoice) => (
+              {displayedInvoices.map((invoice) => (
                 <div
                   key={invoice.id}
-                  className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1fr] xl:grid-cols-[1.4fr_0.9fr_1.2fr_0.8fr_0.8fr_0.8fr_1fr] gap-2 md:gap-3 items-center px-5 py-3.5 hover:bg-muted/20 cursor-pointer transition-colors"
+                  className={`grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1fr] xl:grid-cols-[1.4fr_0.9fr_1.2fr_0.8fr_0.8fr_0.8fr_1fr] gap-2 md:gap-3 items-center px-5 py-3.5 hover:bg-muted/20 cursor-pointer transition-colors ${invoice.status === "resolved" ? "opacity-60" : ""}`}
                   onClick={() => setLocation(`/invoices/${invoice.id}`)}
                 >
                   {/* Col 1: Invoice # */}
@@ -199,7 +343,7 @@ export default function InvoiceList() {
                     {formatShortDate(invoice.extractedDueDate)}
                   </span>
 
-                  {/* Col 6: Received Date (desktop only) — createdAt = upload date */}
+                  {/* Col 6: Received Date (desktop only) */}
                   <span className="text-xs text-muted-foreground hidden xl:block">
                     {formatRelativeTime(invoice.createdAt)}
                   </span>
