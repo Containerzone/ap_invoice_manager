@@ -306,7 +306,7 @@ export default function InvoiceList() {
                 <div
                   key={invoice.id}
                   className={`grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1fr] xl:grid-cols-[1.4fr_0.9fr_1.2fr_0.8fr_0.8fr_0.8fr_1fr] gap-2 md:gap-3 items-center px-5 py-3.5 hover:bg-muted/20 cursor-pointer transition-colors ${invoice.status === "resolved" ? "opacity-60" : ""}`}
-                  onClick={() => setLocation(`/invoices/${invoice.id}`)}
+                  onClick={() => window.open(`/invoices/${invoice.id}`, '_blank', 'noopener,noreferrer')}
                 >
                   {/* Col 1: Invoice # */}
                   <div className="flex items-center gap-3 min-w-0">
