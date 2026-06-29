@@ -200,3 +200,6 @@
 - [x] Clickable sortable column headers on Invoices page (asc/desc toggle with indicator)
 - [x] Multi-select status filter (allow selecting more than one status at a time)
 - [x] Resolved invoices automatically sorted to the bottom of the list
+
+## Features (Session 17)
+- [x] Attach original invoice PDF to Xero bill's related files when invoice is approved and pushed to Xero

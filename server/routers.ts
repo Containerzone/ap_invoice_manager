@@ -1752,6 +1752,7 @@ export const appRouter = router({
           resolutionNotes: input.resolutionNotes ?? undefined,
           xeroFinalBillId: xeroResult?.invoiceId ?? undefined,
           xeroFinalBillNumber: xeroResult?.invoiceNumber ?? undefined,
+          pdfAttachedToXero: false, // will be updated after attachment attempt
         });
 
         // ── Upload original invoice PDF as attachment to the Xero bill ────────────
@@ -1775,7 +1776,10 @@ export const appRouter = router({
               mimeType: "application/pdf",
             });
             attachmentUploaded = attachResult.success;
-            if (!attachResult.success) {
+            if (attachResult.success) {
+              // Persist successful attachment flag
+              await updateInvoice(input.invoiceId, { pdfAttachedToXero: true } as any);
+            } else {
               attachmentError = attachResult.error;
               console.error(`[Resolve] PDF attachment upload failed:`, attachResult.error);
             }
@@ -1801,6 +1805,43 @@ export const appRouter = router({
         });
 
         return { success: true, xeroResult, attachmentUploaded, attachmentError };
+      }),
+
+    // Re-attach invoice PDF to an already-resolved Xero bill (retry for failed attachments)
+    reattachPdf: protectedProcedure
+      .input(z.object({ invoiceId: z.number() }))
+      .mutation(async ({ input }) => {
+        const invoice = await getInvoiceById(input.invoiceId);
+        if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+        if (invoice.status !== "resolved") throw new TRPCError({ code: "BAD_REQUEST", message: "Invoice is not resolved" });
+        const xeroInvoiceId = (invoice as any).xeroFinalBillId;
+        if (!xeroInvoiceId) throw new TRPCError({ code: "BAD_REQUEST", message: "No Xero bill ID on this invoice" });
+
+        const clientId = process.env.XERO_CLIENT_ID;
+        const clientSecret = process.env.XERO_CLIENT_SECRET;
+        if (!clientId || !clientSecret) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Xero credentials not configured" });
+
+        const resolvedAttachKey = (invoice as any).fileKey && !(invoice as any).fileKey.startsWith("/manus-storage/")
+          ? (invoice as any).fileKey
+          : (invoice as any).fileUrl?.replace(/^\/manus-storage\//, "") ?? "";
+        if (!resolvedAttachKey) throw new TRPCError({ code: "BAD_REQUEST", message: "No file key for this invoice" });
+
+        const signedUrl = await storageGetSignedUrl(resolvedAttachKey);
+        const fileName = (invoice as any).originalFileName ?? `invoice-${invoice.id}.pdf`;
+        const attachResult = await uploadXeroBillAttachment({
+          clientId,
+          clientSecret,
+          xeroInvoiceId,
+          fileName,
+          fileUrl: signedUrl,
+          mimeType: "application/pdf",
+        });
+
+        if (attachResult.success) {
+          await updateInvoice(input.invoiceId, { pdfAttachedToXero: true } as any);
+        }
+
+        return { success: attachResult.success, error: attachResult.error };
       }),
 
     // Save query points (numbered dispute reasons)

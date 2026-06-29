@@ -142,6 +142,7 @@ export const invoices = mysqlTable("invoices", {
   resolutionNotes: text("resolutionNotes"),
   xeroFinalBillId: varchar("xeroFinalBillId", { length: 64 }),
   xeroFinalBillNumber: varchar("xeroFinalBillNumber", { length: 100 }),
+  pdfAttachedToXero: boolean("pdfAttachedToXero").default(false),
 
   // Metadata
   uploadedBy: int("uploadedBy").notNull(),

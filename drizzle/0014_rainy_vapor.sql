@@ -1,0 +1,1 @@
+ALTER TABLE `invoices` ADD `pdfAttachedToXero` boolean DEFAULT false;

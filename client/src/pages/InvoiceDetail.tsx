@@ -20,7 +20,7 @@ import {
   Building2, Calendar, Hash, DollarSign, Container,
   Loader2, Plus, Trash2, Phone, MapPin, User,
   ChevronLeft, ChevronRight, List, Pencil, X, Save,
-  ShieldAlert, ShieldCheck,
+  ShieldAlert, ShieldCheck, Paperclip,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -251,6 +251,7 @@ export default function InvoiceDetail() {
   const sendQueryMutation = trpc.invoices.sendQuery.useMutation();
   const addNoteMutation = trpc.invoices.addNote.useMutation();
   const resolveMutation = trpc.invoices.resolve.useMutation();
+  const reattachPdfMutation = trpc.invoices.reattachPdf.useMutation();
   const deleteMutation = trpc.invoices.delete.useMutation();
   const updateExtractedMutation = trpc.invoices.updateExtracted.useMutation();
   const updateLineItemMutation = trpc.invoices.updateLineItem.useMutation();
@@ -1168,7 +1169,7 @@ export default function InvoiceDetail() {
         <Card className="border border-emerald-200 bg-emerald-50/50 shadow-sm">
           <CardContent className="p-4 flex items-center gap-3">
             <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
-            <div>
+            <div className="flex-1">
               <p className="text-sm font-semibold text-emerald-800">Bill Created in Xero</p>
               <p className="text-xs text-emerald-700 mt-0.5">
                 Bill number: <strong>{(invoice as any).xeroFinalBillNumber}</strong>
@@ -1176,7 +1177,36 @@ export default function InvoiceDetail() {
                   <> — {["verified", "under_budget"].includes((invoice as any).resolvedFromStatus ?? "") ? "Awaiting Payment" : "Awaiting Approval"} in Xero</>
                 )}
               </p>
+              {(invoice as any).pdfAttachedToXero && (
+                <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
+                  <Paperclip className="h-3 w-3" /> PDF attached to Xero bill
+                </p>
+              )}
             </div>
+            {!(invoice as any).pdfAttachedToXero && invoice.status === "resolved" && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 text-xs border-emerald-400 text-emerald-700 hover:bg-emerald-100"
+                disabled={reattachPdfMutation.isPending}
+                onClick={async () => {
+                  try {
+                    const r = await reattachPdfMutation.mutateAsync({ invoiceId });
+                    if (r.success) {
+                      await invalidate();
+                      toast.success("PDF attached to Xero bill.");
+                    } else {
+                      toast.error(`Attachment failed: ${r.error ?? "Unknown error"}`);
+                    }
+                  } catch (e: any) {
+                    toast.error(e?.message ?? "Failed to attach PDF");
+                  }
+                }}
+              >
+                {reattachPdfMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
+                Attach PDF to Xero
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}

@@ -1065,11 +1065,15 @@ export async function uploadXeroBillAttachment(opts: {
     const mimeType = opts.mimeType ?? "application/pdf";
 
     // Sanitise file name for Xero:
-    // - Replace spaces and special chars with underscore
-    // - Brackets must NOT be encoded per Xero docs (other chars must be unencoded)
-    const safeName = opts.fileName.replace(/[<>:"\\|?*\x00+]/g, "_");
+    // - Replace spaces, special chars, and + with underscore
+    // - Keep only safe URL characters (letters, digits, hyphens, underscores, dots)
+    const safeName = opts.fileName
+      .replace(/[<>:"\\|?*\x00+ ]/g, "_") // replace unsafe chars and spaces
+      .replace(/_+/g, "_");                  // collapse consecutive underscores
 
-    const uploadUrl = `${XERO_API_BASE}/Invoices/${encodeURIComponent(opts.xeroInvoiceId)}/Attachments/${safeName}`;
+    // Use the GUID directly — do NOT encodeURIComponent (hyphens must stay as-is)
+    // Encode only the filename portion for the URL path
+    const uploadUrl = `${XERO_API_BASE}/Invoices/${opts.xeroInvoiceId}/Attachments/${encodeURIComponent(safeName)}`;
 
     await axios.put(uploadUrl, fileBuffer, {
       headers: {
@@ -1077,6 +1081,7 @@ export async function uploadXeroBillAttachment(opts: {
         "Xero-tenant-id": tenantId,
         "Content-Type": mimeType,
         "Content-Length": String(fileBuffer.length),
+        "Content-Disposition": `attachment; filename="${safeName}"`,
         Accept: "application/json",
       },
       maxRedirects: 5,
