@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
   CheckCircle2, ExternalLink, Loader2, RefreshCw,
-  Settings as SettingsIcon, Unlink, Zap, Mail, Shield
+  Settings as SettingsIcon, Unlink, Zap, Mail, Shield, AlertTriangle
 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 
@@ -80,25 +80,58 @@ export default function Settings() {
             </div>
           ) : xeroStatus?.connected ? (
             <div className="space-y-4">
-              <div className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
-                <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
+              {/* Missing attachments scope warning — shown when token lacks accounting.attachments */}
+              {!xeroStatus.hasAttachmentsScope && (
+                <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-300 rounded-xl">
+                  <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-800">Re-authentication Required</p>
+                    <p className="text-sm text-amber-700 mt-0.5">
+                      Your current Xero token is missing the <code className="bg-amber-100 px-1 rounded text-xs font-mono">accounting.attachments</code> permission.
+                      PDF attachments to Xero bills will fail with a 401 error until you re-authenticate.
+                    </p>
+                    <p className="text-xs text-amber-600 mt-1">
+                      Click <strong>Re-authenticate</strong> below to reconnect Xero and grant the required permission.
+                    </p>
+                  </div>
+                </div>
+              )}
+              <div className={`flex items-start gap-3 p-4 rounded-xl border ${
+                xeroStatus.hasAttachmentsScope
+                  ? "bg-emerald-50 border-emerald-200"
+                  : "bg-muted/40 border-border"
+              }`}>
+                <CheckCircle2 className={`h-5 w-5 shrink-0 mt-0.5 ${
+                  xeroStatus.hasAttachmentsScope ? "text-emerald-500" : "text-muted-foreground"
+                }`} />
                 <div>
-                  <p className="text-sm font-semibold text-emerald-800">Connected to Xero</p>
+                  <p className={`text-sm font-semibold ${
+                    xeroStatus.hasAttachmentsScope ? "text-emerald-800" : "text-foreground"
+                  }`}>Connected to Xero</p>
                   {xeroStatus.tenantName && (
-                    <p className="text-sm text-emerald-700 mt-0.5">
+                    <p className={`text-sm mt-0.5 ${
+                      xeroStatus.hasAttachmentsScope ? "text-emerald-700" : "text-muted-foreground"
+                    }`}>
                       Organisation: <strong>{xeroStatus.tenantName}</strong>
                     </p>
                   )}
                   {xeroStatus.expiresAt && (
-                    <p className="text-xs text-emerald-600 mt-1">
+                    <p className={`text-xs mt-1 ${
+                      xeroStatus.hasAttachmentsScope ? "text-emerald-600" : "text-muted-foreground"
+                    }`}>
                       Token expires: {new Date(xeroStatus.expiresAt).toLocaleString("en-AU")}
                     </p>
                   )}
+                  <p className={`text-xs mt-1 ${
+                    xeroStatus.hasAttachmentsScope ? "text-emerald-600" : "text-amber-600 font-medium"
+                  }`}>
+                    PDF attachments: {xeroStatus.hasAttachmentsScope ? "✓ Enabled" : "✗ Missing scope — re-authenticate required"}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <Button
-                  variant="outline"
+                  variant={xeroStatus.hasAttachmentsScope ? "outline" : "default"}
                   size="sm"
                   className="gap-2"
                   onClick={handleXeroConnect}

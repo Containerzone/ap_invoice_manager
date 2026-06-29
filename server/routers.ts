@@ -1922,10 +1922,14 @@ export const appRouter = router({
   xero: router({
     status: protectedProcedure.query(async () => {
       const token = await getXeroToken();
+      const scope = token?.scope ?? null;
+      const hasAttachmentsScope = scope ? scope.includes("accounting.attachments") : false;
       return {
         connected: !!token,
         tenantName: token?.tenantName ?? null,
         expiresAt: token?.expiresAt ?? null,
+        scope,
+        hasAttachmentsScope,
       };
     }),
 
