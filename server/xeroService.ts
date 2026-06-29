@@ -18,7 +18,7 @@ export function getXeroAuthUrl(
     // accounting.transactions was retired for apps created after 2 March 2026.
     // Use granular scopes instead: invoices covers bills/POs/credit notes;
     // payments covers bill payments; contacts covers suppliers.
-    scope: "openid profile email accounting.invoices accounting.contacts accounting.payments accounting.settings offline_access",
+    scope: "openid profile email accounting.invoices accounting.contacts accounting.payments accounting.settings accounting.attachments offline_access",
     state,
   });
   return `${XERO_AUTH_URL}?${params.toString()}`;
