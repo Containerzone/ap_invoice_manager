@@ -6,9 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatRelativeTime } from "@/lib/invoiceUtils";
-import { Upload, Search, FileText, Filter, Users, ChevronUp, ChevronDown, ChevronsUpDown, X } from "lucide-react";
+import { Upload, Search, FileText, Filter, Users, ChevronUp, ChevronDown, ChevronsUpDown, X, MessageSquare, StickyNote } from "lucide-react";
 
 // ── Status options ────────────────────────────────────────────────────────────
 const STATUS_OPTIONS = [
@@ -26,10 +27,11 @@ const STATUS_OPTIONS = [
   { value: "queried_5th", label: "5th Query Sent" },
   { value: "resolved", label: "Resolved" },
   { value: "duplicate", label: "Duplicate" },
+  { value: "archived", label: "Archived" },
 ];
 
 // ── Sort config ───────────────────────────────────────────────────────────────
-type SortKey = "invoiceNumber" | "poNumber" | "supplier" | "issueDate" | "dueDate" | "received" | "status";
+type SortKey = "invoiceNumber" | "poNumber" | "supplier" | "amount" | "issueDate" | "dueDate" | "received" | "status";
 type SortDir = "asc" | "desc";
 
 function formatShortDate(dateStr: string | null | undefined): string {
@@ -41,11 +43,19 @@ function formatShortDate(dateStr: string | null | undefined): string {
   }
 }
 
+function formatCurrency(amount: string | number | null | undefined): string {
+  if (amount == null || amount === "") return "—";
+  const num = typeof amount === "string" ? parseFloat(amount) : amount;
+  if (isNaN(num)) return "—";
+  return `$${num.toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function getSortValue(invoice: any, key: SortKey): string | number {
   switch (key) {
     case "invoiceNumber": return invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `${invoice.id}`;
     case "poNumber": return invoice.extractedPoNumber ?? "";
     case "supplier": return invoice.extractedSupplierName ?? "";
+    case "amount": return invoice.extractedTotal ? parseFloat(invoice.extractedTotal) : 0;
     case "issueDate": return invoice.extractedInvoiceDate ? new Date(invoice.extractedInvoiceDate).getTime() : 0;
     case "dueDate": return invoice.extractedDueDate ? new Date(invoice.extractedDueDate).getTime() : 0;
     case "received": return invoice.createdAt ? new Date(invoice.createdAt).getTime() : 0;
@@ -282,85 +292,120 @@ export default function InvoiceList() {
             )}
           </CardContent>
         ) : (
-          <>
-            {/* Desktop table header — sortable */}
-            <div className="hidden xl:grid grid-cols-[1.4fr_0.9fr_1.2fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
-              <SortHeader col="invoiceNumber" label="Invoice #" />
-              <SortHeader col="poNumber" label="PO Number" />
-              <SortHeader col="supplier" label="Supplier" />
-              <SortHeader col="issueDate" label="Issue Date" />
-              <SortHeader col="dueDate" label="Due Date" />
-              <SortHeader col="received" label="Received" />
-              <SortHeader col="status" label="Status" />
-            </div>
-            {/* Tablet header */}
-            <div className="xl:hidden hidden md:grid grid-cols-[1fr_1fr_1fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
-              <SortHeader col="invoiceNumber" label="Invoice #" />
-              <SortHeader col="supplier" label="Supplier" />
-              <SortHeader col="issueDate" label="Issue Date" />
-              <SortHeader col="status" label="Status" />
-            </div>
+          <TooltipProvider>
+            <>
+              {/* Desktop table header — sortable */}
+              <div className="hidden xl:grid grid-cols-[1.3fr_0.8fr_1.1fr_0.7fr_0.7fr_0.7fr_0.7fr_0.5fr_0.9fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
+                <SortHeader col="invoiceNumber" label="Invoice #" />
+                <SortHeader col="poNumber" label="PO Number" />
+                <SortHeader col="supplier" label="Supplier" />
+                <SortHeader col="amount" label="Amount" />
+                <SortHeader col="issueDate" label="Issue Date" />
+                <SortHeader col="dueDate" label="Due Date" />
+                <SortHeader col="received" label="Received" />
+                <span className="uppercase tracking-wider text-xs font-medium text-muted-foreground">Notes</span>
+                <SortHeader col="status" label="Status" />
+              </div>
+              {/* Tablet header */}
+              <div className="xl:hidden hidden md:grid grid-cols-[1fr_1fr_0.7fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
+                <SortHeader col="invoiceNumber" label="Invoice #" />
+                <SortHeader col="supplier" label="Supplier" />
+                <SortHeader col="amount" label="Amount" />
+                <SortHeader col="status" label="Status" />
+              </div>
 
-            <div className="divide-y divide-border">
-              {displayedInvoices.map((invoice) => (
-                <div
-                  key={invoice.id}
-                  className={`grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1fr] xl:grid-cols-[1.4fr_0.9fr_1.2fr_0.8fr_0.8fr_0.8fr_1fr] gap-2 md:gap-3 items-center px-5 py-3.5 hover:bg-muted/20 cursor-pointer transition-colors ${invoice.status === "resolved" ? "opacity-60" : ""}`}
-                  onClick={() => window.open(`/invoices/${invoice.id}`, '_blank', 'noopener,noreferrer')}
-                >
-                  {/* Col 1: Invoice # */}
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center shrink-0 hidden sm:flex">
-                      <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+              <div className="divide-y divide-border">
+                {displayedInvoices.map((invoice) => (
+                  <div
+                    key={invoice.id}
+                    className={`grid grid-cols-1 md:grid-cols-[1fr_1fr_0.7fr_1fr] xl:grid-cols-[1.3fr_0.8fr_1.1fr_0.7fr_0.7fr_0.7fr_0.7fr_0.5fr_0.9fr] gap-2 md:gap-3 items-center px-5 py-3.5 hover:bg-muted/20 cursor-pointer transition-colors ${invoice.status === "resolved" ? "opacity-60" : ""}`}
+                    onClick={() => window.open(`/invoices/${invoice.id}`, '_blank', 'noopener,noreferrer')}
+                  >
+                    {/* Col 1: Invoice # */}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center shrink-0 hidden sm:flex">
+                        <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">
+                          {invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `#${invoice.id}`}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate xl:hidden">
+                          {invoice.extractedPoNumber ?? "No PO"}
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">
-                        {invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `#${invoice.id}`}
-                      </p>
-                      <p className="text-xs text-muted-foreground truncate xl:hidden">
-                        {invoice.extractedPoNumber ?? "No PO"}
-                      </p>
+
+                    {/* Col 2: PO Number (desktop only) */}
+                    <span className="text-sm text-foreground truncate hidden xl:block">
+                      {invoice.extractedPoNumber ?? "—"}
+                    </span>
+
+                    {/* Col 3: Supplier */}
+                    <span className="text-sm text-foreground truncate hidden md:block">
+                      {invoice.extractedSupplierName ?? "—"}
+                    </span>
+
+                    {/* Col 4: Amount (GST-inclusive) */}
+                    <span className="text-sm font-medium text-foreground hidden md:block">
+                      {formatCurrency(invoice.extractedTotal)}
+                    </span>
+
+                    {/* Col 5: Issue Date */}
+                    <span className="text-xs text-muted-foreground hidden xl:block">
+                      {formatShortDate(invoice.extractedInvoiceDate)}
+                    </span>
+
+                    {/* Col 6: Due Date (desktop only) */}
+                    <span className="text-xs text-muted-foreground hidden xl:block">
+                      {formatShortDate(invoice.extractedDueDate)}
+                    </span>
+
+                    {/* Col 7: Received Date (desktop only) */}
+                    <span className="text-xs text-muted-foreground hidden xl:block">
+                      {formatRelativeTime(invoice.createdAt)}
+                    </span>
+
+                    {/* Col 8: Notes icons */}
+                    <div className="hidden xl:flex items-center gap-1.5">
+                      {(invoice as any).queryNoteCount > 0 && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex items-center gap-0.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                              <MessageSquare className="h-3 w-3" />
+                              {(invoice as any).queryNoteCount}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Query Notes ({(invoice as any).queryNoteCount})</TooltipContent>
+                        </Tooltip>
+                      )}
+                      {(invoice as any).internalNoteCount > 0 && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex items-center gap-0.5 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
+                              <StickyNote className="h-3 w-3" />
+                              {(invoice as any).internalNoteCount}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Internal Notes ({(invoice as any).internalNoteCount})</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+
+                    {/* Col 9: Status */}
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={invoice.status} size="sm" />
+                      {invoice.hasDiscrepancy && (
+                        <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full hidden lg:inline">
+                          Δ
+                        </span>
+                      )}
                     </div>
                   </div>
-
-                  {/* Col 2: PO Number (desktop only) */}
-                  <span className="text-sm text-foreground truncate hidden xl:block">
-                    {invoice.extractedPoNumber ?? "—"}
-                  </span>
-
-                  {/* Col 3: Supplier */}
-                  <span className="text-sm text-foreground truncate hidden md:block">
-                    {invoice.extractedSupplierName ?? "—"}
-                  </span>
-
-                  {/* Col 4: Issue Date */}
-                  <span className="text-xs text-muted-foreground hidden md:block">
-                    {formatShortDate(invoice.extractedInvoiceDate)}
-                  </span>
-
-                  {/* Col 5: Due Date (desktop only) */}
-                  <span className="text-xs text-muted-foreground hidden xl:block">
-                    {formatShortDate(invoice.extractedDueDate)}
-                  </span>
-
-                  {/* Col 6: Received Date (desktop only) */}
-                  <span className="text-xs text-muted-foreground hidden xl:block">
-                    {formatRelativeTime(invoice.createdAt)}
-                  </span>
-
-                  {/* Col 7: Status */}
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={invoice.status} size="sm" />
-                    {invoice.hasDiscrepancy && (
-                      <span className="text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full hidden lg:inline">
-                        Δ
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
+                ))}
+              </div>
+            </>
+          </TooltipProvider>
         )}
       </Card>
     </div>

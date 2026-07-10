@@ -172,6 +172,7 @@ export async function getAllInvoices(filters?: {
   status?: string;
   supplierId?: number;
   search?: string;
+  includeArchived?: boolean;
 }): Promise<Invoice[]> {
   const db = await getDb();
   if (!db) return [];
@@ -188,11 +189,37 @@ export async function getAllInvoices(filters?: {
       )
     );
   }
+  // Exclude archived invoices by default
+  if (!filters?.includeArchived) {
+    conditions.push(isNull(invoices.archivedAt));
+  }
   const query = db.select().from(invoices).orderBy(desc(invoices.createdAt));
   if (conditions.length > 0) {
     return query.where(and(...conditions));
   }
   return query;
+}
+
+// Get archived invoices (for archive view)
+export async function getArchivedInvoices(): Promise<Invoice[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(invoices)
+    .where(sql`${invoices.archivedAt} IS NOT NULL`)
+    .orderBy(desc(invoices.archivedAt));
+}
+
+// Delete invoices archived more than N days ago
+export async function deleteOldArchivedInvoices(daysOld: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const cutoff = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000);
+  const result = await db.delete(invoices)
+    .where(and(
+      sql`${invoices.archivedAt} IS NOT NULL`,
+      lt(invoices.archivedAt, cutoff)
+    ));
+  return (result as any)[0]?.affectedRows ?? 0;
 }
 
 export async function updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<void> {

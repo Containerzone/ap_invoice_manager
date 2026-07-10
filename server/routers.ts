@@ -58,7 +58,7 @@ import {
 import { sendDisputeEmail, generateDisputeEmailTemplate, sendInviteEmail } from "./emailService";
 import { ENV } from "./_core/env";
 import { poRequests } from "../drizzle/schema";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 
 // ─── Admin guard ──────────────────────────────────────────────────────────────
 
@@ -385,9 +385,41 @@ export const appRouter = router({
           status: z.string().optional(),
           supplierId: z.number().optional(),
           search: z.string().optional(),
+          includeArchived: z.boolean().optional(),
         }).optional()
       )
-      .query(({ input }) => getAllInvoices(input)),
+      .query(async ({ input }) => {
+        const allInvoices = await getAllInvoices(input);
+        if (allInvoices.length === 0) return [];
+
+        // Batch-fetch note counts per invoice (query notes = email_sent/email_received, internal = note/status_change/system)
+        const db = await (await import("./db")).getDb();
+        if (!db) return allInvoices.map((inv) => ({ ...inv, queryNoteCount: 0, internalNoteCount: 0 }));
+
+        const { conversationNotes } = await import("../drizzle/schema");
+        const invoiceIds = allInvoices.map((inv) => inv.id);
+        const allNotes = await db
+          .select({ invoiceId: conversationNotes.invoiceId, type: conversationNotes.type })
+          .from(conversationNotes)
+          .where(inArray(conversationNotes.invoiceId, invoiceIds));
+
+        // Build counts per invoice
+        const queryNoteCounts = new Map<number, number>();
+        const internalNoteCounts = new Map<number, number>();
+        for (const n of allNotes) {
+          if (n.type === "email_sent" || n.type === "email_received") {
+            queryNoteCounts.set(n.invoiceId, (queryNoteCounts.get(n.invoiceId) ?? 0) + 1);
+          } else if (n.type === "note" || n.type === "status_change" || n.type === "system") {
+            internalNoteCounts.set(n.invoiceId, (internalNoteCounts.get(n.invoiceId) ?? 0) + 1);
+          }
+        }
+
+        return allInvoices.map((inv) => ({
+          ...inv,
+          queryNoteCount: queryNoteCounts.get(inv.id) ?? 0,
+          internalNoteCount: internalNoteCounts.get(inv.id) ?? 0,
+        }));
+      }),
 
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
@@ -1617,9 +1649,17 @@ export const appRouter = router({
         const invoice = await getInvoiceById(input.invoiceId);
         if (!invoice) throw new TRPCError({ code: "NOT_FOUND" });
 
-        // ── Workflow guard: must be approved (staff or admin) before resolving/pushing ───────
+        // ── Workflow guard ───────────────────────────────────────────────────────
+        // Normal path: must be approved before resolving/pushing
+        // Exception: Admin can push no-PO invoices under $500 (GST-inclusive) directly
         const approvedStatuses = ["approved", "resolved"];
-        if (!approvedStatuses.includes(invoice.status as string)) {
+        const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
+        const primaryPo = invoice.extractedPoNumber;
+        const hasPoNumbers = (extractedPoNumbersJson && extractedPoNumbersJson.length > 0) || !!primaryPo;
+        const invoiceTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
+        const isAdminNoPo = ctx.user.role === "admin" && !hasPoNumbers && invoiceTotal < 500;
+
+        if (!approvedStatuses.includes(invoice.status as string) && !isAdminNoPo) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "Invoice must be approved before it can be resolved and pushed to Xero.",
@@ -1631,8 +1671,6 @@ export const appRouter = router({
         // Collect all PO numbers up front (used for reference field and marking as Billed)
         // Manual PO list takes priority — do not merge raw data scan
         const rawData = invoice.extractedRawData as any;
-        const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
-        const primaryPo = invoice.extractedPoNumber;
         const allPoNumbers: string[] = extractedPoNumbersJson && extractedPoNumbersJson.length > 0
           ? Array.from(new Set(extractedPoNumbersJson.map(p => p.trim()).filter(Boolean)))
           : primaryPo
@@ -1803,6 +1841,9 @@ export const appRouter = router({
             : `Invoice resolved. ${input.resolutionNotes ?? ""}`,
           metadata: { xeroResult, poNumbers: allPoNumbers, xeroStatus, attachmentUploaded, attachmentError },
         });
+
+        // Archive the invoice immediately (will be auto-deleted after 90 days)
+        await updateInvoice(input.invoiceId, { archivedAt: new Date() } as any);
 
         return { success: true, xeroResult, attachmentUploaded, attachmentError };
       }),

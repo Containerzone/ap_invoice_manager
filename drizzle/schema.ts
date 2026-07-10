@@ -73,6 +73,7 @@ export const invoices = mysqlTable("invoices", {
     "queried_5th",
     "resolved",
     "duplicate",
+    "archived",
   ])
     .default("uploaded")
     .notNull(),
@@ -143,6 +144,9 @@ export const invoices = mysqlTable("invoices", {
   xeroFinalBillId: varchar("xeroFinalBillId", { length: 64 }),
   xeroFinalBillNumber: varchar("xeroFinalBillNumber", { length: 100 }),
   pdfAttachedToXero: boolean("pdfAttachedToXero").default(false),
+
+  // Archive (paid invoices)
+  archivedAt: timestamp("archivedAt"),
 
   // Metadata
   uploadedBy: int("uploadedBy").notNull(),

@@ -203,3 +203,10 @@
 
 ## Features (Session 17)
 - [x] Attach original invoice PDF to Xero bill's related files when invoice is approved and pushed to Xero
+
+## Features (Session 18)
+- [x] Fix PDF attachment 401 error: added accounting.attachments scope detection + Settings page warning when token lacks the scope
+- [x] Invoices list: add GST-inclusive total amount column
+- [x] Invoices list: add notes icons — QN for query notes, IN for internal notes
+- [x] Admin can resolve/push no-PO invoices under $500 to Xero without PO matching
+- [x] Archive paid invoices: hide from main list, auto-delete 90 days after payment date

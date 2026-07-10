@@ -46,6 +46,10 @@ async function startServer() {
       createContext,
     })
   );
+  // ── Scheduled task handlers (/api/scheduled/*) ─────────────────────────────
+  const { archiveCleanupHandler } = await import("../scheduledHandlers");
+  app.post("/api/scheduled/archive-cleanup", archiveCleanupHandler);
+
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);

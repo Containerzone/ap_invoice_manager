@@ -1,0 +1,2 @@
+ALTER TABLE `invoices` MODIFY COLUMN `status` enum('uploaded','extracting','extracted','verified','under_budget','approved','flagged','queried','queried_2nd','queried_3rd','queried_4th','queried_5th','resolved','duplicate','archived') NOT NULL DEFAULT 'uploaded';--> statement-breakpoint
+ALTER TABLE `invoices` ADD `archivedAt` timestamp;

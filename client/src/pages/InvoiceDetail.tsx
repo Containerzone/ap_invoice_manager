@@ -986,6 +986,14 @@ export default function InvoiceDetail() {
             </Button>
           )}
 
+          {/* Admin-only: push no-PO invoices under $500 directly (skip approval) */}
+          {!canResolve && !editMode && user?.role === "admin" && viewPoNumbers.length === 0 && invoiceTotal < 500 && invoice.status !== "resolved" && (
+            <Button size="sm" className="gap-2 bg-sky-600 hover:bg-sky-700 text-white" onClick={() => setShowResolveDialog(true)}>
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Push to Xero (No PO &lt; $500)
+            </Button>
+          )}
+
           {user?.role === "admin" && !editMode && (
             <Button variant="outline" size="sm" className="gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300" onClick={() => setShowDeleteDialog(true)}>
               <Trash2 className="h-3.5 w-3.5" />
