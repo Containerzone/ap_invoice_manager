@@ -1740,13 +1740,13 @@ export const appRouter = router({
                       description: li.description ?? "Service",
                       quantity: parseFloat(li.quantity?.toString() ?? "1"),
                       unitAmount: parseFloat(li.unitPrice?.toString() ?? li.amount?.toString() ?? "0"),
-                      accountCode: li.accountCode ?? "300",
+                      accountCode: li.accountCode ?? "429",
                     }))
                   : [{
                       description: `Invoice ${invoice.extractedInvoiceNumber ?? "N/A"}`,
                       quantity: 1,
                       unitAmount: extractedTotal,
-                      accountCode: "300",
+                      accountCode: "429",
                     }];
 
                 console.log(`[Resolve] Using createXeroDraftBill (no POs), lineItems=${xeroLineItems.length}`);
