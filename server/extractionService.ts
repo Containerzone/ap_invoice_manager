@@ -81,11 +81,11 @@ async function fetchPdfAsBase64(fileKey: string): Promise<string> {
  */
 export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string): string | null {
   // Pattern: 1-2 uppercase letters + exactly 6 digits, as a whole word/token
-  const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
 
   // Priority 1: if LLM already found a poNumber, validate it matches pattern
   if (data.poNumber) {
-    const match = data.poNumber.match(/^[A-Z]{1,2}\d{6}$/);
+    const match = data.poNumber.match(/^[A-Z]{1,2}\d{4,6}$/);
     if (match) return data.poNumber;
     // LLM found something but it doesn't match — still search below
   }
@@ -123,18 +123,18 @@ export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string)
  */
 export function extractAllPoNumbers(data: ExtractedInvoiceData | null | undefined, rawText?: string): string[] {
   if (!data) return [];
-  const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
   const found = new Set<string>();
 
   // From LLM-identified top-level poNumber
-  if (data.poNumber && /^[A-Z]{1,2}\d{6}$/.test(data.poNumber)) {
+  if (data.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(data.poNumber)) {
     found.add(data.poNumber);
   }
 
   // From all line items — check description, poNumber field, and custRef
   for (const li of (data.lineItems ?? [])) {
     // Per-line-item poNumber (structured field — most reliable)
-    if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) {
+    if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) {
       found.add(li.poNumber);
     }
     // Per-line-item custRef (may contain container + PO, e.g. "CBHU4279322 P702739")

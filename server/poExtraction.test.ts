@@ -76,9 +76,9 @@ describe("applyPoNumberRegex", () => {
     expect(applyPoNumberRegex(data)).toBeNull();
   });
 
-  it("does not match 5-digit numbers (too short)", () => {
-    const data = makeData({ notes: "Reference AD12345 is not a valid PO" });
-    expect(applyPoNumberRegex(data)).toBeNull();
+  it("matches 5-digit numbers (e.g. GC1805 style)", () => {
+    const data = makeData({ notes: "Reference AD12345 is a valid short PO" });
+    expect(applyPoNumberRegex(data)).toBe("AD12345");
   });
 
   it("does not match 7-digit numbers (too long)", () => {
@@ -143,7 +143,7 @@ describe("extractAllPoNumbers — single-letter prefix support", () => {
 
 describe("Multi-PO line-item grouping helper", () => {
   // Replicates the getGroupedLineItemTotal logic from routers.ts
-  const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
 
   function getGroupedLineItemTotal(
     poNum: string,

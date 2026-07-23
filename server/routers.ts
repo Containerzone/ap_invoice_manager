@@ -97,16 +97,16 @@ async function refreshXeroPoResults(
     // on the invoice. extractedPoNumbers (LLM header scan) can misread letters
     // (e.g. DD→BD), so we never use it as the primary PO list source.
     const lineItems = await getLineItemsByInvoice(invoiceId);
-    const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+    const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
     const poFromLineItems = new Set<string>();
     for (const li of lineItems) {
       // Rule: poNumberEdited=true means the user manually corrected this PO number.
       // Always use the edited value and skip custRef/description scan for this line.
-      if ((li as any).poNumberEdited && li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) {
+      if ((li as any).poNumberEdited && li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) {
         poFromLineItems.add(li.poNumber);
         continue; // do not also scan custRef/description — edited value is authoritative
       }
-      if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) {
+      if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) {
         poFromLineItems.add(li.poNumber);
       } else if ((li as any).custRef) {
         const m = ((li as any).custRef as string).match(PO_PATTERN);
@@ -143,10 +143,10 @@ async function refreshXeroPoResults(
         }
         if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
         if ((li as any).custRef) {
-          const custRefMatches = ((li as any).custRef as string).match(/\b([A-Z]{1,2}\d{6})\b/g) ?? [];
+          const custRefMatches = ((li as any).custRef as string).match(/\b([A-Z]{1,2}\d{4,6})\b/g) ?? [];
           if (custRefMatches.map((m: string) => m.toUpperCase()).includes(poNum.toUpperCase())) return true;
         }
-        const descMatches = (li.description?.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map((m: string) => m.toUpperCase());
+        const descMatches = (li.description?.match(/\b([A-Z]{1,2}\d{4,6})\b/g) ?? []).map((m: string) => m.toUpperCase());
         return descMatches.includes(poNum.toUpperCase());
       });
       if (tagged.length === 0) return null; // No fallback to invoice total
@@ -547,11 +547,11 @@ export const appRouter = router({
         // 2. Per-line-item custRef field (e.g. "CBHU4279322 P702739")
         // 3. Description text scan
         // 4. Notes and invoice number fields
-        const PO_SCAN_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+        const PO_SCAN_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
         const poFromLineItems = new Set<string>();
         for (const li of extracted.lineItems) {
           // Structured per-line PO number (highest priority)
-          if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) {
+          if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) {
             poFromLineItems.add(li.poNumber);
           }
           // custRef scan (e.g. "CBHU4279322 P702739" — extract the PO token)
@@ -706,7 +706,7 @@ export const appRouter = router({
         // PO pattern: 1-2 uppercase letters + exactly 6 digits
         // Known supplier prefixes: P (Pacific National), SL (Straitlink), AZ (Aurizon), TR (Tasmanian Railways)
         // Plus any other 1-2 letter prefix (AD, BD, DD, ED, A, B, D, E, etc.)
-        const PO_PATTERN = /\b([A-Z]{1,2}\d{6})\b/g;
+        const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
 
         const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
 
@@ -719,13 +719,13 @@ export const appRouter = router({
           // Rule: poNumberEdited=true means the user manually corrected this PO number.
           // Always use the edited value and skip custRef/description scan for this line.
           if ((li as any).poNumberEdited) {
-            if ((li as any).poNumber && /^[A-Z]{1,2}\d{6}$/.test((li as any).poNumber)) {
+            if ((li as any).poNumber && /^[A-Z]{1,2}\d{4,6}$/.test((li as any).poNumber)) {
               poFromDbLineItems.add((li as any).poNumber);
             }
             continue; // edited value is authoritative — do not also scan custRef/description
           }
           // Priority 1: structured per-line poNumber field (e.g. from Cust Ref column)
-          if ((li as any).poNumber && /^[A-Z]{1,2}\d{6}$/.test((li as any).poNumber)) {
+          if ((li as any).poNumber && /^[A-Z]{1,2}\d{4,6}$/.test((li as any).poNumber)) {
             poFromDbLineItems.add((li as any).poNumber);
           }
           // Priority 2: custRef field scan (e.g. "CBHU4279322 P702739")
@@ -1068,14 +1068,14 @@ export const appRouter = router({
         // Within threshold — check for PO conflicts before approving
         // Build PO list from line items (source of truth), fall back to extractedPoNumbers
         const staffLineItemsPre = await getLineItemsByInvoice(input.invoiceId);
-        const staffPoPatternPre = /\b([A-Z]{1,2}\d{6})\b/g;
+        const staffPoPatternPre = /\b([A-Z]{1,2}\d{4,6})\b/g;
         const staffPoFromLineItemsPre = new Set<string>();
         for (const li of staffLineItemsPre) {
           if ((li as any).poNumberEdited) {
-            if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsPre.add(li.poNumber);
+            if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) staffPoFromLineItemsPre.add(li.poNumber);
             continue; // edited value is authoritative
           }
-          if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsPre.add(li.poNumber);
+          if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) staffPoFromLineItemsPre.add(li.poNumber);
           else if (li.custRef) { const m = li.custRef.match(staffPoPatternPre); if (m) m.forEach((p) => staffPoFromLineItemsPre.add(p)); }
           else if (li.description) { const m = li.description.match(staffPoPatternPre); if (m) m.forEach((p) => staffPoFromLineItemsPre.add(p)); }
         }
@@ -1122,14 +1122,14 @@ export const appRouter = router({
         const staffClientSecret = process.env.XERO_CLIENT_SECRET;
 
         // Build PO list from line items (source of truth), fall back to extractedPoNumbers
-        const staffPoPatternXero = /\b([A-Z]{1,2}\d{6})\b/g;
+        const staffPoPatternXero = /\b([A-Z]{1,2}\d{4,6})\b/g;
         const staffPoFromLineItemsXero = new Set<string>();
         for (const li of staffLineItemsPre) {
           if ((li as any).poNumberEdited) {
-            if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsXero.add(li.poNumber);
+            if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) staffPoFromLineItemsXero.add(li.poNumber);
             continue; // edited value is authoritative
           }
-          if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) staffPoFromLineItemsXero.add(li.poNumber);
+          if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) staffPoFromLineItemsXero.add(li.poNumber);
           else if (li.custRef) { const m = li.custRef.match(staffPoPatternXero); if (m) m.forEach((p) => staffPoFromLineItemsXero.add(p)); }
           else if (li.description) { const m = li.description.match(staffPoPatternXero); if (m) m.forEach((p) => staffPoFromLineItemsXero.add(p)); }
         }
@@ -1145,18 +1145,18 @@ export const appRouter = router({
           const staffSupplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
           const staffSupplierName = staffSupplier?.name ?? invoice.extractedSupplierName ?? undefined;
           const staffLineItems = staffLineItemsPre; // already fetched above
-          const PO_REGEX_STAFF = /\b([A-Z]{1,2}\d{6})\b/g;
+          const PO_REGEX_STAFF = /\b([A-Z]{1,2}\d{4,6})\b/g;
           console.log(`[StaffApproval] Updating ${staffPoNumbers.length} PO(s) in Xero:`, staffPoNumbers);
           for (const poNum of staffPoNumbers) {
             // Filter line items to only those belonging to this PO
             const poLineItems = staffLineItems.filter((li) => {
               if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
               if (li.custRef) {
-                const matches = (li.custRef.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map(m => m.toUpperCase());
+                const matches = (li.custRef.match(/\b([A-Z]{1,2}\d{4,6})\b/g) ?? []).map(m => m.toUpperCase());
                 if (matches.includes(poNum.toUpperCase())) return true;
               }
               if (li.description) {
-                const matches = (li.description.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map(m => m.toUpperCase());
+                const matches = (li.description.match(/\b([A-Z]{1,2}\d{4,6})\b/g) ?? []).map(m => m.toUpperCase());
                 if (matches.includes(poNum.toUpperCase())) return true;
               }
               return false;
@@ -1240,14 +1240,14 @@ export const appRouter = router({
         // ── 1. Resolve PO numbers from line items (source of truth) ────────────────
         // Build from line items first; fall back to extractedPoNumbers only when no line items exist
         const adminLineItemsForPo = await getLineItemsByInvoice(input.invoiceId);
-        const adminPoPattern = /\b([A-Z]{1,2}\d{6})\b/g;
+        const adminPoPattern = /\b([A-Z]{1,2}\d{4,6})\b/g;
         const adminPoFromLineItems = new Set<string>();
         for (const li of adminLineItemsForPo) {
           if ((li as any).poNumberEdited) {
-            if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) adminPoFromLineItems.add(li.poNumber);
+            if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) adminPoFromLineItems.add(li.poNumber);
             continue; // edited value is authoritative
           }
-          if (li.poNumber && /^[A-Z]{1,2}\d{6}$/.test(li.poNumber)) adminPoFromLineItems.add(li.poNumber);
+          if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) adminPoFromLineItems.add(li.poNumber);
           else if (li.custRef) { const m = li.custRef.match(adminPoPattern); if (m) m.forEach((p) => adminPoFromLineItems.add(p)); }
           else if (li.description) { const m = li.description.match(adminPoPattern); if (m) m.forEach((p) => adminPoFromLineItems.add(p)); }
         }
@@ -1298,11 +1298,11 @@ export const appRouter = router({
             const poLineItems = lineItems.filter((li) => {
               if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
               if (li.custRef) {
-                const matches = (li.custRef.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map(m => m.toUpperCase());
+                const matches = (li.custRef.match(/\b([A-Z]{1,2}\d{4,6})\b/g) ?? []).map(m => m.toUpperCase());
                 if (matches.includes(poNum.toUpperCase())) return true;
               }
               if (li.description) {
-                const matches = (li.description.match(/\b([A-Z]{1,2}\d{6})\b/g) ?? []).map(m => m.toUpperCase());
+                const matches = (li.description.match(/\b([A-Z]{1,2}\d{4,6})\b/g) ?? []).map(m => m.toUpperCase());
                 if (matches.includes(poNum.toUpperCase())) return true;
               }
               return false;
