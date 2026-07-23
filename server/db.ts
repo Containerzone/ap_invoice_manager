@@ -177,7 +177,8 @@ export async function getAllInvoices(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
-  if (filters?.status) conditions.push(eq(invoices.status, filters.status as any));
+  const isArchivedFilter = filters?.status === "archived";
+  if (filters?.status && !isArchivedFilter) conditions.push(eq(invoices.status, filters.status as any));
   if (filters?.supplierId) conditions.push(eq(invoices.supplierId, filters.supplierId));
   if (filters?.search) {
     conditions.push(
@@ -189,8 +190,11 @@ export async function getAllInvoices(filters?: {
       )
     );
   }
-  // Exclude archived invoices by default
-  if (!filters?.includeArchived) {
+  if (isArchivedFilter) {
+    // Show only archived invoices (archivedAt IS NOT NULL)
+    conditions.push(sql`${invoices.archivedAt} IS NOT NULL`);
+  } else if (!filters?.includeArchived) {
+    // Default: exclude archived invoices
     conditions.push(isNull(invoices.archivedAt));
   }
   const query = db.select().from(invoices).orderBy(desc(invoices.createdAt));
