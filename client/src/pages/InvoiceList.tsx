@@ -160,23 +160,39 @@ export default function InvoiceList() {
   const [sortKey, setSortKey] = useState<SortKey>("received");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  // If "archived" is one of the selected statuses, we need to fetch archived records from the backend
+  const isArchivedSelected = selectedStatuses.has("archived");
+  const isOnlyArchivedSelected = isArchivedSelected && selectedStatuses.size === 1;
+
   const { data: invoices, isLoading } = trpc.invoices.list.useQuery({
     search: search || undefined,
+    includeArchived: isArchivedSelected ? true : undefined,
   });
 
   // ── Client-side filter + sort ─────────────────────────────────────────────
   const displayedInvoices = useMemo(() => {
     if (!invoices) return [];
 
-    // 1. Status filter
-    let filtered = selectedStatuses.size === 0
-      ? invoices
-      : invoices.filter((inv) => selectedStatuses.has(inv.status ?? ""));
+    // 1. Status filter — archived invoices are identified by archivedAt being set
+    let filtered: typeof invoices;
+    if (selectedStatuses.size === 0) {
+      // No filter: exclude archived (archivedAt is null for normal invoices returned by backend)
+      filtered = invoices.filter((inv) => !(inv as any).archivedAt);
+    } else {
+      filtered = invoices.filter((inv) => {
+        const hasArchivedAt = !!(inv as any).archivedAt;
+        // For each selected status:
+        return Array.from(selectedStatuses).some((s) => {
+          if (s === "archived") return hasArchivedAt;
+          return inv.status === s && !hasArchivedAt;
+        });
+      });
+    }
 
-    // 2. Sort — resolved always goes to the bottom regardless of sort key
+    // 2. Sort — resolved/archived always goes to the bottom regardless of sort key
     filtered = [...filtered].sort((a, b) => {
-      const aResolved = a.status === "resolved";
-      const bResolved = b.status === "resolved";
+      const aResolved = a.status === "resolved" || !!(a as any).archivedAt;
+      const bResolved = b.status === "resolved" || !!(b as any).archivedAt;
       if (aResolved && !bResolved) return 1;
       if (!aResolved && bResolved) return -1;
 
