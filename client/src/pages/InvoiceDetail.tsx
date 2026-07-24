@@ -1598,8 +1598,8 @@ export default function InvoiceDetail() {
                           <th className="text-left pb-2.5 font-medium w-28">PO Ref</th>
                         )}
                         <th className="text-right pb-2.5 font-medium w-16">Qty</th>
-                        <th className="text-right pb-2.5 font-medium w-24">Unit Price</th>
-                        <th className="text-right pb-2.5 font-medium w-24">Amount</th>
+                        <th className="text-right pb-2.5 font-medium w-24">Unit Price <span className="text-muted-foreground font-normal">(Ex GST)</span></th>
+                        <th className="text-right pb-2.5 font-medium w-24">Amount <span className="text-muted-foreground font-normal">(Ex GST)</span></th>
                         {editMode && <th className="w-8"></th>}
                       </tr>
                     </thead>
@@ -1614,13 +1614,25 @@ export default function InvoiceDetail() {
                                  <Input value={(li as any).poNumber ?? ""} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, poNumber: e.target.value, poNumberEdited: true } : x))} className="h-7 text-xs w-28" placeholder="P702739" title="PO number for this line (editing marks this as authoritative)" />
                               </td>
                               <td className="py-1.5 pr-2">
-                                <Input value={li.quantity} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, quantity: e.target.value } : x))} className="h-7 text-xs text-right w-16" placeholder="1" />
+                                <Input value={li.quantity} onChange={(e) => {
+                                  const newQty = e.target.value;
+                                  const qty = parseFloat(newQty) || 1;
+                                  const price = parseFloat(li.unitPrice) || 0;
+                                  const calcAmount = (qty * price).toFixed(2);
+                                  setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, quantity: newQty, amount: calcAmount } : x));
+                                }} className="h-7 text-xs text-right w-16" placeholder="1" />
                               </td>
                               <td className="py-1.5 pr-2">
-                                <Input value={li.unitPrice} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, unitPrice: e.target.value } : x))} className="h-7 text-xs text-right w-24" placeholder="0.00" />
+                                <Input value={li.unitPrice} onChange={(e) => {
+                                  const newUnitPrice = e.target.value;
+                                  const qty = parseFloat(li.quantity) || 1;
+                                  const price = parseFloat(newUnitPrice) || 0;
+                                  const calcAmount = (qty * price).toFixed(2);
+                                  setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, unitPrice: newUnitPrice, amount: calcAmount } : x));
+                                }} className="h-7 text-xs text-right w-24" placeholder="0.00" />
                               </td>
                               <td className="py-1.5">
-                                <Input value={li.amount} onChange={(e) => setEditLineItems(items => items.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))} className="h-7 text-xs text-right w-24" placeholder="0.00" />
+                                <Input value={li.amount} readOnly className="h-7 text-xs text-right w-24 bg-muted/50" placeholder="0.00" title="Auto-calculated: Qty × Unit Price" />
                               </td>
                               <td className="py-1.5 pl-1">
                                 <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDeleteLineItem(li.id)} disabled={deleteLineItemMutation.isPending} title="Delete line">

@@ -210,3 +210,7 @@
 - [x] Invoices list: add notes icons — QN for query notes, IN for internal notes
 - [x] Admin can resolve/push no-PO invoices under $500 to Xero without PO matching
 - [x] Archive paid invoices: hide from main list, auto-delete 90 days after payment date
+
+## Line Item Calculation Fix (Session 18)
+- [x] Auto-calculate Amount = Qty × Unit Price in line items editor
+- [x] Add "Ex GST" label next to Unit Price and Amount column headers
