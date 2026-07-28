@@ -214,3 +214,7 @@
 ## Line Item Calculation Fix (Session 18)
 - [x] Auto-calculate Amount = Qty × Unit Price in line items editor
 - [x] Add "Ex GST" label next to Unit Price and Amount column headers
+
+## GST Fix (Session 18)
+- [x] Fix Vtiger PO creation: already correct (uses TaxType INPUT and LineAmountTypes Exclusive)
+- [x] Fix PO line items display: show assumed 10% GST when taxAmount is 0

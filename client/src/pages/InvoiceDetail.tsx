@@ -1531,7 +1531,7 @@ export default function InvoiceDetail() {
                                           </td>
                                           <td className="py-1 pr-3 text-right tabular-nums">{li.quantity}</td>
                                           <td className="py-1 pr-3 text-right tabular-nums">{formatCurrency(li.unitAmount)}</td>
-                                          <td className="py-1 text-right tabular-nums font-medium">{formatCurrency(li.lineAmount + (li.taxAmount ?? 0))}</td>
+                                          <td className="py-1 text-right tabular-nums font-medium">{formatCurrency(li.taxAmount ? li.lineAmount + li.taxAmount : li.lineAmount * 1.1)}</td>
                                         </tr>
                                       ))}
                                     </tbody>
