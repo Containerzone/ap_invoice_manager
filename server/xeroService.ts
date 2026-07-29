@@ -871,36 +871,45 @@ export async function updateXeroPODetails(
     contactPayload = { ContactID: updates.supplierXeroContactId };
     console.log(`[Xero] Using provided ContactID: ${updates.supplierXeroContactId}`);
   } else if (updates.supplierName) {
-    const contactSearch = await axios.get(`${XERO_API_BASE}/Contacts`, {
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        "Xero-tenant-id": auth.tenantId,
-        Accept: "application/json",
-      },
-      params: { searchTerm: updates.supplierName },
-    });
-    const contacts: any[] = contactSearch.data?.Contacts ?? [];
-    if (contacts.length > 0) {
-      contactPayload = { ContactID: contacts[0].ContactID };
-      console.log(`[Xero] Resolved contact "${updates.supplierName}" → ContactID=${contacts[0].ContactID}`);
-    } else {
-      console.log(`[Xero] Contact "${updates.supplierName}" not found — creating it`);
-      const createResp = await axios.post(
-        `${XERO_API_BASE}/Contacts`,
-        { Contacts: [{ Name: updates.supplierName }] },
-        {
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Xero-tenant-id": auth.tenantId,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-        }
-      );
-      const newContact = createResp.data?.Contacts?.[0];
-      if (!newContact?.ContactID) throw new Error(`Failed to create Xero contact for "${updates.supplierName}"`);
-      contactPayload = { ContactID: newContact.ContactID };
-      console.log(`[Xero] Created contact "${updates.supplierName}" → ContactID=${newContact.ContactID}`);
+    try {
+      const contactSearch = await axios.get(`${XERO_API_BASE}/Contacts`, {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+        params: { searchTerm: updates.supplierName },
+      });
+      const contacts: any[] = contactSearch.data?.Contacts ?? [];
+      if (contacts.length > 0) {
+        contactPayload = { ContactID: contacts[0].ContactID };
+        console.log(`[Xero] Resolved contact "${updates.supplierName}" → ContactID=${contacts[0].ContactID}`);
+      } else {
+        console.log(`[Xero] Contact "${updates.supplierName}" not found — creating it`);
+        const createResp = await axios.post(
+          `${XERO_API_BASE}/Contacts`,
+          { Contacts: [{ Name: updates.supplierName }] },
+          {
+            headers: {
+              Authorization: `Bearer ${auth.token}`,
+              "Xero-tenant-id": auth.tenantId,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+          }
+        );
+        const newContact = createResp.data?.Contacts?.[0];
+        if (!newContact?.ContactID) throw new Error(`Failed to create Xero contact for "${updates.supplierName}"`);
+        contactPayload = { ContactID: newContact.ContactID };
+        console.log(`[Xero] Created contact "${updates.supplierName}" → ContactID=${newContact.ContactID}`);
+      }
+    } catch (contactErr: any) {
+      const errData = contactErr?.response?.data;
+      const errMsg = errData?.Message || errData?.Detail || JSON.stringify(errData) || contactErr.message;
+      console.error(`[Xero] Contact resolution failed for "${updates.supplierName}":`, errMsg);
+      // Fall back to keeping the existing PO contact instead of failing entirely
+      console.log(`[Xero] Falling back to existing PO contact: ContactID=${po.Contact?.ContactID}`);
+      contactPayload = { ContactID: po.Contact?.ContactID };
     }
   } else {
     contactPayload = { ContactID: po.Contact?.ContactID };
