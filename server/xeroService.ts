@@ -208,11 +208,18 @@ async function findExistingXeroBill(
 
   /**
    * Check if a candidate Xero invoice is a valid match.
+   * MUST be ACCPAY (supplier bill), not ACCREC (customer invoice).
    * If supplierName is provided, BOTH invoice number AND supplier name must match.
-   * This prevents returning a different supplier's bill that happens to share the same invoice number.
+   * This prevents returning a different supplier's bill or a customer invoice that shares the same number.
    */
   const isMatch = (inv: any): boolean => {
     if (!inv || inv.Status === "VOIDED" || inv.Status === "DELETED") return false;
+    // CRITICAL: Only match ACCPAY (supplier bills). Ignore ACCREC (customer invoices)
+    // that happen to share the same invoice number.
+    if (inv.Type !== "ACCPAY") {
+      console.log(`[Xero] findExistingXeroBill: invoice ${invoiceNumber} found in Xero but is Type=${inv.Type} (not ACCPAY) — ignoring`);
+      return false;
+    }
     if (!supplierName) return true; // no supplier filter — match on invoice number alone
     const xeroContactName: string = inv.Contact?.Name ?? "";
     const matched = supplierNamesMatch(xeroContactName, supplierName);
@@ -232,12 +239,13 @@ async function findExistingXeroBill(
     if (isMatch(inv)) return inv;
   } catch { /* fall through */ }
   // Strategy 2: without Type filter (handles numeric invoice numbers Xero sometimes misses)
+  // Still enforces ACCPAY check via isMatch
   try {
     const r2 = await axios.get(`${XERO_API_BASE}/Invoices`, {
       headers,
       params: { InvoiceNumbers: invoiceNumber },
     });
-    const inv = r2.data?.Invoices?.find((i: any) => i.Type === "ACCPAY" && isMatch(i));
+    const inv = r2.data?.Invoices?.find((i: any) => isMatch(i));
     if (inv) return inv;
   } catch { /* fall through */ }
   return null;
@@ -301,17 +309,36 @@ export async function checkXeroBillDuplicate(
   const auth = await getValidAccessToken(clientId, clientSecret);
   if (!auth) return null;
   try {
-    const response = await axios.get(`${XERO_API_BASE}/Invoices`, {
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        "Xero-tenant-id": auth.tenantId,
-        Accept: "application/json",
-      },
-      params: { InvoiceNumbers: invoiceNumber, Type: "ACCPAY" },
-    });
-    const invoicesList = response.data?.Invoices ?? [];
-    if (invoicesList.length === 0) return null;
-    const inv = invoicesList[0];
+    // Strategy 1: with Type=ACCPAY filter
+    let inv: any = null;
+    try {
+      const response = await axios.get(`${XERO_API_BASE}/Invoices`, {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+        params: { InvoiceNumbers: invoiceNumber, Type: "ACCPAY" },
+      });
+      const invoicesList = response.data?.Invoices ?? [];
+      inv = invoicesList.find((i: any) => i.Type === "ACCPAY" && i.Status !== "VOIDED" && i.Status !== "DELETED") ?? null;
+    } catch { /* fall through to strategy 2 */ }
+    // Strategy 2: without Type filter (Xero sometimes ignores Type for numeric numbers)
+    if (!inv) {
+      try {
+        const response2 = await axios.get(`${XERO_API_BASE}/Invoices`, {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            Accept: "application/json",
+          },
+          params: { InvoiceNumbers: invoiceNumber },
+        });
+        const invoicesList2 = response2.data?.Invoices ?? [];
+        inv = invoicesList2.find((i: any) => i.Type === "ACCPAY" && i.Status !== "VOIDED" && i.Status !== "DELETED") ?? null;
+      } catch { /* fall through */ }
+    }
+    if (!inv) return null;
     const nameInXero: string = inv.Contact?.Name ?? "";
     // Fuzzy name match: normalise both names (lowercase, strip punctuation/common words)
     const normalise = (s: string) =>

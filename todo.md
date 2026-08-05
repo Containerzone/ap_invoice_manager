@@ -222,3 +222,7 @@
 ## Duplicate Invoice Number Fix (Session 18)
 - [x] Fix Xero duplicate check: only skip creation if BOTH invoice number AND supplier name match (currently skips on invoice number alone, causing wrong supplier's bill to be returned)
 - [x] Show warning alert before Xero push if another supplier's bill with the same invoice number already exists in Xero
+
+## ACCREC vs ACCPAY Fix (Session 18)
+- [x] Fix findExistingXeroBill to only match ACCPAY bills (ignore ACCREC customer invoices with same number)
+- [x] Fix checkXeroBillDuplicate to only flag ACCPAY bills (not customer invoices)
