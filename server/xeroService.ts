@@ -457,6 +457,7 @@ export async function createXeroDraftBill(
     currencyCode?: string;
     /** Xero invoice status. Defaults to DRAFT. Use AUTHORISED for AWAITING PAYMENT, SUBMITTED for AWAITING APPROVAL. */
     xeroStatus?: "DRAFT" | "SUBMITTED" | "AUTHORISED";
+    forceCreateNew?: boolean;
   },
   clientId: string,
   clientSecret: string
@@ -491,13 +492,15 @@ export async function createXeroDraftBill(
 
   try {
     // Pre-flight: check if a bill with this invoice number already exists in Xero.
-    // Uses findExistingXeroBill which tries both with and without Type=ACCPAY filter.
-    // Supplier name is passed so we only match if BOTH invoice number AND supplier match —
-    // prevents returning a different supplier's bill with the same invoice number.
-    const preFlight = await findExistingXeroBill(data.invoiceNumber, auth, data.supplierName);
-    if (preFlight) {
-      console.log(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in Xero for same supplier (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
-      return { invoiceId: preFlight.InvoiceID, invoiceNumber: preFlight.InvoiceNumber };
+    // Skip when forceCreateNew is set (user acknowledged invoice number conflict with different supplier).
+    if (!data.forceCreateNew) {
+      const preFlight = await findExistingXeroBill(data.invoiceNumber, auth, data.supplierName);
+      if (preFlight) {
+        console.log(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in Xero for same supplier (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
+        return { invoiceId: preFlight.InvoiceID, invoiceNumber: preFlight.InvoiceNumber };
+      }
+    } else {
+      console.log(`[Xero] createXeroDraftBill: forceCreateNew=true for ${data.invoiceNumber} — skipping pre-flight duplicate check`);
     }
 
     const response = await axios.post(
@@ -659,6 +662,7 @@ export async function convertPOsToBill(
     dueDate?: string;
     currencyCode?: string;
     xeroStatus?: "DRAFT" | "SUBMITTED" | "AUTHORISED";
+    forceCreateNew?: boolean;
   },
   clientId: string,
   clientSecret: string
@@ -758,10 +762,15 @@ export async function convertPOsToBill(
     //   2. GET without Type filter (fallback — Xero sometimes ignores Type for numeric numbers)
     // Supplier name is passed so we only match if BOTH invoice number AND supplier match —
     // prevents returning a different supplier's bill with the same invoice number.
-    const preFlight = await findExistingXeroBill(data.invoiceNumber, auth, data.supplierName);
-    if (preFlight) {
-      console.log(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in Xero for same supplier (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
-      return { invoiceId: preFlight.InvoiceID, invoiceNumber: preFlight.InvoiceNumber };
+    // Skip pre-flight check when forceCreateNew is set (user acknowledged invoice number conflict)
+    if (!data.forceCreateNew) {
+      const preFlight = await findExistingXeroBill(data.invoiceNumber, auth, data.supplierName);
+      if (preFlight) {
+        console.log(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in Xero for same supplier (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
+        return { invoiceId: preFlight.InvoiceID, invoiceNumber: preFlight.InvoiceNumber };
+      }
+    } else {
+      console.log(`[Xero] convertPOsToBill: forceCreateNew=true for ${data.invoiceNumber} — skipping pre-flight duplicate check`);
     }
 
     const response = await axios.post(

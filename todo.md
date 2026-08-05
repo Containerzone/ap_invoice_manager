@@ -226,3 +226,6 @@
 ## ACCREC vs ACCPAY Fix (Session 18)
 - [x] Fix findExistingXeroBill to only match ACCPAY bills (ignore ACCREC customer invoices with same number)
 - [x] Fix checkXeroBillDuplicate to only flag ACCPAY bills (not customer invoices)
+
+## Force Create New Bill on Conflict Acknowledgement (Session 18)
+- [x] Pass forceCreateNew flag from frontend when user acknowledges invoice number conflict, skip findExistingXeroBill in resolve flow

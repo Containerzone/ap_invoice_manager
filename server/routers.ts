@@ -1643,6 +1643,7 @@ export const appRouter = router({
           invoiceId: z.number(),
           resolutionNotes: z.string().optional(),
           pushToXero: z.boolean().default(true),
+          forceCreateNew: z.boolean().default(false),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -1729,6 +1730,7 @@ export const appRouter = router({
                     dueDate: invoice.extractedDueDate ?? undefined,
                     currencyCode: "AUD",
                     xeroStatus,
+                    forceCreateNew: input.forceCreateNew,
                   },
                   clientId,
                   clientSecret
@@ -1760,6 +1762,7 @@ export const appRouter = router({
                     lineItems: xeroLineItems,
                     currencyCode: "AUD",
                     xeroStatus,
+                    forceCreateNew: input.forceCreateNew,
                   },
                   clientId,
                   clientSecret

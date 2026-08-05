@@ -693,6 +693,7 @@ export default function InvoiceDetail() {
         invoiceId,
         resolutionNotes,
         pushToXero: true,
+        forceCreateNew: !!xeroConflictAcknowledged,
       });
       await invalidate();
       setShowResolveDialog(false);
