@@ -353,6 +353,7 @@ export default function InvoiceDetail() {
   const [noteContent, setNoteContent] = useState("");
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [showResolveDialog, setShowResolveDialog] = useState(false);
+  const [xeroConflictAcknowledged, setXeroConflictAcknowledged] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showApproveDialog, setShowApproveDialog] = useState(false);
   const [showStaffApproveDialog, setShowStaffApproveDialog] = useState(false);
@@ -672,6 +673,19 @@ export default function InvoiceDetail() {
       toast.error(e?.message ?? "Failed to add note");
     }
   };
+
+  // Check for Xero invoice number conflict (same invoice number, different supplier)
+  const invoiceForConflict = (data as any)?.invoice;
+  const conflictCheckEnabled = showResolveDialog &&
+    !!invoiceForConflict?.extractedInvoiceNumber &&
+    !!(invoiceForConflict?.extractedSupplierName || (data as any)?.supplier?.name);
+  const { data: xeroConflict } = trpc.xero.checkInvoiceNumberConflict.useQuery(
+    {
+      invoiceNumber: invoiceForConflict?.extractedInvoiceNumber ?? "",
+      supplierName: (data as any)?.supplier?.name ?? invoiceForConflict?.extractedSupplierName ?? "",
+    },
+    { enabled: conflictCheckEnabled, staleTime: 30_000 }
+  );
 
   const handleResolve = async () => {
     try {
@@ -1954,6 +1968,28 @@ export default function InvoiceDetail() {
                 ? `This will convert ${poResults.length} PO${poResults.length > 1 ? "s" : ""} (${poResults.map(r => r.poNumber).join(", ")}) into a bill in Xero and mark them as BILLED.`
                 : "This will create a draft bill in Xero ready for payment approval."}
             </p>
+            {xeroConflict && (
+              <div className="flex gap-3 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 p-3">
+                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                    Invoice number conflict in Xero
+                  </p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    Invoice <strong>{xeroConflict.invoiceNumber}</strong> already exists in Xero under a different supplier: <strong>&quot;{xeroConflict.conflictingSupplier}&quot;</strong> (${xeroConflict.amount.toFixed(2)}, {xeroConflict.status}). A new bill will still be created for this supplier — confirm this is intentional.
+                  </p>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={xeroConflictAcknowledged}
+                      onChange={(e) => setXeroConflictAcknowledged(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-amber-400"
+                    />
+                    <span className="text-xs text-amber-700 dark:text-amber-400">I understand and want to proceed</span>
+                  </label>
+                </div>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label className="text-xs">Resolution Notes (optional)</Label>
               <Textarea placeholder="Describe how the dispute was resolved..." value={resolutionNotes} onChange={(e) => setResolutionNotes(e.target.value)} className="text-sm min-h-[100px]" />
@@ -1961,7 +1997,7 @@ export default function InvoiceDetail() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowResolveDialog(false)}>Cancel</Button>
-            <Button onClick={handleResolve} disabled={resolveMutation.isPending} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Button onClick={handleResolve} disabled={resolveMutation.isPending || (!!xeroConflict && !xeroConflictAcknowledged)} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50">
               {resolveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
               Resolve &amp; Push to Xero
             </Button>

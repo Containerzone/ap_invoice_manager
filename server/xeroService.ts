@@ -166,15 +166,62 @@ export interface XeroPurchaseOrder {
  *   2. GET without Type filter (fallback)
  * Returns the raw Xero invoice object (not the mapped XeroBill type) or null.
  */
+/**
+ * Normalise a supplier name for fuzzy matching:
+ * lowercase, strip punctuation and common business suffixes, collapse whitespace.
+ */
+function normaliseSupplierName(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(pty|ltd|limited|services|service|group|australia|aust|au|the|and|&|p\/l|atf|t\/as)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Check if two supplier names are a fuzzy match (same logic as checkXeroBillDuplicate).
+ */
+function supplierNamesMatch(a: string, b: string): boolean {
+  const na = normaliseSupplierName(a);
+  const nb = normaliseSupplierName(b);
+  if (na === nb) return true;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  // Word-level overlap: >=50% of words in common
+  const wordsA = new Set(na.split(" ").filter(Boolean));
+  const wordsB = nb.split(" ").filter(Boolean);
+  if (wordsB.length === 0) return false;
+  const overlap = wordsB.filter((w) => wordsA.has(w)).length;
+  return overlap / wordsB.length >= 0.5;
+}
+
 async function findExistingXeroBill(
   invoiceNumber: string,
-  auth: { token: string; tenantId: string }
+  auth: { token: string; tenantId: string },
+  supplierName?: string
 ): Promise<any | null> {
   const headers = {
     Authorization: `Bearer ${auth.token}`,
     "Xero-tenant-id": auth.tenantId,
     Accept: "application/json",
   };
+
+  /**
+   * Check if a candidate Xero invoice is a valid match.
+   * If supplierName is provided, BOTH invoice number AND supplier name must match.
+   * This prevents returning a different supplier's bill that happens to share the same invoice number.
+   */
+  const isMatch = (inv: any): boolean => {
+    if (!inv || inv.Status === "VOIDED" || inv.Status === "DELETED") return false;
+    if (!supplierName) return true; // no supplier filter — match on invoice number alone
+    const xeroContactName: string = inv.Contact?.Name ?? "";
+    const matched = supplierNamesMatch(xeroContactName, supplierName);
+    if (!matched) {
+      console.log(`[Xero] findExistingXeroBill: invoice ${invoiceNumber} found in Xero but supplier mismatch — Xero: "${xeroContactName}" vs app: "${supplierName}" — treating as new bill`);
+    }
+    return matched;
+  };
+
   // Strategy 1: with Type=ACCPAY
   try {
     const r1 = await axios.get(`${XERO_API_BASE}/Invoices`, {
@@ -182,7 +229,7 @@ async function findExistingXeroBill(
       params: { InvoiceNumbers: invoiceNumber, Type: "ACCPAY" },
     });
     const inv = r1.data?.Invoices?.[0];
-    if (inv && inv.Status !== "VOIDED" && inv.Status !== "DELETED") return inv;
+    if (isMatch(inv)) return inv;
   } catch { /* fall through */ }
   // Strategy 2: without Type filter (handles numeric invoice numbers Xero sometimes misses)
   try {
@@ -190,7 +237,7 @@ async function findExistingXeroBill(
       headers,
       params: { InvoiceNumbers: invoiceNumber },
     });
-    const inv = r2.data?.Invoices?.find((i: any) => i.Type === "ACCPAY" && i.Status !== "VOIDED" && i.Status !== "DELETED");
+    const inv = r2.data?.Invoices?.find((i: any) => i.Type === "ACCPAY" && isMatch(i));
     if (inv) return inv;
   } catch { /* fall through */ }
   return null;
@@ -418,9 +465,11 @@ export async function createXeroDraftBill(
   try {
     // Pre-flight: check if a bill with this invoice number already exists in Xero.
     // Uses findExistingXeroBill which tries both with and without Type=ACCPAY filter.
-    const preFlight = await findExistingXeroBill(data.invoiceNumber, auth);
+    // Supplier name is passed so we only match if BOTH invoice number AND supplier match —
+    // prevents returning a different supplier's bill with the same invoice number.
+    const preFlight = await findExistingXeroBill(data.invoiceNumber, auth, data.supplierName);
     if (preFlight) {
-      console.log(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in Xero (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
+      console.log(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in Xero for same supplier (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
       return { invoiceId: preFlight.InvoiceID, invoiceNumber: preFlight.InvoiceNumber };
     }
 
@@ -446,7 +495,7 @@ export async function createXeroDraftBill(
       // non-editable state (SUBMITTED/AUTHORISED/PAID). Fetch and return the existing bill.
       if (errors.includes("not of valid status for modification")) {
         console.warn(`[Xero] createXeroDraftBill: bill ${data.invoiceNumber} already exists in non-editable state — fetching existing bill`);
-        const existing = await findExistingXeroBill(data.invoiceNumber, auth);
+        const existing = await findExistingXeroBill(data.invoiceNumber, auth, data.supplierName);
         if (existing) {
           console.log(`[Xero] createXeroDraftBill: returning existing bill ${existing.InvoiceNumber} (Status=${existing.Status})`);
           return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };
@@ -680,11 +729,11 @@ export async function convertPOsToBill(
     // Uses two strategies to handle Xero's inconsistent behaviour with numeric invoice numbers:
     //   1. GET with Type=ACCPAY filter (standard)
     //   2. GET without Type filter (fallback — Xero sometimes ignores Type for numeric numbers)
-    // If a non-voided/deleted bill is found, return it immediately to avoid
-    // "Invoice not of valid status for modification" errors.
-    const preFlight = await findExistingXeroBill(data.invoiceNumber, auth);
+    // Supplier name is passed so we only match if BOTH invoice number AND supplier match —
+    // prevents returning a different supplier's bill with the same invoice number.
+    const preFlight = await findExistingXeroBill(data.invoiceNumber, auth, data.supplierName);
     if (preFlight) {
-      console.log(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in Xero (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
+      console.log(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in Xero for same supplier (Status=${preFlight.Status}, ID=${preFlight.InvoiceID}) — returning existing bill`);
       return { invoiceId: preFlight.InvoiceID, invoiceNumber: preFlight.InvoiceNumber };
     }
 
@@ -709,7 +758,7 @@ export async function convertPOsToBill(
       // non-editable state (SUBMITTED/AUTHORISED/PAID). Fetch and return the existing bill.
       if (errors.includes("not of valid status for modification")) {
         console.warn(`[Xero] convertPOsToBill: bill ${data.invoiceNumber} already exists in non-editable state — fetching existing bill`);
-        const existing = await findExistingXeroBill(data.invoiceNumber, auth);
+        const existing = await findExistingXeroBill(data.invoiceNumber, auth, data.supplierName);
         if (existing) {
           console.log(`[Xero] convertPOsToBill: returning existing bill ${existing.InvoiceNumber} (Status=${existing.Status})`);
           return { invoiceId: existing.InvoiceID, invoiceNumber: existing.InvoiceNumber };

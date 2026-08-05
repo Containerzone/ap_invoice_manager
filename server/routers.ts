@@ -2014,6 +2014,48 @@ export const appRouter = router({
       await deleteXeroToken();
       return { success: true };
     }),
+
+    /**
+     * Check if a bill with the given invoice number already exists in Xero
+     * under a DIFFERENT supplier. Used to warn before pushing to Xero.
+     * Returns null if no conflict, or the conflicting bill details.
+     */
+    checkInvoiceNumberConflict: protectedProcedure
+      .input(z.object({
+        invoiceNumber: z.string(),
+        supplierName: z.string(),
+      }))
+      .query(async ({ input }) => {
+        const clientId = process.env.XERO_CLIENT_ID;
+        const clientSecret = process.env.XERO_CLIENT_SECRET;
+        if (!clientId || !clientSecret) return null;
+        try {
+          const result = await checkXeroBillDuplicate(
+            input.invoiceNumber,
+            input.supplierName,
+            clientId,
+            clientSecret
+          );
+          if (!result) return null;
+          // Only flag as a conflict if the supplier name does NOT match
+          if (result.supplierNameMatch) return null;
+          const statusLabel: Record<string, string> = {
+            DRAFT: "Draft",
+            SUBMITTED: "Awaiting Approval",
+            AUTHORISED: "Awaiting Payment",
+            PAID: "Paid",
+            VOIDED: "Voided",
+          };
+          return {
+            conflictingSupplier: result.nameInXero,
+            amount: result.bill.total,
+            status: statusLabel[result.bill.status] ?? result.bill.status,
+            invoiceNumber: input.invoiceNumber,
+          };
+        } catch {
+          return null;
+        }
+      }),
   }),
 
   // ─── Reports ─────────────────────────────────────────────────────────────────

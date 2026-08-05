@@ -218,3 +218,7 @@
 ## GST Fix (Session 18)
 - [x] Fix Vtiger PO creation: already correct (uses TaxType INPUT and LineAmountTypes Exclusive)
 - [x] Fix PO line items display: show assumed 10% GST when taxAmount is 0
+
+## Duplicate Invoice Number Fix (Session 18)
+- [x] Fix Xero duplicate check: only skip creation if BOTH invoice number AND supplier name match (currently skips on invoice number alone, causing wrong supplier's bill to be returned)
+- [x] Show warning alert before Xero push if another supplier's bill with the same invoice number already exists in Xero
