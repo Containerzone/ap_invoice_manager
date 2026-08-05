@@ -469,14 +469,30 @@ export async function createXeroDraftBill(
     ? { ContactID: data.supplierXeroContactId }
     : { Name: data.supplierName };
 
+  // When forceCreateNew is true, make InvoiceNumber unique to avoid Xero treating POST as UPDATE
+  let xeroInvoiceNumber = data.invoiceNumber;
+  if (data.forceCreateNew) {
+    const abbr = data.supplierName
+      .replace(/[^a-zA-Z0-9\s]/g, "")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 3)
+      .map(w => w.charAt(0).toUpperCase())
+      .join("");
+    xeroInvoiceNumber = `${data.invoiceNumber}-${abbr}`;
+    console.log(`[Xero] createXeroDraftBill: forceCreateNew — using unique InvoiceNumber "${xeroInvoiceNumber}" (original: "${data.invoiceNumber}")`);
+  }
+
   const payload = {
     Type: "ACCPAY",
     Contact: contact,
-    InvoiceNumber: data.invoiceNumber,
+    InvoiceNumber: xeroInvoiceNumber,
     Date: data.invoiceDate,
     DueDate: data.dueDate ?? data.invoiceDate,
     Status: data.xeroStatus ?? "DRAFT",
-    Reference: data.reference ?? "",
+    Reference: data.forceCreateNew
+      ? `${data.invoiceNumber} | ${data.reference ?? ""}`
+      : (data.reference ?? ""),
     CurrencyCode: data.currencyCode ?? "AUD",
     LineAmountTypes: "Exclusive",
     LineItems: data.lineItems.map((li) => ({
@@ -733,14 +749,33 @@ export async function convertPOsToBill(
     ? { ContactID: data.supplierXeroContactId }
     : { Name: data.supplierName };
 
+  // When forceCreateNew is true, the same InvoiceNumber already exists in Xero under a different
+  // supplier. Xero treats POST with an existing InvoiceNumber as an UPDATE (not a create).
+  // Fix: append a short supplier abbreviation to make the number unique in Xero.
+  // The original invoice number is preserved in the Reference field for traceability.
+  let xeroInvoiceNumber = data.invoiceNumber;
+  if (data.forceCreateNew) {
+    const abbr = data.supplierName
+      .replace(/[^a-zA-Z0-9\s]/g, "")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 3)
+      .map(w => w.charAt(0).toUpperCase())
+      .join("");
+    xeroInvoiceNumber = `${data.invoiceNumber}-${abbr}`;
+    console.log(`[Xero] convertPOsToBill: forceCreateNew — using unique InvoiceNumber "${xeroInvoiceNumber}" (original: "${data.invoiceNumber}")`);
+  }
+
   const payload = {
     Type: "ACCPAY",
     Contact: contact,
-    InvoiceNumber: data.invoiceNumber,
+    InvoiceNumber: xeroInvoiceNumber,
     Date: data.invoiceDate,
     DueDate: data.dueDate ?? data.invoiceDate,
     Status: data.xeroStatus ?? "AUTHORISED",
-    Reference: data.poNumbers.join(", "),
+    Reference: data.forceCreateNew
+      ? `${data.invoiceNumber} | POs: ${data.poNumbers.join(", ")}`
+      : data.poNumbers.join(", "),
     CurrencyCode: data.currencyCode ?? "AUD",
     // LineAmountTypes must match what was set on the PO during approval (we set Exclusive)
     LineAmountTypes: "Exclusive",
