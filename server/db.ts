@@ -95,6 +95,12 @@ export async function updateUserRole(userId: number, role: "user" | "admin"): Pr
   await db.update(users).set({ role }).where(eq(users.id, userId));
 }
 
+export async function updateUserStatus(userId: number, status: "active" | "disabled"): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ status }).where(eq(users.id, userId));
+}
+
 // ─── Suppliers ────────────────────────────────────────────────────────────────
 
 export async function getAllSuppliers(): Promise<Supplier[]> {

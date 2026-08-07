@@ -7,6 +7,7 @@ import { z } from "zod/v4";
 import {
   getAllUsers,
   updateUserRole,
+  updateUserStatus,
   getAllPendingInvites,
   createPendingInvite,
   deletePendingInvite,
@@ -282,6 +283,20 @@ export const appRouter = router({
     updateRole: adminProcedure
       .input(z.object({ userId: z.number(), role: z.enum(["user", "admin"]) }))
       .mutation(({ input }) => updateUserRole(input.userId, input.role)),
+
+    disable: adminProcedure
+      .input(z.object({ userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        if (input.userId === ctx.user.id) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot disable your own account." });
+        }
+        await updateUserStatus(input.userId, "disabled");
+        return { success: true };
+      }),
+
+    enable: adminProcedure
+      .input(z.object({ userId: z.number() }))
+      .mutation(({ input }) => updateUserStatus(input.userId, "active").then(() => ({ success: true }))),
 
     // Pending invites — admin pre-registers email + role (max 3 active invites)
     listInvites: adminProcedure.query(() => getAllPendingInvites()),

@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import {
   Users as UsersIcon, ShieldCheck, User, Loader2, UserPlus, Mail, Trash2, CheckCircle2,
 } from "lucide-react";
+import { Ban, RotateCcw } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatRelativeTime } from "@/lib/invoiceUtils";
 import {
@@ -34,6 +35,8 @@ export default function Users() {
   const { data: invites, isLoading: invitesLoading } = trpc.users.listInvites.useQuery();
 
   const updateRoleMutation = trpc.users.updateRole.useMutation();
+  const disableUserMutation = trpc.users.disable.useMutation();
+  const enableUserMutation = trpc.users.enable.useMutation();
   const createInviteMutation = trpc.users.createInvite.useMutation();
   const deleteInviteMutation = trpc.users.deleteInvite.useMutation();
 
@@ -49,6 +52,26 @@ export default function Users() {
       toast.success(`User role updated to ${newRole}`);
     } catch (e: any) {
       toast.error(e?.message ?? "Failed to update role");
+    }
+  };
+
+  const handleDisableUser = async (userId: number, name: string) => {
+    try {
+      await disableUserMutation.mutateAsync({ userId });
+      await utils.users.list.invalidate();
+      toast.success(`${name}'s account has been disabled`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to disable user");
+    }
+  };
+
+  const handleEnableUser = async (userId: number, name: string) => {
+    try {
+      await enableUserMutation.mutateAsync({ userId });
+      await utils.users.list.invalidate();
+      toast.success(`${name}'s account has been re-enabled`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to enable user");
     }
   };
 
@@ -296,15 +319,16 @@ export default function Users() {
                 <span>Email</span>
                 <span>Last Sign-in</span>
                 <span>Role</span>
-                <span></span>
+                <span>Actions</span>
               </div>
               <div className="divide-y divide-border">
                 {users?.map((u) => {
                   const isSelf = u.id === currentUser?.id;
+                  const isDisabled = u.status === "disabled";
                   return (
                     <div
                       key={u.id}
-                      className="grid grid-cols-1 md:grid-cols-[1fr_1fr_120px_100px_80px] gap-2 md:gap-4 items-center px-5 py-3.5"
+                      className={`grid grid-cols-1 md:grid-cols-[1fr_1fr_120px_100px_80px] gap-2 md:gap-4 items-center px-5 py-3.5 ${isDisabled ? "opacity-60 bg-muted/20" : ""}`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar className="h-9 w-9 shrink-0">
@@ -317,6 +341,11 @@ export default function Users() {
                             {u.name ?? "Unknown"}
                             {isSelf && (
                               <span className="ml-2 text-xs text-muted-foreground">(you)</span>
+                            )}
+                            {isDisabled && (
+                              <span className="ml-2 inline-flex items-center gap-1 text-xs text-destructive font-normal">
+                                <Ban className="h-3 w-3" /> Disabled
+                              </span>
                             )}
                           </p>
                           <p className="text-xs text-muted-foreground md:hidden">{u.email}</p>
@@ -343,47 +372,126 @@ export default function Users() {
                       </div>
                       <div className="flex items-center justify-end">
                         {!isSelf && (
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                                disabled={updateRoleMutation.isPending}
-                              >
-                                {updateRoleMutation.isPending ? (
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                ) : (
-                                  "Change"
-                                )}
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Change User Role</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Change {u.name}'s role from{" "}
-                                  <strong>{u.role === "admin" ? "Admin" : "Staff"}</strong> to{" "}
-                                  <strong>{u.role === "admin" ? "Staff" : "Admin"}</strong>?
-                                  {u.role === "admin" && (
-                                    <span className="block mt-1 text-amber-600">
-                                      This will remove their admin access.
-                                    </span>
-                                  )}
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() =>
-                                    handleRoleChange(u.id, u.role === "admin" ? "user" : "admin")
-                                  }
-                                >
-                                  Confirm Change
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                          <div className="flex items-center gap-1">
+                            {/* Change role */}
+                            {!isDisabled && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                    disabled={updateRoleMutation.isPending}
+                                  >
+                                    {updateRoleMutation.isPending ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      "Change"
+                                    )}
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Change User Role</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Change {u.name}'s role from{" "}
+                                      <strong>{u.role === "admin" ? "Admin" : "Staff"}</strong> to{" "}
+                                      <strong>{u.role === "admin" ? "Staff" : "Admin"}</strong>?
+                                      {u.role === "admin" && (
+                                        <span className="block mt-1 text-amber-600">
+                                          This will remove their admin access.
+                                        </span>
+                                      )}
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() =>
+                                        handleRoleChange(u.id, u.role === "admin" ? "user" : "admin")
+                                      }
+                                    >
+                                      Confirm Change
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
+
+                            {/* Disable / Enable */}
+                            {isDisabled ? (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 text-xs text-green-600 hover:text-green-700 hover:bg-green-50"
+                                    disabled={enableUserMutation.isPending}
+                                  >
+                                    {enableUserMutation.isPending ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <><RotateCcw className="h-3 w-3 mr-1" />Enable</>
+                                    )}
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Re-enable User</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Re-enable <strong>{u.name ?? u.email}</strong>'s account?
+                                      They will be able to log in and access the system again.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className="bg-green-600 hover:bg-green-700 text-white"
+                                      onClick={() => handleEnableUser(u.id, u.name ?? u.email ?? "User")}
+                                    >
+                                      Re-enable
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            ) : (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                                    disabled={disableUserMutation.isPending}
+                                  >
+                                    {disableUserMutation.isPending ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <><Ban className="h-3 w-3 mr-1" />Disable</>
+                                    )}
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Disable User</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Disable <strong>{u.name ?? u.email}</strong>'s account?
+                                      They will immediately lose access to the system and cannot
+                                      log in until re-enabled. Their data will not be deleted.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      onClick={() => handleDisableUser(u.id, u.name ?? u.email ?? "User")}
+                                    >
+                                      Disable Account
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>

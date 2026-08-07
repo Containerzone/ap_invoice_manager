@@ -229,3 +229,8 @@
 
 ## Force Create New Bill on Conflict Acknowledgement (Session 18)
 - [x] Pass forceCreateNew flag from frontend when user acknowledges invoice number conflict, skip findExistingXeroBill in resolve flow
+
+## User Termination Feature (Session 19)
+- [x] Add `status` column (active/disabled) to users table via DB migration
+- [x] Add `users.disable` and `users.enable` adminProcedures in routers.ts; enforce disabled check on every protectedProcedure
+- [x] Users page: show Disable/Enable button per user with confirmation dialog; show Disabled badge on disabled users
