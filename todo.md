@@ -234,3 +234,6 @@
 - [x] Add `status` column (active/disabled) to users table via DB migration
 - [x] Add `users.disable` and `users.enable` adminProcedures in routers.ts; enforce disabled check on every protectedProcedure
 - [x] Users page: show Disable/Enable button per user with confirmation dialog; show Disabled badge on disabled users
+
+## Accounts Receivable SOP (Session 19)
+- [x] Document purchase order prefixes, numerical formats, lifecycle stages, and container hire/purchase procedures
