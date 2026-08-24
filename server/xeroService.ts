@@ -559,6 +559,260 @@ export async function createXeroDraftBill(
   }
 }
 
+export type XeroContactCandidate = {
+  contactId: string;
+  name: string;
+  email: string | null;
+  taxNumber: string | null;
+};
+
+export type XeroContactResolution =
+  | {
+      status: "matched";
+      matchBasis: "saved_contact_id" | "name_and_email" | "name_only" | "email_only";
+      contact: XeroContactCandidate;
+      candidates: XeroContactCandidate[];
+      message: string;
+    }
+  | {
+      status: "needs_selection";
+      reason: "multiple_name_matches" | "multiple_email_matches" | "name_email_mismatch" | "email_missing";
+      candidates: XeroContactCandidate[];
+      nameMatchCount: number;
+      emailMatchCount: number;
+      message: string;
+    }
+  | {
+      status: "create_new";
+      candidates: [];
+      message: string;
+    }
+  | {
+      status: "unavailable";
+      candidates: [];
+      message: string;
+    };
+
+function normaliseSupplierNameToken(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)[0] ?? "";
+}
+
+function normaliseEmail(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function toContactCandidate(contact: any): XeroContactCandidate | null {
+  if (!contact?.ContactID) return null;
+  return {
+    contactId: contact.ContactID,
+    name: contact.Name ?? "Unnamed contact",
+    email: contact.EmailAddress?.trim() || null,
+    taxNumber: contact.TaxNumber?.trim() || null,
+  };
+}
+
+function deduplicateCandidates(candidates: XeroContactCandidate[]): XeroContactCandidate[] {
+  return Array.from(new Map(candidates.map((candidate) => [candidate.contactId, candidate])).values());
+}
+
+/**
+ * Applies the supplier-contact safety rules independently of the Xero API call.
+ * Name matching is based on the first meaningful name token; email matching is exact and case-insensitive.
+ */
+export function classifyXeroContactMatches(input: {
+  supplierName: string;
+  supplierEmail: string | null;
+  nameMatches: XeroContactCandidate[];
+  emailMatches: XeroContactCandidate[];
+}): XeroContactResolution {
+  const { supplierName, supplierEmail, nameMatches, emailMatches } = input;
+  const candidates = deduplicateCandidates([...nameMatches, ...emailMatches]);
+  const hasEmail = Boolean(normaliseEmail(supplierEmail));
+
+  if (nameMatches.length > 1) {
+    return {
+      status: "needs_selection",
+      reason: "multiple_name_matches",
+      candidates,
+      nameMatchCount: nameMatches.length,
+      emailMatchCount: emailMatches.length,
+      message: `More than one Xero contact matches the first name token for "${supplierName}". Select and approve the correct contact.`,
+    };
+  }
+
+  if (emailMatches.length > 1) {
+    return {
+      status: "needs_selection",
+      reason: "multiple_email_matches",
+      candidates,
+      nameMatchCount: nameMatches.length,
+      emailMatchCount: emailMatches.length,
+      message: `More than one Xero contact uses the supplier email address. Select and approve the correct contact.`,
+    };
+  }
+
+  const nameMatch = nameMatches[0];
+  const emailMatch = emailMatches[0];
+
+  if (nameMatch && hasEmail) {
+    if (emailMatch && emailMatch.contactId === nameMatch.contactId) {
+      return {
+        status: "matched",
+        matchBasis: "name_and_email",
+        contact: nameMatch,
+        candidates,
+        message: "Supplier name and email address match the same Xero contact.",
+      };
+    }
+    return {
+      status: "needs_selection",
+      reason: "name_email_mismatch",
+      candidates,
+      nameMatchCount: 1,
+      emailMatchCount: emailMatches.length,
+      message: emailMatch
+        ? "The supplier name and email address match different Xero contacts. Select and approve the correct contact."
+        : "The supplier name matches a Xero contact, but its email address does not match. Select and approve the correct contact.",
+    };
+  }
+
+  if (nameMatch && !hasEmail) {
+    return {
+      status: "matched",
+      matchBasis: "name_only",
+      contact: nameMatch,
+      candidates,
+      message: "A single Xero contact matches the supplier's first name token; no supplier email was available for a second validation.",
+    };
+  }
+
+  if (emailMatch) {
+    return {
+      status: "matched",
+      matchBasis: "email_only",
+      contact: emailMatch,
+      candidates,
+      message: "No name match was found, but the supplier email address matches one Xero contact.",
+    };
+  }
+
+  return {
+    status: "create_new",
+    candidates: [],
+    message: "No Xero contact matches the supplier name or email address. A new contact can be created.",
+  };
+}
+
+export async function resolveXeroSupplierContact(input: {
+  supplierName: string;
+  supplierEmail: string | null;
+  savedContactId?: string | null;
+  clientId: string;
+  clientSecret: string;
+}): Promise<XeroContactResolution> {
+  const auth = await getValidAccessToken(input.clientId, input.clientSecret);
+  if (!auth) {
+    return { status: "unavailable", candidates: [], message: "Xero is not connected or its access token is unavailable." };
+  }
+
+  try {
+    if (input.savedContactId) {
+      const response = await axios.get(`${XERO_API_BASE}/Contacts/${encodeURIComponent(input.savedContactId)}`, {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+      });
+      const saved = toContactCandidate(response.data?.Contacts?.[0]);
+      if (saved) {
+        return {
+          status: "matched",
+          matchBasis: "saved_contact_id",
+          contact: saved,
+          candidates: [saved],
+          message: "An approved Xero Contact ID is already saved for this supplier.",
+        };
+      }
+    }
+
+    const firstNameToken = normaliseSupplierNameToken(input.supplierName);
+    const supplierEmail = normaliseEmail(input.supplierEmail);
+    const headers = {
+      Authorization: `Bearer ${auth.token}`,
+      "Xero-tenant-id": auth.tenantId,
+      Accept: "application/json",
+    };
+
+    const nameSearch = firstNameToken
+      ? await axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: firstNameToken } })
+      : { data: { Contacts: [] } };
+    const nameMatches = (nameSearch.data?.Contacts ?? [])
+      .map(toContactCandidate)
+      .filter((contact: XeroContactCandidate | null): contact is XeroContactCandidate => Boolean(contact))
+      .filter((contact: XeroContactCandidate) => normaliseSupplierNameToken(contact.name) === firstNameToken);
+
+    const emailSearch = supplierEmail
+      ? await axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: supplierEmail } })
+      : { data: { Contacts: [] } };
+    const emailMatches = (emailSearch.data?.Contacts ?? [])
+      .map(toContactCandidate)
+      .filter((contact: XeroContactCandidate | null): contact is XeroContactCandidate => Boolean(contact))
+      .filter((contact: XeroContactCandidate) => normaliseEmail(contact.email) === supplierEmail);
+
+    return classifyXeroContactMatches({
+      supplierName: input.supplierName,
+      supplierEmail: input.supplierEmail,
+      nameMatches,
+      emailMatches,
+    });
+  } catch (err: any) {
+    console.error("[Xero] Supplier contact resolution error:", err?.response?.data ?? err.message);
+    return { status: "unavailable", candidates: [], message: "Xero contact search failed. No contact was created." };
+  }
+}
+
+export async function createXeroSupplierContact(input: {
+  supplierName: string;
+  supplierEmail: string | null;
+  supplierAbn: string | null;
+  clientId: string;
+  clientSecret: string;
+}): Promise<string | null> {
+  const auth = await getValidAccessToken(input.clientId, input.clientSecret);
+  if (!auth) return null;
+
+  const createResponse = await axios.post(
+    `${XERO_API_BASE}/Contacts`,
+    {
+      Contacts: [{
+        Name: input.supplierName,
+        EmailAddress: input.supplierEmail ?? undefined,
+        TaxNumber: input.supplierAbn ?? undefined,
+      }],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+        "Xero-tenant-id": auth.tenantId,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+    }
+  );
+
+  return createResponse.data?.Contacts?.[0]?.ContactID ?? null;
+}
+
+/**
+ * Legacy convenience helper retained for automated workflows.
+ * It will never choose an ambiguous contact: manual resolution is required instead.
+ */
 export async function findOrCreateXeroContact(
   supplierName: string,
   supplierEmail: string | null,
@@ -566,50 +820,21 @@ export async function findOrCreateXeroContact(
   clientId: string,
   clientSecret: string
 ): Promise<string | null> {
-  const auth = await getValidAccessToken(clientId, clientSecret);
-  if (!auth) return null;
+  const resolution = await resolveXeroSupplierContact({
+    supplierName,
+    supplierEmail,
+    clientId,
+    clientSecret,
+  });
 
-  try {
-    // Search for existing contact
-    const searchResponse = await axios.get(`${XERO_API_BASE}/Contacts`, {
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        "Xero-tenant-id": auth.tenantId,
-        Accept: "application/json",
-      },
-      params: { searchTerm: supplierName },
-    });
-
-    const contacts = searchResponse.data?.Contacts ?? [];
-    if (contacts.length > 0) return contacts[0].ContactID;
-
-    // Create new contact
-    const createResponse = await axios.post(
-      `${XERO_API_BASE}/Contacts`,
-      {
-        Contacts: [
-          {
-            Name: supplierName,
-            EmailAddress: supplierEmail ?? undefined,
-            TaxNumber: supplierAbn ?? undefined,
-          },
-        ],
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-      }
-    );
-
-    return createResponse.data?.Contacts?.[0]?.ContactID ?? null;
-  } catch (err: any) {
-    console.error("[Xero] Contact find/create error:", err?.response?.data ?? err.message);
-    return null;
+  if (resolution.status === "matched") return resolution.contact.contactId;
+  if (resolution.status === "create_new") {
+    return createXeroSupplierContact({ supplierName, supplierEmail, supplierAbn, clientId, clientSecret });
   }
+  if (resolution.status === "needs_selection") {
+    throw new Error(`Xero contact needs approval: ${resolution.message}`);
+  }
+  return null;
 }
 
 /**
@@ -872,6 +1097,7 @@ export async function updateXeroPODetails(
   updates: {
     invoiceNumber?: string;
     supplierName?: string;
+    supplierEmail?: string | null;
     supplierXeroContactId?: string;
     status?: "DRAFT" | "SUBMITTED" | "AUTHORISED";
     description?: string;
@@ -992,36 +1218,28 @@ export async function updateXeroPODetails(
     console.log(`[Xero] Using provided ContactID: ${updates.supplierXeroContactId}`);
   } else if (updates.supplierName) {
     try {
-      const contactSearch = await axios.get(`${XERO_API_BASE}/Contacts`, {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          Accept: "application/json",
-        },
-        params: { searchTerm: updates.supplierName },
+      const resolution = await resolveXeroSupplierContact({
+        supplierName: updates.supplierName,
+        supplierEmail: updates.supplierEmail ?? null,
+        clientId,
+        clientSecret,
       });
-      const contacts: any[] = contactSearch.data?.Contacts ?? [];
-      if (contacts.length > 0) {
-        contactPayload = { ContactID: contacts[0].ContactID };
-        console.log(`[Xero] Resolved contact "${updates.supplierName}" → ContactID=${contacts[0].ContactID}`);
+      if (resolution.status === "matched") {
+        contactPayload = { ContactID: resolution.contact.contactId };
+        console.log(`[Xero] Safely resolved contact "${updates.supplierName}" → ContactID=${resolution.contact.contactId} (${resolution.matchBasis})`);
+      } else if (resolution.status === "create_new") {
+        const newContactId = await createXeroSupplierContact({
+          supplierName: updates.supplierName,
+          supplierEmail: updates.supplierEmail ?? null,
+          supplierAbn: null,
+          clientId,
+          clientSecret,
+        });
+        if (!newContactId) throw new Error(`Failed to create Xero contact for "${updates.supplierName}"`);
+        contactPayload = { ContactID: newContactId };
+        console.log(`[Xero] Created contact "${updates.supplierName}" after no name or email match → ContactID=${newContactId}`);
       } else {
-        console.log(`[Xero] Contact "${updates.supplierName}" not found — creating it`);
-        const createResp = await axios.post(
-          `${XERO_API_BASE}/Contacts`,
-          { Contacts: [{ Name: updates.supplierName }] },
-          {
-            headers: {
-              Authorization: `Bearer ${auth.token}`,
-              "Xero-tenant-id": auth.tenantId,
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-          }
-        );
-        const newContact = createResp.data?.Contacts?.[0];
-        if (!newContact?.ContactID) throw new Error(`Failed to create Xero contact for "${updates.supplierName}"`);
-        contactPayload = { ContactID: newContact.ContactID };
-        console.log(`[Xero] Created contact "${updates.supplierName}" → ContactID=${newContact.ContactID}`);
+        throw new Error(`Contact approval required: ${resolution.message}`);
       }
     } catch (contactErr: any) {
       const errData = contactErr?.response?.data;

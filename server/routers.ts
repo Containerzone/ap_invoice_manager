@@ -49,6 +49,8 @@ import {
   findXeroPurchaseOrderByNumber,
   createXeroDraftBill,
   findOrCreateXeroContact,
+  resolveXeroSupplierContact,
+  createXeroSupplierContact,
   markXeroPOAsBilled,
   convertPOsToBill,
   updateXeroPODetails,
@@ -1203,6 +1205,8 @@ export const appRouter = router({
                 {
                   invoiceNumber: invoice.extractedInvoiceNumber ?? undefined,
                   supplierName: staffSupplierName,
+                  supplierEmail: staffSupplier?.email ?? invoice.extractedSupplierEmail ?? null,
+                  supplierXeroContactId: staffSupplier?.xeroContactId ?? undefined,
                   status: "AUTHORISED",
                   lineItems: staffXeroLineItems,
                 },
@@ -1349,6 +1353,8 @@ export const appRouter = router({
                 {
                   invoiceNumber: invoice.extractedInvoiceNumber ?? undefined,
                   supplierName,
+                  supplierEmail: supplier?.email ?? invoice.extractedSupplierEmail ?? null,
+                  supplierXeroContactId: supplier?.xeroContactId ?? undefined,
                   status: "AUTHORISED",
                   lineItems: xeroLineItems,
                 },
@@ -1659,6 +1665,8 @@ export const appRouter = router({
           resolutionNotes: z.string().optional(),
           pushToXero: z.boolean().default(true),
           forceCreateNew: z.boolean().default(false),
+          selectedXeroContactId: z.string().optional(),
+          contactSelectionApproved: z.boolean().default(false),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -1720,14 +1728,54 @@ export const appRouter = router({
               xeroStatus = "SUBMITTED";
             }
 
-            // Find or create Xero contact
-            const xeroContactId = await findOrCreateXeroContact(
-              supplier?.name ?? invoice.extractedSupplierName ?? "Unknown Supplier",
-              supplier?.email ?? invoice.extractedSupplierEmail ?? null,
-              supplier?.abn ?? invoice.extractedSupplierAbn ?? null,
+            // Resolve the Xero contact safely. Ambiguous results must be selected and
+            // explicitly approved by the user before a bill can be sent to Xero.
+            const supplierName = supplier?.name ?? invoice.extractedSupplierName ?? "Unknown Supplier";
+            const supplierEmail = supplier?.email ?? invoice.extractedSupplierEmail ?? null;
+            const contactResolution = await resolveXeroSupplierContact({
+              supplierName,
+              supplierEmail,
+              savedContactId: supplier?.xeroContactId ?? null,
               clientId,
-              clientSecret
-            );
+              clientSecret,
+            });
+
+            let xeroContactId: string | null = null;
+            if (contactResolution.status === "matched") {
+              xeroContactId = contactResolution.contact.contactId;
+            } else if (contactResolution.status === "create_new") {
+              xeroContactId = await createXeroSupplierContact({
+                supplierName,
+                supplierEmail,
+                supplierAbn: supplier?.abn ?? invoice.extractedSupplierAbn ?? null,
+                clientId,
+                clientSecret,
+              });
+              if (!xeroContactId) {
+                throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Xero could not create the supplier contact." });
+              }
+            } else if (contactResolution.status === "needs_selection") {
+              const selected = contactResolution.candidates.find(
+                (candidate) => candidate.contactId === input.selectedXeroContactId
+              );
+              if (!selected || !input.contactSelectionApproved) {
+                throw new TRPCError({
+                  code: "BAD_REQUEST",
+                  message: `Supplier contact approval is required: ${contactResolution.message}`,
+                });
+              }
+              xeroContactId = selected.contactId;
+            } else {
+              throw new TRPCError({
+                code: "PRECONDITION_FAILED",
+                message: "Xero contact search is unavailable. No new supplier contact was created.",
+              });
+            }
+
+            // Persist the approved/resolved Xero Contact ID for future invoices from this supplier.
+            if (supplier?.id && xeroContactId && supplier.xeroContactId !== xeroContactId) {
+              await updateSupplier(supplier.id, { xeroContactId });
+            }
 
             console.log(`[Resolve] PO numbers: ${allPoNumbers.join(", ") || "none"}, xeroStatus=${xeroStatus}`);
 
@@ -2032,6 +2080,27 @@ export const appRouter = router({
       await deleteXeroToken();
       return { success: true };
     }),
+
+    resolveSupplierContact: protectedProcedure
+      .input(z.object({
+        supplierName: z.string().trim().min(1),
+        supplierEmail: z.string().email().nullable().optional(),
+        savedContactId: z.string().nullable().optional(),
+      }))
+      .query(async ({ input }) => {
+        const clientId = process.env.XERO_CLIENT_ID;
+        const clientSecret = process.env.XERO_CLIENT_SECRET;
+        if (!clientId || !clientSecret) {
+          return { status: "unavailable" as const, candidates: [], message: "Xero credentials are not configured." };
+        }
+        return resolveXeroSupplierContact({
+          supplierName: input.supplierName,
+          supplierEmail: input.supplierEmail ?? null,
+          savedContactId: input.savedContactId ?? null,
+          clientId,
+          clientSecret,
+        });
+      }),
 
     /**
      * Check if a bill with the given invoice number already exists in Xero

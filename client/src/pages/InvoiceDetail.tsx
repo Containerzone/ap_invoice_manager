@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
@@ -354,6 +355,8 @@ export default function InvoiceDetail() {
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [showResolveDialog, setShowResolveDialog] = useState(false);
   const [xeroConflictAcknowledged, setXeroConflictAcknowledged] = useState(false);
+  const [selectedXeroContactId, setSelectedXeroContactId] = useState("");
+  const [contactSelectionApproved, setContactSelectionApproved] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showApproveDialog, setShowApproveDialog] = useState(false);
   const [showStaffApproveDialog, setShowStaffApproveDialog] = useState(false);
@@ -687,6 +690,30 @@ export default function InvoiceDetail() {
     { enabled: conflictCheckEnabled, staleTime: 30_000 }
   );
 
+  // Supplier contact resolution must complete before the bill is pushed to Xero.
+  // Ambiguous name/email results are deliberately displayed for user approval.
+  const xeroSupplierName = (data as any)?.supplier?.name ?? invoiceForConflict?.extractedSupplierName ?? "";
+  const rawXeroSupplierEmail = (data as any)?.supplier?.email ?? invoiceForConflict?.extractedSupplierEmail ?? "";
+  const xeroSupplierEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawXeroSupplierEmail)
+    ? rawXeroSupplierEmail
+    : null;
+  const supplierContactCheckEnabled = showResolveDialog && Boolean(xeroSupplierName);
+  const {
+    data: supplierContactResolution,
+    isLoading: isSupplierContactResolutionLoading,
+  } = trpc.xero.resolveSupplierContact.useQuery(
+    {
+      supplierName: xeroSupplierName,
+      supplierEmail: xeroSupplierEmail,
+      savedContactId: (data as any)?.supplier?.xeroContactId ?? null,
+    },
+    { enabled: supplierContactCheckEnabled, staleTime: 30_000 }
+  );
+  const supplierContactNeedsSelection = supplierContactResolution?.status === "needs_selection";
+  const supplierContactUnavailable = supplierContactResolution?.status === "unavailable";
+  const supplierContactApprovalReady = !supplierContactNeedsSelection ||
+    (Boolean(selectedXeroContactId) && contactSelectionApproved);
+
   const handleResolve = async () => {
     try {
       const result = await resolveMutation.mutateAsync({
@@ -694,9 +721,13 @@ export default function InvoiceDetail() {
         resolutionNotes,
         pushToXero: true,
         forceCreateNew: !!xeroConflictAcknowledged,
+        selectedXeroContactId: selectedXeroContactId || undefined,
+        contactSelectionApproved,
       });
       await invalidate();
       setShowResolveDialog(false);
+      setSelectedXeroContactId("");
+      setContactSelectionApproved(false);
       if (result.xeroResult) {
         const attachMsg = (result as any).attachmentUploaded
           ? " PDF attached."
@@ -1955,7 +1986,14 @@ export default function InvoiceDetail() {
       </Dialog>
 
       {/* ── Resolve Dialog ── */}
-      <Dialog open={showResolveDialog} onOpenChange={setShowResolveDialog}>
+      <Dialog open={showResolveDialog} onOpenChange={(open) => {
+        setShowResolveDialog(open);
+        if (!open) {
+          setSelectedXeroContactId("");
+          setContactSelectionApproved(false);
+          setXeroConflictAcknowledged(false);
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1991,6 +2029,77 @@ export default function InvoiceDetail() {
                 </div>
               </div>
             )}
+            {isSupplierContactResolutionLoading && (
+              <div className="flex items-center gap-2 rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Checking the supplier name and email address in Xero…
+              </div>
+            )}
+            {supplierContactResolution?.status === "matched" && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+                <span className="font-semibold">Xero supplier contact confirmed:</span>{" "}
+                {supplierContactResolution.contact.name}
+                {supplierContactResolution.contact.email ? ` (${supplierContactResolution.contact.email})` : ""}.
+              </div>
+            )}
+            {supplierContactResolution?.status === "create_new" && (
+              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
+                <span className="font-semibold">No Xero supplier contact found.</span>{" "}
+                Resolving this invoice will create a new Xero contact for <strong>{xeroSupplierName}</strong>
+                {xeroSupplierEmail ? ` using ${xeroSupplierEmail}` : ""}.
+              </div>
+            )}
+            {supplierContactNeedsSelection && supplierContactResolution && (
+              <div className="space-y-3 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/30">
+                <div className="flex gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Supplier contact needs approval</p>
+                    <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">{supplierContactResolution.message}</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {supplierContactResolution.candidates.map((candidate) => (
+                    <label
+                      key={candidate.contactId}
+                      className={`flex cursor-pointer items-start gap-2 rounded border p-2 text-xs transition-colors ${selectedXeroContactId === candidate.contactId ? "border-amber-500 bg-white dark:bg-amber-950/10" : "border-amber-200 bg-white/60 dark:border-amber-800 dark:bg-transparent"}`}
+                    >
+                      <input
+                        type="radio"
+                        name="xero-contact-choice"
+                        value={candidate.contactId}
+                        checked={selectedXeroContactId === candidate.contactId}
+                        onChange={() => {
+                          setSelectedXeroContactId(candidate.contactId);
+                          setContactSelectionApproved(false);
+                        }}
+                        className="mt-0.5"
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-semibold text-foreground">{candidate.name}</span>
+                        <span className="block text-muted-foreground">
+                          {candidate.email ?? "No email in Xero"}{candidate.taxNumber ? ` · Tax no. ${candidate.taxNumber}` : ""}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <label className="flex cursor-pointer items-start gap-2 text-xs text-amber-800 dark:text-amber-300">
+                  <Checkbox
+                    checked={contactSelectionApproved}
+                    onCheckedChange={(checked) => setContactSelectionApproved(checked === true)}
+                    disabled={!selectedXeroContactId}
+                    className="mt-0.5"
+                  />
+                  <span>I confirm that the selected Xero contact is the correct supplier for this invoice.</span>
+                </label>
+              </div>
+            )}
+            {supplierContactUnavailable && supplierContactResolution && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+                <span className="font-semibold">Supplier contact check unavailable.</span> {supplierContactResolution.message}
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label className="text-xs">Resolution Notes (optional)</Label>
               <Textarea placeholder="Describe how the dispute was resolved..." value={resolutionNotes} onChange={(e) => setResolutionNotes(e.target.value)} className="text-sm min-h-[100px]" />
@@ -1998,7 +2107,18 @@ export default function InvoiceDetail() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowResolveDialog(false)}>Cancel</Button>
-            <Button onClick={handleResolve} disabled={resolveMutation.isPending || (!!xeroConflict && !xeroConflictAcknowledged)} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50">
+            <Button
+              onClick={handleResolve}
+              disabled={
+                resolveMutation.isPending ||
+                isSupplierContactResolutionLoading ||
+                !supplierContactResolution ||
+                supplierContactUnavailable ||
+                !supplierContactApprovalReady ||
+                (!!xeroConflict && !xeroConflictAcknowledged)
+              }
+              className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
+            >
               {resolveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
               Resolve &amp; Push to Xero
             </Button>

@@ -237,3 +237,10 @@
 
 ## Accounts Receivable SOP (Session 19)
 - [x] Document purchase order prefixes, numerical formats, lifecycle stages, and container hire/purchase procedures
+- [x] Deliver standalone SOP attachment with worked examples for every PO-number pattern; no application functionality changes
+- [x] Deliver standalone SOP titled "Transport Purchase Order Numbers" covering only Stage 1 automated operational transport POs, with detailed examples
+
+## Safe Xero Supplier Contact Matching (Session 19)
+- [x] Add name-first and email-validation Xero contact matching, including distinct no-match, name/email conflict and multiple-candidate outcomes
+- [x] Block automatic contact creation for name/email conflicts or multiple candidates; add an authorised contact-selection/approval path
+- [x] Update Xero bill/PO creation flows to use the approved contact resolution and add Vitest coverage
