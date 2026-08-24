@@ -260,3 +260,6 @@
 - [x] Review recent PO-not-found errors, identify the lookup failure mode, and provide a corrective recommendation
 - [x] Investigate why Dry Creek Storage Pty Ltd was not matched despite an existing Xero supplier contact
 - [x] Ensure non-404 Xero PO lookup failures are surfaced as API errors rather than persisted as PO-not-found results
+
+## Xero Bill Creation Rate Limit Handling (Session 19)
+- [x] Add bounded HTTP 429 retry handling to Xero bill creation and return a clear retryable failure if Xero remains throttled

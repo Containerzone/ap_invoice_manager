@@ -119,6 +119,45 @@ async function getValidAccessToken(clientId: string, clientSecret: string): Prom
   }
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function getXeroRateLimitRetryDelayMs(headers: Record<string, unknown> | undefined, attempt: number): number {
+  const retryAfter = headers?.["retry-after"] ?? headers?.["Retry-After"];
+  const raw = Array.isArray(retryAfter) ? retryAfter[0] : retryAfter;
+  const seconds = typeof raw === "string" || typeof raw === "number" ? Number(raw) : NaN;
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(Math.max(Math.round(seconds * 1000), 500), 10_000);
+  }
+  return 1_000 * (2 ** attempt);
+}
+
+/**
+ * A Xero HTTP 429 rejects the request before it is processed, so it is safe to
+ * retry. The retry count is bounded to avoid leaving the invoice UI waiting too long.
+ */
+export async function withXeroRateLimitRetry<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  maxRetries = 2
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      return await operation();
+    } catch (err: any) {
+      if (err?.response?.status !== 429) throw err;
+      if (attempt === maxRetries) {
+        throw new Error(`Xero is temporarily rate-limiting ${operationName}. Please retry in a few minutes.`);
+      }
+      const delayMs = getXeroRateLimitRetryDelayMs(err?.response?.headers, attempt);
+      console.warn(`[Xero] ${operationName} rate-limited (HTTP 429); retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`);
+      await wait(delayMs);
+    }
+  }
+  throw new Error(`Xero could not complete ${operationName}. Please retry shortly.`);
+}
+
 export interface XeroBill {
   invoiceId: string;
   invoiceNumber: string;
@@ -528,17 +567,20 @@ export async function createXeroDraftBill(
       console.log(`[Xero] createXeroDraftBill: forceCreateNew=true for ${data.invoiceNumber} — skipping pre-flight duplicate check`);
     }
 
-    const response = await axios.post(
-      `${XERO_API_BASE}/Invoices`,
-      { Invoices: [payload] },
-      {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-      }
+    const response = await withXeroRateLimitRetry(
+      () => axios.post(
+        `${XERO_API_BASE}/Invoices`,
+        { Invoices: [payload] },
+        {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        }
+      ),
+      "bill creation"
     );
 
     const created = response.data?.Invoices?.[0];
@@ -1070,17 +1112,20 @@ export async function convertPOsToBill(
       console.log(`[Xero] convertPOsToBill: forceCreateNew=true for ${data.invoiceNumber} — skipping pre-flight duplicate check`);
     }
 
-    const response = await axios.post(
-      `${XERO_API_BASE}/Invoices`,
-      { Invoices: [payload] },
-      {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-      }
+    const response = await withXeroRateLimitRetry(
+      () => axios.post(
+        `${XERO_API_BASE}/Invoices`,
+        { Invoices: [payload] },
+        {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        }
+      ),
+      "bill creation"
     );
     const created = response.data?.Invoices?.[0];
     if (!created) throw new Error("Xero returned no invoice in response");
