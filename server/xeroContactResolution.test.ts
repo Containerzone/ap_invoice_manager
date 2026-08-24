@@ -80,7 +80,7 @@ describe("classifyXeroContactMatches", () => {
     expect(result.candidates.map((candidate) => candidate.contactId).sort()).toEqual(["scf-email", "scf-name"]);
   });
 
-  it("requires selection where the first supplier-name token has more than one Xero candidate", () => {
+  it("uses the unique exact email match to resolve multiple first-name candidates", () => {
     const result = classifyXeroContactMatches({
       supplierName: "SCF Containers",
       supplierEmail: "accounts@scf.com.au",
@@ -89,6 +89,24 @@ describe("classifyXeroContactMatches", () => {
         contact("scf-2", "SCF Containers Brisbane", "brisbane@scf.com.au"),
       ],
       emailMatches: [contact("scf-1", "SCF Containers", "accounts@scf.com.au")],
+    });
+
+    expect(result).toMatchObject({
+      status: "matched",
+      matchBasis: "name_and_email",
+      contact: { contactId: "scf-1" },
+    });
+  });
+
+  it("requires selection when multiple first-name candidates are not narrowed by email", () => {
+    const result = classifyXeroContactMatches({
+      supplierName: "SCF Containers",
+      supplierEmail: "accounts@scf.com.au",
+      nameMatches: [
+        contact("scf-1", "SCF Containers", "ops@scf.com.au"),
+        contact("scf-2", "SCF Containers Brisbane", "brisbane@scf.com.au"),
+      ],
+      emailMatches: [],
     });
 
     expect(result).toMatchObject({

@@ -633,6 +633,22 @@ export function classifyXeroContactMatches(input: {
   const { supplierName, supplierEmail, nameMatches, emailMatches } = input;
   const candidates = deduplicateCandidates([...nameMatches, ...emailMatches]);
   const hasEmail = Boolean(normaliseEmail(supplierEmail));
+  const nameAndEmailMatches = nameMatches.filter((nameCandidate) =>
+    emailMatches.some((emailCandidate) => emailCandidate.contactId === nameCandidate.contactId)
+  );
+
+  // A first-name search may legitimately return several contacts (for example,
+  // multiple "SCF ..." entities). A single exact email result within that list
+  // is the required tie-breaker and is safe to use without manual selection.
+  if (nameMatches.length > 1 && emailMatches.length === 1 && nameAndEmailMatches.length === 1) {
+    return {
+      status: "matched",
+      matchBasis: "name_and_email",
+      contact: nameAndEmailMatches[0],
+      candidates,
+      message: "Multiple first-name candidates were narrowed to one Xero contact by its exact email address.",
+    };
+  }
 
   if (nameMatches.length > 1) {
     return {

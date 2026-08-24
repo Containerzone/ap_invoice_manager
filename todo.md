@@ -248,3 +248,10 @@
 ## Cleared PO Persistence Fix (Session 19)
 - [x] Preserve an intentional blank PO list when invoice fields are saved; do not reconstruct it from line items or OCR/extraction data
 - [x] Ensure a cleared no-PO invoice below $500 exposes the admin approval path and add regression coverage
+
+## SMTP Credential Verification (Session 19)
+- [x] Verify the current SMTP password using a non-delivery authentication check and report the result
+- [x] Re-verify the updated SMTP password using a non-delivery authentication check and report the result
+
+## Xero Supplier Name Tie-Breaking (Session 19)
+- [x] When multiple candidates share a first-name match, use the sole exact email match to resolve the supplier automatically; retain manual selection only when email does not break the tie
