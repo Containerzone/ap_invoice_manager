@@ -843,7 +843,9 @@ export const appRouter = router({
         for (let _bi = 0; _bi < allPoNumbers.length; _bi += VERIFY_BATCH_SIZE) {
           if (_bi > 0) await new Promise((r) => setTimeout(r, VERIFY_BATCH_DELAY_MS));
           const _batch = allPoNumbers.slice(_bi, _bi + VERIFY_BATCH_SIZE);
-          const _batchResults = await Promise.all(_batch.map(async (poNum) => {
+          let _batchResults: any[];
+          try {
+            _batchResults = await Promise.all(_batch.map(async (poNum) => {
             const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
 
             // Determine the comparison amount for this PO.
@@ -935,7 +937,14 @@ export const appRouter = router({
               currencyCode: po.currencyCode,
               lineItems: po.lineItems,
             };
-          }));
+            }));
+          } catch (xeroError: any) {
+            console.error(`[verifyWithXero] Xero PO lookup failed for invoice ${input.invoiceId}:`, xeroError?.message ?? xeroError);
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: xeroError?.message ?? "Xero could not retrieve the purchase order. Please retry shortly.",
+            });
+          }
           verifyAllResults.push(..._batchResults);
         }
         const poLookups = verifyAllResults;

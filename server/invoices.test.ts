@@ -392,6 +392,28 @@ describe("invoices.verifyWithXero", () => {
     );
   });
 
+  it("surfaces a Xero API failure instead of recording an existing PO as not found", async () => {
+    const { getInvoiceById, updateInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 99,
+      extractedPoNumber: "AD123456",
+      extractedTotal: "1100.00",
+      extractedInvoiceNumber: "INV-001",
+    } as any);
+    vi.mocked(updateInvoice).mockClear();
+    vi.mocked(findXeroPurchaseOrderByNumber).mockRejectedValueOnce(
+      new Error("Xero could not retrieve PO AD123456 (HTTP 429). Please retry shortly.")
+    );
+
+    const caller = appRouter.createCaller(makeAdminCtx());
+    await expect(caller.invoices.verifyWithXero({ invoiceId: 99 })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: expect.stringContaining("HTTP 429"),
+    });
+    expect(vi.mocked(updateInvoice)).not.toHaveBeenCalled();
+  });
+
   it("verifies invoice when PO total matches invoice total", async () => {
     const { getInvoiceById, updateInvoice } = await import("./db");
     const { findXeroPurchaseOrderByNumber } = await import("./xeroService");

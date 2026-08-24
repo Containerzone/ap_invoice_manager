@@ -432,10 +432,19 @@ export async function findXeroPurchaseOrderByNumber(
       lineItems,
     };
   } catch (err: any) {
-    // 404 means no PO found with that number — not an error worth logging loudly
+    // Only a genuine 404 means the requested PO number does not exist. Network,
+    // authentication and rate-limit errors must not be converted to NOT_FOUND.
     if (err?.response?.status === 404) return null;
-    console.error("[Xero] Find PO error:", err?.response?.data ?? err.message);
-    return null;
+    const status = err?.response?.status;
+    const responseData = err?.response?.data;
+    const detail = responseData?.Message
+      ?? responseData?.Detail
+      ?? (typeof responseData === "string" ? responseData : "")
+      ?? err?.message
+      ?? "Unknown Xero API error";
+    const errorLabel = status ? `HTTP ${status}` : "network error";
+    console.error(`[Xero] Find PO failed for "${poNumber}" (${errorLabel}): ${detail || err?.message || "no response detail"}`);
+    throw new Error(`Xero could not retrieve PO ${poNumber} (${errorLabel}). Please retry shortly.`);
   }
 }
 
@@ -738,23 +747,23 @@ export async function resolveXeroSupplierContact(input: {
 
   try {
     if (input.savedContactId) {
-      const response = await axios.get(`${XERO_API_BASE}/Contacts/${encodeURIComponent(input.savedContactId)}`, {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          Accept: "application/json",
-        },
-      });
-      const saved = toContactCandidate(response.data?.Contacts?.[0]);
-      if (saved) {
-        return {
-          status: "matched",
-          matchBasis: "saved_contact_id",
-          contact: saved,
-          candidates: [saved],
-          message: "An approved Xero Contact ID is already saved for this supplier.",
-        };
-      }
+      // A saved Xero ContactID is the approved, immutable identifier from a
+      // prior matching decision. Re-querying Contacts here adds unnecessary
+      // Xero traffic and turns a valid supplier into an apparent non-match
+      // when Xero is rate-limited.
+      const saved: XeroContactCandidate = {
+        contactId: input.savedContactId,
+        name: input.supplierName,
+        email: input.supplierEmail,
+        taxNumber: null,
+      };
+      return {
+        status: "matched",
+        matchBasis: "saved_contact_id",
+        contact: saved,
+        candidates: [saved],
+        message: "An approved Xero Contact ID is already saved for this supplier.",
+      };
     }
 
     const firstNameToken = normaliseSupplierNameToken(input.supplierName);
@@ -788,8 +797,20 @@ export async function resolveXeroSupplierContact(input: {
       emailMatches,
     });
   } catch (err: any) {
-    console.error("[Xero] Supplier contact resolution error:", err?.response?.data ?? err.message);
-    return { status: "unavailable", candidates: [], message: "Xero contact search failed. No contact was created." };
+    const status = err?.response?.status;
+    const responseData = err?.response?.data;
+    const detail = responseData?.Message
+      ?? responseData?.Detail
+      ?? (typeof responseData === "string" ? responseData : "")
+      ?? err?.message
+      ?? "Unknown Xero API error";
+    const errorLabel = status ? `HTTP ${status}` : "network error";
+    console.error(`[Xero] Supplier contact resolution failed for "${input.supplierName}" (${errorLabel}): ${detail || err?.message || "no response detail"}`);
+    return {
+      status: "unavailable",
+      candidates: [],
+      message: `Xero contact search is unavailable (${errorLabel}). No contact was created.`,
+    };
   }
 }
 

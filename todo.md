@@ -255,3 +255,8 @@
 
 ## Xero Supplier Name Tie-Breaking (Session 19)
 - [x] When multiple candidates share a first-name match, use the sole exact email match to resolve the supplier automatically; retain manual selection only when email does not break the tie
+
+## Xero PO Lookup Investigation (Session 19)
+- [x] Review recent PO-not-found errors, identify the lookup failure mode, and provide a corrective recommendation
+- [x] Investigate why Dry Creek Storage Pty Ltd was not matched despite an existing Xero supplier contact
+- [x] Ensure non-404 Xero PO lookup failures are surfaced as API errors rather than persisted as PO-not-found results
