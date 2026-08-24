@@ -1,5 +1,12 @@
 import axios from "axios";
+import { createHash } from "node:crypto";
 import { getXeroToken, upsertXeroToken } from "./db";
+import {
+  invalidateXeroCache,
+  runCachedXeroGet,
+  runXeroRequest,
+  XERO_CACHE_TTL,
+} from "./xeroRequestManager";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const XERO_IDENTITY_BASE = "https://api.xero.com/connections";
@@ -133,6 +140,25 @@ export function getXeroRateLimitRetryDelayMs(headers: Record<string, unknown> | 
   return 1_000 * (2 ** attempt);
 }
 
+function getXeroRateLimitHeader(headers: Record<string, unknown> | undefined, name: string): string | null {
+  const raw = headers?.[name] ?? headers?.[name.toLowerCase()];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value == null ? null : String(value);
+}
+
+function describeXeroRateLimit(headers: Record<string, unknown> | undefined): string {
+  const problem = getXeroRateLimitHeader(headers, "x-rate-limit-problem") ?? "unknown";
+  const retryAfter = getXeroRateLimitHeader(headers, "retry-after") ?? "unknown";
+  const minuteRemaining = getXeroRateLimitHeader(headers, "x-minlimit-remaining") ?? "unknown";
+  const dayRemaining = getXeroRateLimitHeader(headers, "x-daylimit-remaining") ?? "unknown";
+  return `problem=${problem}, retryAfter=${retryAfter}s, minuteRemaining=${minuteRemaining}, dayRemaining=${dayRemaining}`;
+}
+
+export function createXeroIdempotencyKey(operation: string, payload: unknown): string {
+  const digest = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  return `ap-${operation}-${digest}`.slice(0, 128);
+}
+
 /**
  * A Xero HTTP 429 rejects the request before it is processed, so it is safe to
  * retry. The retry count is bounded to avoid leaving the invoice UI waiting too long.
@@ -181,6 +207,7 @@ export interface XeroPOLineItem {
   taxAmount: number;
   accountCode: string;
   itemCode: string;
+  taxType?: string;
 }
 
 export interface XeroPurchaseOrder {
@@ -268,26 +295,18 @@ async function findExistingXeroBill(
     return matched;
   };
 
-  // Strategy 1: with Type=ACCPAY
-  try {
-    const r1 = await axios.get(`${XERO_API_BASE}/Invoices`, {
-      headers,
-      params: { InvoiceNumbers: invoiceNumber, Type: "ACCPAY" },
-    });
-    const inv = r1.data?.Invoices?.[0];
-    if (isMatch(inv)) return inv;
-  } catch { /* fall through */ }
-  // Strategy 2: without Type filter (handles numeric invoice numbers Xero sometimes misses)
-  // Still enforces ACCPAY check via isMatch
-  try {
-    const r2 = await axios.get(`${XERO_API_BASE}/Invoices`, {
+  // A single unfiltered request handles both numeric and text invoice numbers.
+  // Local matching still strictly enforces ACCPAY and supplier identity.
+  const data = await runCachedXeroGet<any>(
+    auth,
+    `invoice-number:${invoiceNumber.trim().toUpperCase()}`,
+    XERO_CACHE_TTL.invoiceSearch,
+    () => axios.get(`${XERO_API_BASE}/Invoices`, {
       headers,
       params: { InvoiceNumbers: invoiceNumber },
-    });
-    const inv = r2.data?.Invoices?.find((i: any) => isMatch(i));
-    if (inv) return inv;
-  } catch { /* fall through */ }
-  return null;
+    }),
+  );
+  return data?.Invoices?.find((invoice: any) => isMatch(invoice)) ?? null;
 }
 
 export async function findXeroBillByInvoiceNumber(
@@ -299,22 +318,8 @@ export async function findXeroBillByInvoiceNumber(
   if (!auth) return null;
 
   try {
-    const response = await axios.get(`${XERO_API_BASE}/Invoices`, {
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        "Xero-tenant-id": auth.tenantId,
-        Accept: "application/json",
-      },
-      params: {
-        InvoiceNumbers: invoiceNumber,
-        Type: "ACCPAY",
-      },
-    });
-
-    const invoicesList = response.data?.Invoices ?? [];
-    if (invoicesList.length === 0) return null;
-
-    const inv = invoicesList[0];
+    const inv = await findExistingXeroBill(invoiceNumber, auth);
+    if (!inv) return null;
     return {
       invoiceId: inv.InvoiceID,
       invoiceNumber: inv.InvoiceNumber,
@@ -328,9 +333,9 @@ export async function findXeroBillByInvoiceNumber(
       status: inv.Status,
       currencyCode: inv.CurrencyCode ?? "AUD",
     };
-    } catch (err: any) {
+  } catch (err: any) {
     console.error("[Xero] Find bill error:", err?.response?.data ?? err.message);
-    return null;
+    throw err;
   }
 }
 
@@ -348,35 +353,22 @@ export async function checkXeroBillDuplicate(
   const auth = await getValidAccessToken(clientId, clientSecret);
   if (!auth) return null;
   try {
-    // Strategy 1: with Type=ACCPAY filter
-    let inv: any = null;
-    try {
-      const response = await axios.get(`${XERO_API_BASE}/Invoices`, {
+    const data = await runCachedXeroGet<any>(
+      auth,
+      `invoice-number:${invoiceNumber.trim().toUpperCase()}`,
+      XERO_CACHE_TTL.invoiceSearch,
+      () => axios.get(`${XERO_API_BASE}/Invoices`, {
         headers: {
           Authorization: `Bearer ${auth.token}`,
           "Xero-tenant-id": auth.tenantId,
           Accept: "application/json",
         },
-        params: { InvoiceNumbers: invoiceNumber, Type: "ACCPAY" },
-      });
-      const invoicesList = response.data?.Invoices ?? [];
-      inv = invoicesList.find((i: any) => i.Type === "ACCPAY" && i.Status !== "VOIDED" && i.Status !== "DELETED") ?? null;
-    } catch { /* fall through to strategy 2 */ }
-    // Strategy 2: without Type filter (Xero sometimes ignores Type for numeric numbers)
-    if (!inv) {
-      try {
-        const response2 = await axios.get(`${XERO_API_BASE}/Invoices`, {
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Xero-tenant-id": auth.tenantId,
-            Accept: "application/json",
-          },
-          params: { InvoiceNumbers: invoiceNumber },
-        });
-        const invoicesList2 = response2.data?.Invoices ?? [];
-        inv = invoicesList2.find((i: any) => i.Type === "ACCPAY" && i.Status !== "VOIDED" && i.Status !== "DELETED") ?? null;
-      } catch { /* fall through */ }
-    }
+        params: { InvoiceNumbers: invoiceNumber },
+      }),
+    );
+    const inv = (data?.Invoices ?? []).find(
+      (invoice: any) => invoice.Type === "ACCPAY" && invoice.Status !== "VOIDED" && invoice.Status !== "DELETED"
+    ) ?? null;
     if (!inv) return null;
     const nameInXero: string = inv.Contact?.Name ?? "";
     // Fuzzy name match: normalise both names (lowercase, strip punctuation/common words)
@@ -417,7 +409,7 @@ export async function checkXeroBillDuplicate(
     return { bill, supplierNameMatch, nameInXero };
   } catch (err: any) {
     console.error("[Xero] checkXeroBillDuplicate error:", err?.response?.data ?? err.message);
-    return null;
+    throw err;
   }
 }
 
@@ -431,18 +423,23 @@ export async function findXeroPurchaseOrderByNumber(
 
   try {
     // Xero supports direct lookup by PurchaseOrderNumber as a path segment
-    const response = await axios.get(
-      `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          Accept: "application/json",
-        },
-      }
+    const responseData = await runCachedXeroGet<any>(
+      auth,
+      `purchase-order:${poNumber.trim().toUpperCase()}`,
+      XERO_CACHE_TTL.purchaseOrder,
+      () => axios.get(
+        `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            Accept: "application/json",
+          },
+        }
+      ),
     );
 
-    const poList = response.data?.PurchaseOrders ?? [];
+    const poList = responseData?.PurchaseOrders ?? [];
     if (poList.length === 0) return null;
 
     const po = poList[0];
@@ -455,6 +452,7 @@ export async function findXeroPurchaseOrderByNumber(
       taxAmount: parseFloat(li.TaxAmount ?? "0"),
       accountCode: li.AccountCode ?? "",
       itemCode: li.ItemCode ?? "",
+      taxType: li.TaxType ?? undefined,
     }));
     return {
       purchaseOrderId: po.PurchaseOrderID,
@@ -471,6 +469,7 @@ export async function findXeroPurchaseOrderByNumber(
       lineItems,
     };
   } catch (err: any) {
+    if (!err?.response) throw err;
     // Only a genuine 404 means the requested PO number does not exist. Network,
     // authentication and rate-limit errors must not be converted to NOT_FOUND.
     if (err?.response?.status === 404) return null;
@@ -482,8 +481,9 @@ export async function findXeroPurchaseOrderByNumber(
       ?? err?.message
       ?? "Unknown Xero API error";
     const errorLabel = status ? `HTTP ${status}` : "network error";
-    console.error(`[Xero] Find PO failed for "${poNumber}" (${errorLabel}): ${detail || err?.message || "no response detail"}`);
-    throw new Error(`Xero could not retrieve PO ${poNumber} (${errorLabel}). Please retry shortly.`);
+    const rateLimitDetail = status === 429 ? `; ${describeXeroRateLimit(err?.response?.headers)}` : "";
+    console.error(`[Xero] Find PO failed for "${poNumber}" (${errorLabel}${rateLimitDetail}): ${detail || err?.message || "no response detail"}`);
+    throw new Error(`Xero could not retrieve PO ${poNumber} (${errorLabel}${rateLimitDetail}). Please retry shortly.`);
   }
 }
 
@@ -567,20 +567,23 @@ export async function createXeroDraftBill(
       console.log(`[Xero] createXeroDraftBill: forceCreateNew=true for ${data.invoiceNumber} — skipping pre-flight duplicate check`);
     }
 
-    const response = await withXeroRateLimitRetry(
+    const billRequest = { Invoices: [payload] };
+    const response = await runXeroRequest(
+      auth,
+      "create bill",
       () => axios.post(
         `${XERO_API_BASE}/Invoices`,
-        { Invoices: [payload] },
+        billRequest,
         {
           headers: {
             Authorization: `Bearer ${auth.token}`,
             "Xero-tenant-id": auth.tenantId,
             "Content-Type": "application/json",
             Accept: "application/json",
+            "Idempotency-Key": createXeroIdempotencyKey("bill", billRequest),
           },
         }
       ),
-      "bill creation"
     );
 
     const created = response.data?.Invoices?.[0];
@@ -600,6 +603,7 @@ export async function createXeroDraftBill(
       }
       throw new Error(`Xero bill validation failed: ${errors}`);
     }
+    await invalidateXeroCache(auth, `invoice-number:${data.invoiceNumber.trim().toUpperCase()}`);
     return { invoiceId: created.InvoiceID, invoiceNumber: created.InvoiceNumber };
   } catch (err: any) {
     const detail = err?.response?.data
@@ -816,18 +820,28 @@ export async function resolveXeroSupplierContact(input: {
       Accept: "application/json",
     };
 
-    const nameSearch = firstNameToken
-      ? await axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: firstNameToken } })
-      : { data: { Contacts: [] } };
-    const nameMatches = (nameSearch.data?.Contacts ?? [])
+    const nameSearchData = firstNameToken
+      ? await runCachedXeroGet<any>(
+          auth,
+          `contact-search:${firstNameToken}`,
+          XERO_CACHE_TTL.supplierSearch,
+          () => axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: firstNameToken } }),
+        )
+      : { Contacts: [] };
+    const nameMatches = (nameSearchData?.Contacts ?? [])
       .map(toContactCandidate)
       .filter((contact: XeroContactCandidate | null): contact is XeroContactCandidate => Boolean(contact))
       .filter((contact: XeroContactCandidate) => normaliseSupplierNameToken(contact.name) === firstNameToken);
 
-    const emailSearch = supplierEmail
-      ? await axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: supplierEmail } })
-      : { data: { Contacts: [] } };
-    const emailMatches = (emailSearch.data?.Contacts ?? [])
+    const emailSearchData = supplierEmail
+      ? await runCachedXeroGet<any>(
+          auth,
+          `contact-search:${supplierEmail}`,
+          XERO_CACHE_TTL.supplierSearch,
+          () => axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: supplierEmail } }),
+        )
+      : { Contacts: [] };
+    const emailMatches = (emailSearchData?.Contacts ?? [])
       .map(toContactCandidate)
       .filter((contact: XeroContactCandidate | null): contact is XeroContactCandidate => Boolean(contact))
       .filter((contact: XeroContactCandidate) => normaliseEmail(contact.email) === supplierEmail);
@@ -851,7 +865,9 @@ export async function resolveXeroSupplierContact(input: {
     return {
       status: "unavailable",
       candidates: [],
-      message: `Xero contact search is unavailable (${errorLabel}). No contact was created.`,
+      message: detail.startsWith("Xero ")
+        ? detail
+        : `Xero contact search is unavailable (${errorLabel}). No contact was created.`,
     };
   }
 }
@@ -866,24 +882,31 @@ export async function createXeroSupplierContact(input: {
   const auth = await getValidAccessToken(input.clientId, input.clientSecret);
   if (!auth) return null;
 
-  const createResponse = await axios.post(
-    `${XERO_API_BASE}/Contacts`,
-    {
-      Contacts: [{
-        Name: input.supplierName,
-        EmailAddress: input.supplierEmail ?? undefined,
-        TaxNumber: input.supplierAbn ?? undefined,
-      }],
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        "Xero-tenant-id": auth.tenantId,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-    }
+  const payload = {
+    Contacts: [{
+      Name: input.supplierName,
+      EmailAddress: input.supplierEmail ?? undefined,
+      TaxNumber: input.supplierAbn ?? undefined,
+    }],
+  };
+  const createResponse = await runXeroRequest(
+    auth,
+    "create supplier contact",
+    () => axios.post(
+      `${XERO_API_BASE}/Contacts`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "Idempotency-Key": createXeroIdempotencyKey("contact", payload),
+        },
+      }
+    ),
   );
+  await invalidateXeroCache(auth, "contact-search:");
 
   return createResponse.data?.Contacts?.[0]?.ContactID ?? null;
 }
@@ -930,36 +953,30 @@ export async function markXeroPOAsBilled(
   if (!auth) return false;
 
   try {
-    // First look up the PO to get its ID
-    const getResponse = await axios.get(
-      `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          Accept: "application/json",
-        },
-      }
-    );
-    const poList = getResponse.data?.PurchaseOrders ?? [];
-    if (poList.length === 0) return false;
-
-    const po = poList[0];
-    const poId = po.PurchaseOrderID;
+    const po = await findXeroPurchaseOrderByNumber(poNumber, clientId, clientSecret);
+    if (!po) return false;
+    const poId = po.purchaseOrderId;
 
     // Update the PO status to BILLED
-    await axios.post(
-      `${XERO_API_BASE}/PurchaseOrders/${poId}`,
-      { PurchaseOrders: [{ PurchaseOrderID: poId, Status: "BILLED" }] },
-      {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-      }
+    const payload = { PurchaseOrders: [{ PurchaseOrderID: poId, Status: "BILLED" }] };
+    await runXeroRequest(
+      auth,
+      `mark PO ${poNumber} billed`,
+      () => axios.post(
+        `${XERO_API_BASE}/PurchaseOrders/${poId}`,
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "Idempotency-Key": createXeroIdempotencyKey("po-billed", payload),
+          },
+        }
+      ),
     );
+    await invalidateXeroCache(auth, `purchase-order:${poNumber.trim().toUpperCase()}`);
     return true;
   } catch (err: any) {
     console.error(`[Xero] Mark PO ${poNumber} as BILLED error:`, err?.response?.data ?? err.message);
@@ -1001,39 +1018,28 @@ export async function convertPOsToBill(
 
   for (const poNumber of data.poNumbers) {
     try {
-      const response = await axios.get(
-        `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Xero-tenant-id": auth.tenantId,
-            Accept: "application/json",
-          },
-        }
-      );
-      const poList = response.data?.PurchaseOrders ?? [];
-      if (poList.length === 0) {
+      const po = await findXeroPurchaseOrderByNumber(poNumber, clientId, clientSecret);
+      if (!po) {
         console.warn(`[Xero] convertPOsToBill: PO ${poNumber} not found in Xero — skipping`);
         continue;
       }
-      const po = poList[0];
-      const poStatus = po.Status as string;
+      const poStatus = po.status;
       // Only pull line items from POs that are AUTHORISED or BILLED (approved stage)
       if (poStatus !== "AUTHORISED" && poStatus !== "BILLED") {
         console.warn(`[Xero] convertPOsToBill: PO ${poNumber} is in status ${poStatus} (not AUTHORISED/BILLED) — including anyway but approval should have moved it to AUTHORISED first`);
       }
-      for (const li of po.LineItems ?? []) {
+      for (const li of po.lineItems ?? []) {
         allLineItems.push({
-          description: li.Description ?? `PO ${poNumber}`,
-          quantity: parseFloat(li.Quantity ?? "1"),
-          unitAmount: parseFloat(li.UnitAmount ?? "0"),
+          description: li.description ?? `PO ${poNumber}`,
+          quantity: li.quantity,
+          unitAmount: li.unitAmount,
           // Inherit AccountCode and TaxType from the Xero PO — never hardcode
-          accountCode: li.AccountCode ?? null,
-          taxType: li.TaxType ?? null,
+          accountCode: li.accountCode ?? null,
+          taxType: li.taxType ?? null,
         });
       }
-    } catch {
-      // Skip POs that can't be fetched
+    } catch (error: any) {
+      throw new Error(`Could not load PO ${poNumber} for bill conversion: ${error?.message ?? error}`);
     }
   }
 
@@ -1112,20 +1118,23 @@ export async function convertPOsToBill(
       console.log(`[Xero] convertPOsToBill: forceCreateNew=true for ${data.invoiceNumber} — skipping pre-flight duplicate check`);
     }
 
-    const response = await withXeroRateLimitRetry(
+    const billRequest = { Invoices: [payload] };
+    const response = await runXeroRequest(
+      auth,
+      "create bill from purchase orders",
       () => axios.post(
         `${XERO_API_BASE}/Invoices`,
-        { Invoices: [payload] },
+        billRequest,
         {
           headers: {
             Authorization: `Bearer ${auth.token}`,
             "Xero-tenant-id": auth.tenantId,
             "Content-Type": "application/json",
             Accept: "application/json",
+            "Idempotency-Key": createXeroIdempotencyKey("po-bill", billRequest),
           },
         }
       ),
-      "bill creation"
     );
     const created = response.data?.Invoices?.[0];
     if (!created) throw new Error("Xero returned no invoice in response");
@@ -1144,6 +1153,7 @@ export async function convertPOsToBill(
       }
       throw new Error(`Xero bill validation failed: ${errors}`);
     }
+    await invalidateXeroCache(auth, `invoice-number:${data.invoiceNumber.trim().toUpperCase()}`);
     return { invoiceId: created.InvoiceID, invoiceNumber: created.InvoiceNumber };
   } catch (err: any) {
     const detail = err?.response?.data ? JSON.stringify(err.response.data) : err.message;
@@ -1205,17 +1215,22 @@ export async function updateXeroPODetails(
 
   // ── Step 1: Fetch the existing PO (we MUST have it to inherit LineAmountTypes and AccountCodes) ──
   console.log(`[Xero] updateXeroPODetails: fetching PO "${poNumber}"`);
-  const getResponse = await axios.get(
-    `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        "Xero-tenant-id": auth.tenantId,
-        Accept: "application/json",
-      },
-    }
+  const poResponseData = await runCachedXeroGet<any>(
+    auth,
+    `purchase-order:${poNumber.trim().toUpperCase()}`,
+    XERO_CACHE_TTL.purchaseOrder,
+    () => axios.get(
+      `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+      }
+    ),
   );
-  const poList = getResponse.data?.PurchaseOrders ?? [];
+  const poList = poResponseData?.PurchaseOrders ?? [];
   if (poList.length === 0) {
     throw new Error(`Purchase Order "${poNumber}" was not found in Xero.`);
   }
@@ -1242,17 +1257,23 @@ export async function updateXeroPODetails(
   // ── Helper: POST to /PurchaseOrders with readable error extraction ───────────────
   async function xeroPost(payload: Record<string, any>, label: string): Promise<any> {
     try {
-      const resp = await axios.post(
-        `${XERO_API_BASE}/PurchaseOrders`,
-        { PurchaseOrders: [payload] },
-        {
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Xero-tenant-id": auth.tenantId,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-        }
+      const requestBody = { PurchaseOrders: [payload] };
+      const resp = await runXeroRequest(
+        auth,
+        label,
+        () => axios.post(
+          `${XERO_API_BASE}/PurchaseOrders`,
+          requestBody,
+          {
+            headers: {
+              Authorization: `Bearer ${auth.token}`,
+              "Xero-tenant-id": auth.tenantId,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              "Idempotency-Key": createXeroIdempotencyKey("po-update", requestBody),
+            },
+          }
+        ),
       );
       const result = resp.data?.PurchaseOrders?.[0];
       if (result?.HasErrors) {
@@ -1424,6 +1445,7 @@ export async function updateXeroPODetails(
 
   // ── Step 4: Send the update ──────────────────────────────────────────────────────────
   const afterUpdate = await xeroPost(payload, `Update "${poNumber}"`);
+  await invalidateXeroCache(auth, `purchase-order:${poNumber.trim().toUpperCase()}`);
   return { poId, finalStatus: afterUpdate?.Status ?? targetStatus };
 }
 
@@ -1440,17 +1462,22 @@ export async function getXeroPOPaymentStatus(
   if (!auth) return null;
 
   try {
-    const response = await axios.get(
-      `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${auth.token}`,
-          "Xero-tenant-id": auth.tenantId,
-          Accept: "application/json",
-        },
-      }
+    const responseData = await runCachedXeroGet<any>(
+      auth,
+      `purchase-order:${poNumber.trim().toUpperCase()}`,
+      XERO_CACHE_TTL.paymentStatus,
+      () => axios.get(
+        `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Xero-tenant-id": auth.tenantId,
+            Accept: "application/json",
+          },
+        }
+      ),
     );
-    const poList = response.data?.PurchaseOrders ?? [];
+    const poList = responseData?.PurchaseOrders ?? [];
     if (poList.length === 0) return null;
 
     const po = poList[0];
@@ -1463,6 +1490,7 @@ export async function getXeroPOPaymentStatus(
       paidDate: po.UpdatedDateUTC ? new Date(po.UpdatedDateUTC).toISOString().split("T")[0] : undefined,
     };
   } catch (err: any) {
+    if (!err?.response) throw err;
     if (err?.response?.status === 404) return null;
     console.error(`[Xero] Get PO payment status error:`, err?.response?.data ?? err.message);
     return null;
@@ -1483,7 +1511,8 @@ export async function uploadXeroBillAttachment(opts: {
   mimeType?: string;
 }): Promise<{ success: boolean; error?: string }> {
   try {
-    const { token, tenantId } = await getValidAccessToken(opts.clientId, opts.clientSecret);
+    const auth = await getValidAccessToken(opts.clientId, opts.clientSecret);
+    const { token, tenantId } = auth;
 
     // Download the file bytes from storage (follow redirects, presigned S3 URL)
     const fileResp = await axios.get(opts.fileUrl, {
@@ -1504,17 +1533,27 @@ export async function uploadXeroBillAttachment(opts: {
     // Encode only the filename portion for the URL path
     const uploadUrl = `${XERO_API_BASE}/Invoices/${opts.xeroInvoiceId}/Attachments/${encodeURIComponent(safeName)}`;
 
-    await axios.put(uploadUrl, fileBuffer, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Xero-tenant-id": tenantId,
-        "Content-Type": mimeType,
-        "Content-Length": String(fileBuffer.length),
-        "Content-Disposition": `attachment; filename="${safeName}"`,
-        Accept: "application/json",
-      },
-      maxRedirects: 5,
-    });
+    const contentDigest = createHash("sha256").update(fileBuffer).digest("hex");
+    await runXeroRequest(
+      auth,
+      "upload invoice attachment",
+      () => axios.put(uploadUrl, fileBuffer, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Xero-tenant-id": tenantId,
+          "Content-Type": mimeType,
+          "Content-Length": String(fileBuffer.length),
+          "Content-Disposition": `attachment; filename="${safeName}"`,
+          Accept: "application/json",
+          "Idempotency-Key": createXeroIdempotencyKey("attachment", {
+            invoiceId: opts.xeroInvoiceId,
+            safeName,
+            contentDigest,
+          }),
+        },
+        maxRedirects: 5,
+      }),
+    );
 
     console.log(`[Xero] Attachment uploaded to bill ${opts.xeroInvoiceId}: ${safeName}`);
     return { success: true };

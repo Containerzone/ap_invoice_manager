@@ -263,3 +263,9 @@
 
 ## Xero Bill Creation Rate Limit Handling (Session 19)
 - [x] Add bounded HTTP 429 retry handling to Xero bill creation and return a clear retryable failure if Xero remains throttled
+
+## Xero 429 Root-Cause and Permanent Fix (Session 19)
+- [x] Map all Xero requests triggered by verify, approve, supplier resolution, push and attachment flows
+- [x] Confirm current Xero limits and capture live rate-limit response headers
+- [x] Implement central per-tenant request throttling, in-flight deduplication and short-lived read caching
+- [x] Eliminate redundant Xero calls across invoice workflows and add regression/load coverage

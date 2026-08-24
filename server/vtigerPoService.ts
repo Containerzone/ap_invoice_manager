@@ -13,7 +13,13 @@
  */
 
 import axios from "axios";
-import { findOrCreateXeroContact } from "./xeroService";
+import { createXeroIdempotencyKey, findOrCreateXeroContact } from "./xeroService";
+import {
+  invalidateXeroCache,
+  runCachedXeroGet,
+  runXeroRequest,
+  XERO_CACHE_TTL,
+} from "./xeroRequestManager";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -263,17 +269,23 @@ async function checkPoExists(
   auth: { token: string; tenantId: string }
 ): Promise<string | null> {
   try {
-    const resp = await axios.get(`${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`, {
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        "Xero-tenant-id": auth.tenantId,
-        Accept: "application/json",
-      },
-    });
-    const list = resp.data?.PurchaseOrders ?? [];
+    const data = await runCachedXeroGet<any>(
+      auth,
+      `purchase-order:${poNumber.trim().toUpperCase()}`,
+      XERO_CACHE_TTL.purchaseOrder,
+      () => axios.get(`${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(poNumber)}`, {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+      }),
+    );
+    const list = data?.PurchaseOrders ?? [];
     return list.length > 0 ? list[0].PurchaseOrderID : null;
-  } catch {
-    return null;
+  } catch (error: any) {
+    if (error?.response?.status === 404) return null;
+    throw error;
   }
 }
 
@@ -323,14 +335,20 @@ async function createXeroDraftPO(opts: {
 
   let resp: any;
   try {
-    resp = await axios.post(`${XERO_API_BASE}/PurchaseOrders`, body, {
-      headers: {
-        Authorization: `Bearer ${opts.auth.token}`,
-        "Xero-tenant-id": opts.auth.tenantId,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-    });
+    resp = await runXeroRequest(
+      opts.auth,
+      `create PO ${opts.poNumber}`,
+      () => axios.post(`${XERO_API_BASE}/PurchaseOrders`, body, {
+        headers: {
+          Authorization: `Bearer ${opts.auth.token}`,
+          "Xero-tenant-id": opts.auth.tenantId,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "Idempotency-Key": createXeroIdempotencyKey("vtiger-po", body),
+        },
+      }),
+    );
+    await invalidateXeroCache(opts.auth, `purchase-order:${opts.poNumber.trim().toUpperCase()}`);
   } catch (err: any) {
     // Extract detailed Xero error from HTTP 4xx/5xx response body
     const xeroData = err?.response?.data;

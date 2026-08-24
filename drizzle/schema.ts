@@ -8,6 +8,7 @@ import {
   decimal,
   boolean,
   json,
+  uniqueIndex,
 } from "drizzle-orm/mysql-core";
 
 // ─── Users ────────────────────────────────────────────────────────────────────
@@ -253,12 +254,33 @@ export const xeroTokens = mysqlTable("xero_tokens", {
   expiresAt: timestamp("expiresAt").notNull(),
   scope: text("scope"),
   connectedBy: int("connectedBy").notNull(),
+  rateLimitPausedUntil: timestamp("rateLimitPausedUntil"),
+  rateLimitProblem: varchar("rateLimitProblem", { length: 32 }),
+  rateLimitRetryAfterSeconds: int("rateLimitRetryAfterSeconds"),
+  rateLimitMinuteRemaining: int("rateLimitMinuteRemaining"),
+  rateLimitDayRemaining: int("rateLimitDayRemaining"),
+  rateLimitUpdatedAt: timestamp("rateLimitUpdatedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type XeroToken = typeof xeroTokens.$inferSelect;
 export type InsertXeroToken = typeof xeroTokens.$inferInsert;
+
+export const xeroApiCache = mysqlTable("xero_api_cache", {
+  id: int("id").autoincrement().primaryKey(),
+  tenantId: varchar("tenantId", { length: 64 }).notNull(),
+  cacheKey: varchar("cacheKey", { length: 255 }).notNull(),
+  responseData: json("responseData").notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  tenantCacheKey: uniqueIndex("xero_api_cache_tenant_key").on(table.tenantId, table.cacheKey),
+}));
+
+export type XeroApiCache = typeof xeroApiCache.$inferSelect;
+export type InsertXeroApiCache = typeof xeroApiCache.$inferInsert;
 
 // ─── PO Requests (Vtiger → Xero) ─────────────────────────────────────────────
 // Each row represents one Vtiger Deal webhook event that triggered PO creation.

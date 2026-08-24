@@ -80,6 +80,27 @@ export default function Settings() {
             </div>
           ) : xeroStatus?.connected ? (
             <div className="space-y-4">
+              {xeroStatus.rateLimit?.active && (
+                <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-300 rounded-xl">
+                  <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-red-900">
+                      Xero {xeroStatus.rateLimit.problem === "day" ? "Daily" : "API"} Request Limit Reached
+                    </p>
+                    <p className="text-sm text-red-800 mt-0.5">
+                      Xero has instructed the application to pause this organisation until{" "}
+                      <strong>
+                        {xeroStatus.rateLimit.pausedUntil
+                          ? new Date(xeroStatus.rateLimit.pausedUntil).toLocaleString("en-AU")
+                          : "the limit resets"}
+                      </strong>.
+                    </p>
+                    <p className="text-xs text-red-700 mt-1">
+                      The application will not send further Xero requests during this pause. Daily calls remaining: {xeroStatus.rateLimit.dayRemaining ?? 0}; minute calls remaining: {xeroStatus.rateLimit.minuteRemaining ?? "unknown"}.
+                    </p>
+                  </div>
+                </div>
+              )}
               {/* Missing attachments scope warning — shown when token lacks accounting.attachments */}
               {!xeroStatus.hasAttachmentsScope && (
                 <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-300 rounded-xl">

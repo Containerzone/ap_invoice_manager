@@ -24,6 +24,7 @@ import {
   pendingInvites,
   suppliers,
   users,
+  xeroApiCache,
   xeroTokens,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -403,6 +404,75 @@ export async function upsertXeroToken(data: InsertXeroToken): Promise<void> {
   } else {
     await db.insert(xeroTokens).values(data);
   }
+}
+
+export async function updateXeroRateLimitState(
+  tenantId: string,
+  state: {
+    rateLimitPausedUntil?: Date | null;
+    rateLimitProblem?: string | null;
+    rateLimitRetryAfterSeconds?: number | null;
+    rateLimitMinuteRemaining?: number | null;
+    rateLimitDayRemaining?: number | null;
+    rateLimitUpdatedAt?: Date | null;
+  }
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(xeroTokens).set(state).where(eq(xeroTokens.tenantId, tenantId));
+}
+
+export async function getXeroApiCache<T>(tenantId: string, cacheKey: string): Promise<T | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db
+    .select({ responseData: xeroApiCache.responseData })
+    .from(xeroApiCache)
+    .where(and(
+      eq(xeroApiCache.tenantId, tenantId),
+      eq(xeroApiCache.cacheKey, cacheKey),
+      gte(xeroApiCache.expiresAt, new Date()),
+    ))
+    .limit(1);
+  return (rows[0]?.responseData as T | undefined) ?? null;
+}
+
+export async function setXeroApiCache<T>(
+  tenantId: string,
+  cacheKey: string,
+  responseData: T,
+  ttlMs: number,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  const expiresAt = new Date(Date.now() + ttlMs);
+  await db.insert(xeroApiCache).values({
+    tenantId,
+    cacheKey,
+    responseData: responseData as any,
+    expiresAt,
+  }).onDuplicateKeyUpdate({
+    set: { responseData: responseData as any, expiresAt, updatedAt: new Date() },
+  });
+}
+
+export async function invalidateXeroApiCache(tenantId: string, cacheKeyPrefix?: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  if (cacheKeyPrefix) {
+    await db.delete(xeroApiCache).where(and(
+      eq(xeroApiCache.tenantId, tenantId),
+      like(xeroApiCache.cacheKey, `${cacheKeyPrefix}%`),
+    ));
+    return;
+  }
+  await db.delete(xeroApiCache).where(eq(xeroApiCache.tenantId, tenantId));
+}
+
+export async function deleteExpiredXeroApiCache(): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(xeroApiCache).where(lt(xeroApiCache.expiresAt, new Date()));
 }
 
 export async function deleteXeroToken(): Promise<void> {

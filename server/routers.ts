@@ -2043,12 +2043,23 @@ export const appRouter = router({
       const token = await getXeroToken();
       const scope = token?.scope ?? null;
       const hasAttachmentsScope = scope ? scope.includes("accounting.attachments") : false;
+      const rateLimitPausedUntil = token?.rateLimitPausedUntil ?? null;
+      const rateLimitActive = !!rateLimitPausedUntil && rateLimitPausedUntil.getTime() > Date.now();
       return {
         connected: !!token,
         tenantName: token?.tenantName ?? null,
         expiresAt: token?.expiresAt ?? null,
         scope,
         hasAttachmentsScope,
+        rateLimit: {
+          active: rateLimitActive,
+          problem: token?.rateLimitProblem ?? null,
+          pausedUntil: rateLimitPausedUntil,
+          retryAfterSeconds: token?.rateLimitRetryAfterSeconds ?? null,
+          minuteRemaining: token?.rateLimitMinuteRemaining ?? null,
+          dayRemaining: token?.rateLimitDayRemaining ?? null,
+          updatedAt: token?.rateLimitUpdatedAt ?? null,
+        },
       };
     }),
 
