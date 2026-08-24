@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
+import { updateInvoice } from "./db";
 import type { TrpcContext } from "./_core/context";
 
 // Mock all db helpers
@@ -251,6 +252,25 @@ describe("auth.me", () => {
     const caller = appRouter.createCaller(ctx);
     const result = await caller.auth.me();
     expect(result).toBeNull();
+  });
+});
+
+describe("invoices.updateExtracted", () => {
+  it("persists null PO values when a user intentionally clears the PO fields", async () => {
+    const updateInvoiceMock = vi.mocked(updateInvoice);
+    updateInvoiceMock.mockClear();
+    const caller = appRouter.createCaller(makeAdminCtx());
+
+    await caller.invoices.updateExtracted({
+      id: 299,
+      extractedPoNumber: null,
+      extractedPoNumbers: null,
+    });
+
+    expect(updateInvoiceMock).toHaveBeenCalledWith(299, expect.objectContaining({
+      extractedPoNumber: null,
+      extractedPoNumbers: null,
+    }));
   });
 });
 

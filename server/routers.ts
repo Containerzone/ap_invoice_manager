@@ -694,12 +694,15 @@ export const appRouter = router({
       )
       .mutation(async ({ input }) => {
         const { id, extractedContainerNumbers, extractedPoNumbers, ...rest } = input;
+        // `null` is an intentional manual clear. Do not coalesce it to `undefined`,
+        // because undefined omits the database update and leaves the previous PO list in place.
+        const hasPoNumberListUpdate = Object.prototype.hasOwnProperty.call(input, "extractedPoNumbers");
         await updateInvoice(id, {
           ...rest,
           extractedContainerNumbers: extractedContainerNumbers
             ? JSON.stringify(extractedContainerNumbers)
             : undefined,
-          extractedPoNumbers: extractedPoNumbers ?? undefined,
+          extractedPoNumbers: hasPoNumberListUpdate ? extractedPoNumbers : undefined,
         } as any);
         return { success: true };
       }),

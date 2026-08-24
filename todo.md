@@ -244,3 +244,7 @@
 - [x] Add name-first and email-validation Xero contact matching, including distinct no-match, name/email conflict and multiple-candidate outcomes
 - [x] Block automatic contact creation for name/email conflicts or multiple candidates; add an authorised contact-selection/approval path
 - [x] Update Xero bill/PO creation flows to use the approved contact resolution and add Vitest coverage
+
+## Cleared PO Persistence Fix (Session 19)
+- [x] Preserve an intentional blank PO list when invoice fields are saved; do not reconstruct it from line items or OCR/extraction data
+- [x] Ensure a cleared no-PO invoice below $500 exposes the admin approval path and add regression coverage
