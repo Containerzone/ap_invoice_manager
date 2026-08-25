@@ -134,21 +134,22 @@ describe("classifyXeroContactMatches", () => {
     });
   });
 
-  it("keeps the exact canonical supplier contact ahead of broader first-token candidates", () => {
+  it("keeps the exact literal supplier contact ahead of malformed and broader first-token candidates", () => {
     const search = getSupplierNameSearch("CONTAINERZONE");
     const broadMatches = [
       contact("containerzone", "CONTAINERZONE", "admin@containerzone.com.au"),
+      contact("containerzone-malformed", "CONTAINERZONE\\", null),
       contact("house-supplier", "Containerzone House Supplier", null),
       contact("house-driver", "Containerzone House Driver", null),
     ].filter((candidate) => matchesXeroSupplierName(candidate.name, search));
-    const exactCanonicalMatches = broadMatches.filter(
-      (candidate) => candidate.name.toLowerCase() === "containerzone"
+    const exactLiteralMatches = broadMatches.filter(
+      (candidate) => candidate.name.trim().toLowerCase() === "containerzone"
     );
 
     const result = classifyXeroContactMatches({
       supplierName: "CONTAINERZONE",
       supplierEmail: null,
-      nameMatches: exactCanonicalMatches.length === 1 ? exactCanonicalMatches : broadMatches,
+      nameMatches: exactLiteralMatches.length === 1 ? exactLiteralMatches : broadMatches,
       emailMatches: [],
     });
 

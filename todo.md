@@ -298,6 +298,7 @@
 
 ## D702836 PO Creation Investigation (Session 19)
 - [x] Trace the Vtiger trigger, Xero request and failure response for purchase order D702836; correct the underlying issue if required
+- [x] Prioritise the exact literal `CONTAINERZONE` contact over the malformed `CONTAINERZONE\` near-duplicate and revalidate D702836 supplier resolution
 
 ## Xero Usage Since Reset (Session 19)
 - [x] Calculate the number of Xero API calls used since the current daily allowance reset

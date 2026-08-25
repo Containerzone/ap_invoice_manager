@@ -700,6 +700,10 @@ function normaliseSupplierNameKey(value: string): string {
     .join(" ");
 }
 
+function normaliseLiteralSupplierName(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
 export function matchesXeroSupplierName(contactName: string, search: ReturnType<typeof getSupplierNameSearch>): boolean {
   return search.exactNameKey
     ? normaliseSupplierNameKey(contactName) === search.exactNameKey
@@ -892,15 +896,23 @@ export async function resolveXeroSupplierContact(input: {
       // housekeeping contacts (for example, "Containerzone House Driver"). When
       // exactly one candidate has the same canonical full supplier name, it is a
       // stronger and safe match than the broader first-token candidate set.
+      const literalSupplierName = normaliseLiteralSupplierName(input.supplierName);
+      const exactLiteralNameMatches = literalSupplierName
+        ? broadNameMatches.filter(
+            (contact: XeroContactCandidate) => normaliseLiteralSupplierName(contact.name) === literalSupplierName
+          )
+        : [];
       const canonicalSupplierName = normaliseSupplierNameKey(input.supplierName);
       const exactCanonicalNameMatches = canonicalSupplierName
         ? broadNameMatches.filter(
             (contact: XeroContactCandidate) => normaliseSupplierNameKey(contact.name) === canonicalSupplierName
           )
         : [];
-      const nameMatches = exactCanonicalNameMatches.length === 1
-        ? exactCanonicalNameMatches
-        : broadNameMatches;
+      const nameMatches = exactLiteralNameMatches.length === 1
+        ? exactLiteralNameMatches
+        : exactCanonicalNameMatches.length === 1
+          ? exactCanonicalNameMatches
+          : broadNameMatches;
 
       const emailSearchData = supplierEmail
         ? await runCachedXeroGet<any>(
