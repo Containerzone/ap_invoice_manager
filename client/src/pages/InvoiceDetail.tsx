@@ -24,6 +24,7 @@ import {
   ShieldAlert, ShieldCheck, Paperclip,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getResolveConfirmationBlockers } from "@/lib/resolveConfirmations";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -713,6 +714,13 @@ export default function InvoiceDetail() {
   const supplierContactUnavailable = supplierContactResolution?.status === "unavailable";
   const supplierContactApprovalReady = !supplierContactNeedsSelection ||
     (Boolean(selectedXeroContactId) && contactSelectionApproved);
+  const resolveConfirmationBlockers = getResolveConfirmationBlockers({
+    hasXeroConflict: Boolean(xeroConflict),
+    xeroConflictAcknowledged,
+    supplierContactNeedsSelection,
+    selectedXeroContactId,
+    contactSelectionApproved,
+  });
 
   const handleResolve = async () => {
     try {
@@ -2024,7 +2032,9 @@ export default function InvoiceDetail() {
                       onChange={(e) => setXeroConflictAcknowledged(e.target.checked)}
                       className="h-3.5 w-3.5 rounded border-amber-400"
                     />
-                    <span className="text-xs text-amber-700 dark:text-amber-400">I understand and want to proceed</span>
+                    <span className="text-xs text-amber-700 dark:text-amber-400">
+                      I understand and want to proceed <strong>(required to enable Resolve &amp; Push)</strong>
+                    </span>
                   </label>
                 </div>
               </div>
@@ -2106,6 +2116,11 @@ export default function InvoiceDetail() {
             </div>
           </div>
           <DialogFooter>
+            {resolveConfirmationBlockers.length > 0 && (
+              <p className="mr-auto max-w-sm text-xs text-amber-700 dark:text-amber-300">
+                <strong>To continue:</strong> {resolveConfirmationBlockers.join(" and ")}.
+              </p>
+            )}
             <Button variant="outline" onClick={() => setShowResolveDialog(false)}>Cancel</Button>
             <Button
               onClick={handleResolve}
@@ -2115,7 +2130,7 @@ export default function InvoiceDetail() {
                 !supplierContactResolution ||
                 supplierContactUnavailable ||
                 !supplierContactApprovalReady ||
-                (!!xeroConflict && !xeroConflictAcknowledged)
+                resolveConfirmationBlockers.length > 0
               }
               className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
             >

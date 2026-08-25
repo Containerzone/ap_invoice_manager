@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { classifyXeroContactMatches, type XeroContactCandidate } from "./xeroService";
+import {
+  classifyXeroContactMatches,
+  getSupplierNameSearch,
+  matchesXeroSupplierName,
+  type XeroContactCandidate,
+} from "./xeroService";
 
 const contact = (contactId: string, name: string, email: string | null): XeroContactCandidate => ({
   contactId,
@@ -9,6 +14,19 @@ const contact = (contactId: string, name: string, email: string | null): XeroCon
 });
 
 describe("classifyXeroContactMatches", () => {
+  it("uses a full canonical name instead of a one-letter leading token", () => {
+    const search = getSupplierNameSearch("A & F Transport Pty Ltd");
+
+    expect(search).toMatchObject({
+      searchTerm: "A & F Transport Pty Ltd",
+      exactNameKey: "a f transport",
+    });
+    expect(matchesXeroSupplierName("A & F Transport", search)).toBe(true);
+    expect(matchesXeroSupplierName("A&N Construction Co Pty Ltd", search)).toBe(false);
+    expect(matchesXeroSupplierName("A West Bin", search)).toBe(false);
+    expect(matchesXeroSupplierName("A-Plus Plumbing", search)).toBe(false);
+  });
+
   it("matches automatically only when the single name and email match the same Xero contact", () => {
     const scf = contact("scf-1", "SCF Containers", "accounts@scf.com.au");
 

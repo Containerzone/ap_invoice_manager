@@ -648,13 +648,62 @@ export type XeroContactResolution =
       message: string;
     };
 
-function normaliseSupplierNameToken(value: string): string {
+const SUPPLIER_LEGAL_SUFFIXES = new Set(["pty", "ltd", "limited", "pl", "p", "inc", "llc", "co", "company"]);
+
+function supplierNameTokens(value: string): string[] {
   return value
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter(Boolean)[0] ?? "";
+    .filter(Boolean);
+}
+
+export function getSupplierNameSearch(value: string): {
+  searchTerm: string;
+  exactNameKey: string | null;
+  firstMeaningfulToken: string;
+} {
+  const tokens = supplierNameTokens(value);
+  const businessTokens = tokens.filter((token) => !SUPPLIER_LEGAL_SUFFIXES.has(token));
+  const firstMeaningfulToken = businessTokens.find((token) => token.length > 1) ?? "";
+  const firstTokenIsOneLetter = (businessTokens[0] ?? "").length === 1;
+
+  // A leading initial such as "A" in "A & F Transport" is not a meaningful
+  // identifier. Searching it returns unrelated A-prefixed contacts, so require
+  // a full canonical business-name match instead.
+  if (firstTokenIsOneLetter) {
+    const exactNameKey = businessTokens.join(" ");
+    return {
+      // Preserve punctuation and legal suffixes for Xero's own contact search,
+      // while using the canonical key below to decide whether a result is valid.
+      searchTerm: value.trim(),
+      exactNameKey: exactNameKey || null,
+      firstMeaningfulToken,
+    };
+  }
+
+  return {
+    searchTerm: firstMeaningfulToken,
+    exactNameKey: null,
+    firstMeaningfulToken,
+  };
+}
+
+function normaliseSupplierNameToken(value: string): string {
+  return getSupplierNameSearch(value).firstMeaningfulToken;
+}
+
+function normaliseSupplierNameKey(value: string): string {
+  return supplierNameTokens(value)
+    .filter((token) => !SUPPLIER_LEGAL_SUFFIXES.has(token))
+    .join(" ");
+}
+
+export function matchesXeroSupplierName(contactName: string, search: ReturnType<typeof getSupplierNameSearch>): boolean {
+  return search.exactNameKey
+    ? normaliseSupplierNameKey(contactName) === search.exactNameKey
+    : normaliseSupplierNameToken(contactName) === search.firstMeaningfulToken;
 }
 
 function normaliseEmail(value: string | null | undefined): string {
@@ -758,7 +807,7 @@ export function classifyXeroContactMatches(input: {
       matchBasis: "name_only",
       contact: nameMatch,
       candidates,
-      message: "A single Xero contact matches the supplier's first name token; no supplier email was available for a second validation.",
+      message: "A single Xero contact matches the supplier name; no supplier email was available for a second validation.",
     };
   }
 
@@ -812,7 +861,7 @@ export async function resolveXeroSupplierContact(input: {
       };
     }
 
-    const firstNameToken = normaliseSupplierNameToken(input.supplierName);
+    const nameSearch = getSupplierNameSearch(input.supplierName);
     const supplierEmail = normaliseEmail(input.supplierEmail);
     const headers = {
       Authorization: `Bearer ${auth.token}`,
@@ -820,38 +869,57 @@ export async function resolveXeroSupplierContact(input: {
       Accept: "application/json",
     };
 
-    const nameSearchData = firstNameToken
-      ? await runCachedXeroGet<any>(
-          auth,
-          `contact-search:${firstNameToken}`,
-          XERO_CACHE_TTL.supplierSearch,
-          () => axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: firstNameToken } }),
-        )
-      : { Contacts: [] };
-    const nameMatches = (nameSearchData?.Contacts ?? [])
-      .map(toContactCandidate)
-      .filter((contact: XeroContactCandidate | null): contact is XeroContactCandidate => Boolean(contact))
-      .filter((contact: XeroContactCandidate) => normaliseSupplierNameToken(contact.name) === firstNameToken);
+    const collectMatches = async (forceFresh = false) => {
+      if (forceFresh) {
+        // A contact may have just been manually created in Xero. Do not let the
+        // six-hour local contact cache turn that into a duplicate creation.
+        await invalidateXeroCache(auth, "contact-search:");
+      }
 
-    const emailSearchData = supplierEmail
-      ? await runCachedXeroGet<any>(
-          auth,
-          `contact-search:${supplierEmail}`,
-          XERO_CACHE_TTL.supplierSearch,
-          () => axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: supplierEmail } }),
-        )
-      : { Contacts: [] };
-    const emailMatches = (emailSearchData?.Contacts ?? [])
-      .map(toContactCandidate)
-      .filter((contact: XeroContactCandidate | null): contact is XeroContactCandidate => Boolean(contact))
-      .filter((contact: XeroContactCandidate) => normaliseEmail(contact.email) === supplierEmail);
+      const nameSearchData = nameSearch.searchTerm
+        ? await runCachedXeroGet<any>(
+            auth,
+            `contact-search:${nameSearch.searchTerm}`,
+            XERO_CACHE_TTL.supplierSearch,
+            () => axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: nameSearch.searchTerm } }),
+          )
+        : { Contacts: [] };
+      const nameMatches = (nameSearchData?.Contacts ?? [])
+        .map(toContactCandidate)
+        .filter((contact: XeroContactCandidate | null): contact is XeroContactCandidate => Boolean(contact))
+        .filter((contact: XeroContactCandidate) => matchesXeroSupplierName(contact.name, nameSearch));
 
-    return classifyXeroContactMatches({
+      const emailSearchData = supplierEmail
+        ? await runCachedXeroGet<any>(
+            auth,
+            `contact-search:${supplierEmail}`,
+            XERO_CACHE_TTL.supplierSearch,
+            () => axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: supplierEmail } }),
+          )
+        : { Contacts: [] };
+      const emailMatches = (emailSearchData?.Contacts ?? [])
+        .map(toContactCandidate)
+        .filter((contact: XeroContactCandidate | null): contact is XeroContactCandidate => Boolean(contact))
+        .filter((contact: XeroContactCandidate) => normaliseEmail(contact.email) === supplierEmail);
+
+      return { nameMatches, emailMatches };
+    };
+
+    let matches = await collectMatches();
+    let resolution = classifyXeroContactMatches({
       supplierName: input.supplierName,
       supplierEmail: input.supplierEmail,
-      nameMatches,
-      emailMatches,
+      ...matches,
     });
+    if (resolution.status === "create_new") {
+      matches = await collectMatches(true);
+      resolution = classifyXeroContactMatches({
+        supplierName: input.supplierName,
+        supplierEmail: input.supplierEmail,
+        ...matches,
+      });
+    }
+    return resolution;
   } catch (err: any) {
     const status = err?.response?.status;
     const responseData = err?.response?.data;

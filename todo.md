@@ -269,3 +269,19 @@
 - [x] Confirm current Xero limits and capture live rate-limit response headers
 - [x] Implement central per-tenant request throttling, in-flight deduplication and short-lived read caching
 - [x] Eliminate redundant Xero calls across invoice workflows and add regression/load coverage
+
+## Xero Daily Allowance Guidance (Session 19)
+- [x] Confirm the current Xero process for requesting a higher daily API allowance and advise the account owner
+
+## Xero 5,000-Call Capacity Estimate (Session 19)
+- [x] Estimate practical daily invoice push capacity by current Xero workflow and caching assumptions
+
+## Xero Tier Verification (Session 19)
+- [x] Verify whether yesterday's exhausted Xero allowance was the 1,000-call Starter tier or the 5,000-call higher tier, and document the evidence
+
+## Xero Contact Name Matching Fix (Session 19)
+- [x] Ignore one-letter leading name tokens when matching Xero supplier contacts; require a meaningful name match before showing candidates
+- [x] Ensure no valid name-or-email match proceeds to create a new Xero contact and immediately refreshes the relevant lookup cache
+- [x] Add regression coverage for newly created suppliers such as "A & F Transport"
+- [x] Make the Resolve & Push dialog clearly identify every outstanding required confirmation when an invoice-number conflict and supplier-contact selection both apply
+- [x] Verify Resolve & Push unlocks after the invoice-number conflict acknowledgement when the supplier contact is already confirmed
