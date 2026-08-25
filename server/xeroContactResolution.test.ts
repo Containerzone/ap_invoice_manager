@@ -134,6 +134,31 @@ describe("classifyXeroContactMatches", () => {
     });
   });
 
+  it("keeps the exact canonical supplier contact ahead of broader first-token candidates", () => {
+    const search = getSupplierNameSearch("CONTAINERZONE");
+    const broadMatches = [
+      contact("containerzone", "CONTAINERZONE", "admin@containerzone.com.au"),
+      contact("house-supplier", "Containerzone House Supplier", null),
+      contact("house-driver", "Containerzone House Driver", null),
+    ].filter((candidate) => matchesXeroSupplierName(candidate.name, search));
+    const exactCanonicalMatches = broadMatches.filter(
+      (candidate) => candidate.name.toLowerCase() === "containerzone"
+    );
+
+    const result = classifyXeroContactMatches({
+      supplierName: "CONTAINERZONE",
+      supplierEmail: null,
+      nameMatches: exactCanonicalMatches.length === 1 ? exactCanonicalMatches : broadMatches,
+      emailMatches: [],
+    });
+
+    expect(result).toMatchObject({
+      status: "matched",
+      matchBasis: "name_only",
+      contact: { contactId: "containerzone" },
+    });
+  });
+
   it("allows a new contact only when neither the name nor email has a match", () => {
     const result = classifyXeroContactMatches({
       supplierName: "New Supplier Pty Ltd",

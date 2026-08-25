@@ -2125,6 +2125,62 @@ export const appRouter = router({
         });
       }),
 
+    createSupplierContact: protectedProcedure
+      .input(z.object({ invoiceId: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const invoice = await getInvoiceById(input.invoiceId);
+        if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Invoice not found" });
+
+        const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
+        const supplierName = supplier?.name ?? invoice.extractedSupplierName ?? "";
+        const supplierEmail = supplier?.email ?? invoice.extractedSupplierEmail ?? null;
+        const supplierAbn = supplier?.abn ?? invoice.extractedSupplierAbn ?? null;
+        if (!supplierName.trim()) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "A supplier name is required before creating a Xero contact." });
+        }
+
+        const clientId = process.env.XERO_CLIENT_ID;
+        const clientSecret = process.env.XERO_CLIENT_SECRET;
+        if (!clientId || !clientSecret) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Xero credentials are not configured." });
+        }
+
+        // Always re-resolve inside the mutation so a stale UI result cannot create
+        // a duplicate contact after someone has added one directly in Xero.
+        const resolution = await resolveXeroSupplierContact({
+          supplierName,
+          supplierEmail,
+          savedContactId: supplier?.xeroContactId ?? null,
+          clientId,
+          clientSecret,
+        });
+        if (resolution.status === "unavailable") {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: resolution.message });
+        }
+        if (resolution.status === "needs_selection") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Xero now has possible supplier contacts. Select and approve the correct contact instead of creating another one.",
+          });
+        }
+
+        const contactId = resolution.status === "matched"
+          ? resolution.contact.contactId
+          : await createXeroSupplierContact({ supplierName, supplierEmail, supplierAbn, clientId, clientSecret });
+        if (!contactId) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Xero could not create the supplier contact." });
+        }
+        if (supplier?.id && supplier.xeroContactId !== contactId) {
+          await updateSupplier(supplier.id, { xeroContactId: contactId });
+        }
+        return {
+          success: true,
+          contactId,
+          created: resolution.status === "create_new",
+          contactName: supplierName,
+        };
+      }),
+
     /**
      * Check if a bill with the given invoice number already exists in Xero
      * under a DIFFERENT supplier. Used to warn before pushing to Xero.

@@ -884,10 +884,23 @@ export async function resolveXeroSupplierContact(input: {
             () => axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: nameSearch.searchTerm } }),
           )
         : { Contacts: [] };
-      const nameMatches = (nameSearchData?.Contacts ?? [])
+      const broadNameMatches = (nameSearchData?.Contacts ?? [])
         .map(toContactCandidate)
         .filter((contact: XeroContactCandidate | null): contact is XeroContactCandidate => Boolean(contact))
         .filter((contact: XeroContactCandidate) => matchesXeroSupplierName(contact.name, nameSearch));
+      // A supplier name such as "CONTAINERZONE" may share its first token with
+      // housekeeping contacts (for example, "Containerzone House Driver"). When
+      // exactly one candidate has the same canonical full supplier name, it is a
+      // stronger and safe match than the broader first-token candidate set.
+      const canonicalSupplierName = normaliseSupplierNameKey(input.supplierName);
+      const exactCanonicalNameMatches = canonicalSupplierName
+        ? broadNameMatches.filter(
+            (contact: XeroContactCandidate) => normaliseSupplierNameKey(contact.name) === canonicalSupplierName
+          )
+        : [];
+      const nameMatches = exactCanonicalNameMatches.length === 1
+        ? exactCanonicalNameMatches
+        : broadNameMatches;
 
       const emailSearchData = supplierEmail
         ? await runCachedXeroGet<any>(

@@ -67,7 +67,7 @@ const FIELD_MAP: Record<string, PoFieldConfig> = {
   "pn rail cost": {
     poPrefix: "P",
     includeD: false,
-    supplier: "Pacific National",
+    supplier: "Pacific National Services Pty Ltd",
     accountCode: "310",
     description: "Pacific National Rail Cost",
   },

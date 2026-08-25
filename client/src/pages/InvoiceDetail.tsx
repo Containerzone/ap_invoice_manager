@@ -19,7 +19,7 @@ import {
   ArrowLeft, FileText, RefreshCw, Send, CheckCircle2,
   MessageSquare, Mail, AlertTriangle, ExternalLink,
   Building2, Calendar, Hash, DollarSign, Container,
-  Loader2, Plus, Trash2, Phone, MapPin, User,
+  Loader2, Plus, Trash2, Phone, MapPin, User, UserPlus,
   ChevronLeft, ChevronRight, List, Pencil, X, Save,
   ShieldAlert, ShieldCheck, Paperclip,
 } from "lucide-react";
@@ -263,6 +263,7 @@ export default function InvoiceDetail() {
   const logReplyMutation = trpc.invoices.logReply.useMutation();
   const adminApproveMutation = trpc.invoices.adminApprove.useMutation();
   const staffApproveMutation = trpc.invoices.staffApprove.useMutation();
+  const createSupplierContactMutation = trpc.xero.createSupplierContact.useMutation();
 
   // ── Reply state ───────────────────────────────────────────────────────────
   const [replyEmailLogId, setReplyEmailLogId] = useState<number | null>(null);
@@ -748,6 +749,22 @@ export default function InvoiceDetail() {
       }
     } catch (e: any) {
       toast.error(e?.message ?? "Failed to resolve invoice");
+    }
+  };
+
+  const handleManualCreateSupplierContact = async () => {
+    try {
+      const result = await createSupplierContactMutation.mutateAsync({ invoiceId });
+      await Promise.all([
+        utils.invoices.get.invalidate({ id: invoiceId }),
+        utils.xero.resolveSupplierContact.invalidate(),
+      ]);
+      toast.success(result.created
+        ? `Created Xero contact for ${result.contactName}.`
+        : `An existing Xero contact for ${result.contactName} was found and linked instead.`
+      );
+    } catch (error: any) {
+      toast.error(error?.message ?? "Xero could not create the supplier contact.");
     }
   };
 
@@ -2057,6 +2074,21 @@ export default function InvoiceDetail() {
                 <span className="font-semibold">No Xero supplier contact found.</span>{" "}
                 Resolving this invoice will create a new Xero contact for <strong>{xeroSupplierName}</strong>
                 {xeroSupplierEmail ? ` using ${xeroSupplierEmail}` : ""}.
+                <div className="mt-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 border-blue-300 bg-white text-xs text-blue-800 hover:bg-blue-100 dark:bg-blue-950/30 dark:text-blue-200"
+                    onClick={handleManualCreateSupplierContact}
+                    disabled={createSupplierContactMutation.isPending}
+                  >
+                    {createSupplierContactMutation.isPending
+                      ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      : <UserPlus className="mr-1.5 h-3.5 w-3.5" />}
+                    Create Contact in Xero
+                  </Button>
+                </div>
               </div>
             )}
             {supplierContactNeedsSelection && supplierContactResolution && (
