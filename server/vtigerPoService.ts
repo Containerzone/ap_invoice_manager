@@ -13,7 +13,11 @@
  */
 
 import axios from "axios";
-import { createXeroIdempotencyKey, findOrCreateXeroContact } from "./xeroService";
+import {
+  createXeroIdempotencyKey,
+  resolveXeroSupplierContact,
+  type XeroContactResolution,
+} from "./xeroService";
 import {
   invalidateXeroCache,
   runCachedXeroGet,
@@ -22,6 +26,14 @@ import {
 } from "./xeroRequestManager";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
+
+// Stage 1 webhooks do not always include a reliable external vendor identity.
+// For a supplier that cannot be safely matched, the operational default is the
+// approved Containerzone contact rather than a new or ambiguous Xero contact.
+export const STAGE_ONE_FALLBACK_SUPPLIER = {
+  name: "CONTAINERZONE",
+  contactId: "bd477548-8f1e-4ca2-b203-f3ad9e41811c",
+} as const;
 
 // ─── Field mapping ────────────────────────────────────────────────────────────
 
@@ -184,6 +196,22 @@ export interface ProcessWebhookResult {
   overallStatus: "completed" | "partial" | "failed";
 }
 
+export function chooseStageOnePoContact(resolution: XeroContactResolution): {
+  contactId: string;
+  usedContainerzoneFallback: boolean;
+} {
+  if (resolution.status === "matched") {
+    return { contactId: resolution.contact.contactId, usedContainerzoneFallback: false };
+  }
+  if (resolution.status === "unavailable") {
+    throw new Error(`Xero supplier contact lookup is unavailable: ${resolution.message}`);
+  }
+  return {
+    contactId: STAGE_ONE_FALLBACK_SUPPLIER.contactId,
+    usedContainerzoneFallback: true,
+  };
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -299,18 +327,20 @@ async function createXeroDraftPO(opts: {
   clientId: string;
   clientSecret: string;
 }): Promise<{ xeroPoId: string; xeroPoNumber: string }> {
-  // Find or create the Xero contact
-  const contactId = await findOrCreateXeroContact(
-    opts.supplierName,
-    null,
-    null,
-    opts.clientId,
-    opts.clientSecret
-  );
+  const supplierResolution = await resolveXeroSupplierContact({
+    supplierName: opts.supplierName,
+    supplierEmail: null,
+    clientId: opts.clientId,
+    clientSecret: opts.clientSecret,
+  });
+  const { contactId, usedContainerzoneFallback } = chooseStageOnePoContact(supplierResolution);
+  if (usedContainerzoneFallback) {
+    console.warn(
+      `[Vtiger PO] Supplier "${opts.supplierName}" could not be uniquely matched for ${opts.poNumber}; using ${STAGE_ONE_FALLBACK_SUPPLIER.name}.`
+    );
+  }
 
-  const contactPayload = contactId
-    ? { ContactID: contactId }
-    : { Name: opts.supplierName };
+  const contactPayload = { ContactID: contactId };
 
   const body = {
     PurchaseOrders: [

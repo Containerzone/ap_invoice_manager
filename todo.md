@@ -287,7 +287,7 @@
 - [x] Verify Resolve & Push unlocks after the invoice-number conflict acknowledgement when the supplier contact is already confirmed
 
 ## Manual Contact Creation and Email Invoice Upload (Session 19)
-- [ ] Add a manual Create Contact fallback to the Resolve & Push dialog for no-match supplier results
+- [x] Add a manual Create Contact fallback to the Resolve & Push dialog for no-match supplier results
 - [x] Compare secure inbound-email delivery options and confirm the selected provider/architecture before implementation
 - [ ] Implement Microsoft 365 Graph PDF invoice processing, forwarding address settings, and an email submission log
 - [x] Confirm whether an invoices@ alias to admin@ can route safely into the selected automated invoice-upload service
@@ -299,6 +299,10 @@
 ## D702836 PO Creation Investigation (Session 19)
 - [x] Trace the Vtiger trigger, Xero request and failure response for purchase order D702836; correct the underlying issue if required
 - [x] Prioritise the exact literal `CONTAINERZONE` contact over the malformed `CONTAINERZONE\` near-duplicate and revalidate D702836 supplier resolution
+
+## Stage 1 Default Supplier Mapping (Session 19)
+- [x] Investigate D702796 and map every non-explicit/verified Stage 1 transport supplier field to the exact CONTAINERZONE Xero contact
+- [x] Add regression coverage ensuring unmapped transport costs use CONTAINERZONE rather than an ambiguous external supplier contact
 
 ## Xero Usage Since Reset (Session 19)
 - [x] Calculate the number of Xero API calls used since the current daily allowance reset
