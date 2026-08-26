@@ -81,6 +81,10 @@ export function isInvoiceAliasRecipient(message: GraphMessage): boolean {
   );
 }
 
+export function isGraphPdfAttachment(attachment: GraphFileAttachment): boolean {
+  return !attachment.isInline && attachment.contentType === "application/pdf" && Boolean(attachment.id);
+}
+
 export async function getGraphMessage(messageId: string): Promise<GraphMessage> {
   const { mailbox } = getMicrosoftGraphConfig();
   return graphRequest<GraphMessage>(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}?$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments,internetMessageHeaders`, undefined, "retrieve notified message");
@@ -107,10 +111,21 @@ export async function getRecentMicrosoftMessageMetadata(limit = 10): Promise<Gra
 
 export async function getGraphPdfAttachments(messageId: string): Promise<GraphFileAttachment[]> {
   const { mailbox } = getMicrosoftGraphConfig();
-  const data = await graphRequest<{ value?: GraphFileAttachment[] }>(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}/attachments?$select=id,name,contentType,size,contentBytes,isInline`, undefined, "retrieve message attachments");
-  return (data.value ?? []).filter((attachment) =>
-    !attachment.isInline && attachment.contentType === "application/pdf" && Boolean(attachment.contentBytes)
+  const basePath = `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}/attachments`;
+  const data = await graphRequest<{ value?: GraphFileAttachment[] }>(
+    `${basePath}?$select=id,name,contentType,size,isInline`,
+    undefined,
+    "list message attachments"
   );
+  const pdfMetadata = (data.value ?? []).filter(isGraphPdfAttachment);
+  const attachments = await Promise.all(pdfMetadata.map((attachment) =>
+    graphRequest<GraphFileAttachment>(
+      `${basePath}/${encodeURIComponent(attachment.id)}`,
+      undefined,
+      "retrieve PDF attachment content"
+    )
+  ));
+  return attachments.filter((attachment) => Boolean(attachment.contentBytes));
 }
 
 export async function createGraphMessageSubscription(notificationUrl: string): Promise<{ id: string; expirationDateTime: string }> {

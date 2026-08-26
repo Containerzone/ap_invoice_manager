@@ -299,6 +299,7 @@
 - [ ] Publish the application, enable the Microsoft inbox in Settings, and process one test PDF sent to invoices@containerzone.com.au
 - [ ] Add an Exchange mail-flow marker for invoices@ traffic and validate alias-specific PDF processing after Exchange recipient normalisation
 - [ ] Diagnose the live Microsoft Graph BadRequest and add resilient low-call notification processing before the final PDF test
+- [ ] Correct Graph polymorphic attachment retrieval so PDF content is fetched from individual file-attachment resources
 
 ## Microsoft 365 Invoice Upload Setup (Session 19)
 - [x] Provide administrator steps to create the invoices@ alias and Microsoft Graph application permissions for the inbound invoice mailbox

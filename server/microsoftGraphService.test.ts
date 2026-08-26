@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { isInvoiceAliasRecipient, microsoftGraphRetryDelayMs, microsoftWebhookClientState } from "./microsoftGraphService";
+import { isGraphPdfAttachment, isInvoiceAliasRecipient, microsoftGraphRetryDelayMs, microsoftWebhookClientState } from "./microsoftGraphService";
 
 describe("Microsoft Graph inbound email safeguards", () => {
   it("uses Retry-After values and bounded fallback delays for transient Graph throttling", () => {
     expect(microsoftGraphRetryDelayMs("3", 0)).toBe(3000);
     expect(microsoftGraphRetryDelayMs("invalid", 0)).toBe(1000);
     expect(microsoftGraphRetryDelayMs(null, 2)).toBe(4000);
+  });
+
+  it("selects only concrete non-inline PDF attachment metadata before fetching content", () => {
+    expect(isGraphPdfAttachment({ id: "pdf", contentType: "application/pdf" })).toBe(true);
+    expect(isGraphPdfAttachment({ id: "inline-pdf", contentType: "application/pdf", isInline: true })).toBe(false);
+    expect(isGraphPdfAttachment({ id: "image", contentType: "image/png" })).toBe(false);
+    expect(isGraphPdfAttachment({ id: "", contentType: "application/pdf" })).toBe(false);
   });
 
   it("processes messages addressed to the configured invoice alias only", () => {
