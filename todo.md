@@ -194,7 +194,8 @@
 - [x] Fix Xero PO line receiving GST-inclusive amount instead of GST-exclusive unit price ($3,600 instead of $3,000)
 
 ## Bug Fixes (Session 15)
-- [ ] Xero PO line still shows $3,600 (incl. GST) after Session 14 fix — diagnose and correct the unit amount sent to Xero for invoice HC1807
+- [x] Xero PO line still shows $3,600 (incl. GST) after Session 14 fix — diagnosed and corrected the unit amount sent to Xero for invoice HC1807
+- [x] Trace the HC1807 approval payload from invoice line amount through the Xero PO update and add a GST-exclusive regression test
 
 ## UX Improvements (Session 16)
 - [x] Clickable sortable column headers on Invoices page (asc/desc toggle with indicator)

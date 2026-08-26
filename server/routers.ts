@@ -66,6 +66,7 @@ import { ENV } from "./_core/env";
 import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
 import { createGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
+import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
 import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray } from "drizzle-orm";
@@ -1259,8 +1260,7 @@ export const appRouter = router({
                   // `amount` is always GST-exclusive per extraction prompt (line total excl. GST).
                   // `unitPrice` may be GST-inclusive on some invoices, so we derive the
                   // per-unit exclusive amount from amount/qty to guarantee correctness.
-                  const exclTotal = parseFloat(li.amount?.toString() ?? "0");
-                  const unitAmountExcl = Math.round((exclTotal / qty) * 100) / 100;
+                  const unitAmountExcl = getGstExclusiveUnitAmount(li.amount, qty);
                   return {
                     description: li.description ?? "Service",
                     quantity: qty,
@@ -1407,8 +1407,7 @@ export const appRouter = router({
                   // `amount` is always GST-exclusive per extraction prompt (line total excl. GST).
                   // Derive per-unit exclusive amount from amount/qty to avoid using unitPrice
                   // which may be GST-inclusive on some invoices.
-                  const exclTotal = parseFloat(li.amount?.toString() ?? "0");
-                  const unitAmountExcl = Math.round((exclTotal / qty) * 100) / 100;
+                  const unitAmountExcl = getGstExclusiveUnitAmount(li.amount, qty);
                   return {
                     description: li.description ?? "Service",
                     quantity: qty,
