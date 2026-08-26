@@ -297,6 +297,7 @@
 - [x] Build mailbox webhook validation, message/attachment retrieval, PDF processing and duplicate-safe invoice creation
 - [x] Add automatic Graph subscription renewal, forwarding settings, submission-log UI and end-to-end tests
 - [ ] Publish the application, enable the Microsoft inbox in Settings, and process one test PDF sent to invoices@containerzone.com.au
+- [ ] Add an Exchange mail-flow marker for invoices@ traffic and validate alias-specific PDF processing after Exchange recipient normalisation
 
 ## Microsoft 365 Invoice Upload Setup (Session 19)
 - [x] Provide administrator steps to create the invoices@ alias and Microsoft Graph application permissions for the inbound invoice mailbox

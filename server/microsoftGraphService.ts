@@ -13,6 +13,7 @@ export interface GraphMessage {
   from?: { emailAddress?: { name?: string; address?: string } };
   toRecipients?: GraphRecipient[];
   hasAttachments?: boolean;
+  internetMessageHeaders?: Array<{ name?: string; value?: string }>;
 }
 export interface GraphFileAttachment {
   id: string;
@@ -48,14 +49,23 @@ export function microsoftWebhookClientState(resource: string): string {
 
 export function isInvoiceAliasRecipient(message: GraphMessage): boolean {
   const { invoiceAlias } = getMicrosoftGraphConfig();
-  return (message.toRecipients ?? []).some((recipient) =>
+  const recipientMatch = (message.toRecipients ?? []).some((recipient) =>
     recipient.emailAddress?.address?.trim().toLowerCase() === invoiceAlias
+  );
+  if (recipientMatch) return true;
+  const headerMatch = (message.internetMessageHeaders ?? []).some((header) =>
+    ["to", "cc", "delivered-to", "x-original-to"].includes(header.name?.toLowerCase() ?? "") &&
+    header.value?.toLowerCase().includes(invoiceAlias)
+  );
+  if (headerMatch) return true;
+  return (message.internetMessageHeaders ?? []).some((header) =>
+    header.name?.toLowerCase() === "x-containerzone-invoice-upload" && header.value?.trim().toLowerCase() === "true"
   );
 }
 
 export async function getGraphMessage(messageId: string): Promise<GraphMessage> {
   const { mailbox } = getMicrosoftGraphConfig();
-  return graphRequest<GraphMessage>(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}?$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments`);
+  return graphRequest<GraphMessage>(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}?$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments,internetMessageHeaders`);
 }
 
 /** Confirms Mail.Read application access without reading email content. */
@@ -64,6 +74,15 @@ export async function getMicrosoftInboxMetadata(): Promise<{ id: string; display
   return graphRequest<{ id: string; displayName?: string }>(
     `/users/${encodeURIComponent(mailbox)}/mailFolders/inbox?$select=id,displayName`
   );
+}
+
+export async function getRecentMicrosoftMessageMetadata(limit = 10): Promise<GraphMessage[]> {
+  const { mailbox } = getMicrosoftGraphConfig();
+  const count = Math.min(Math.max(limit, 1), 25);
+  const data = await graphRequest<{ value?: GraphMessage[] }>(
+    `/users/${encodeURIComponent(mailbox)}/messages?$top=${count}&$orderby=receivedDateTime desc&$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments`
+  );
+  return data.value ?? [];
 }
 
 export async function getGraphPdfAttachments(messageId: string): Promise<GraphFileAttachment[]> {

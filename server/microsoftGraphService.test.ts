@@ -11,6 +11,11 @@ describe("Microsoft Graph inbound email safeguards", () => {
       id: "message-2",
       toRecipients: [{ emailAddress: { address: "admin@containerzone.com.au" } }],
     })).toBe(false);
+    expect(isInvoiceAliasRecipient({
+      id: "message-3",
+      toRecipients: [{ emailAddress: { address: "admin@containerzone.com.au" } }],
+      internetMessageHeaders: [{ name: "X-ContainerZone-Invoice-Upload", value: "true" }],
+    })).toBe(true);
   });
 
   it("creates a deterministic client-state value for the exact mailbox resource", () => {
