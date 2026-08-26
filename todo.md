@@ -81,9 +81,9 @@
 - [x] Multi-PO verification — verify all PO numbers found on the invoice against Xero, flag if any PO is missing or mismatched
 - [x] PO line item comparison — fetch Xero PO line items and display them alongside invoice line items in the Amount Comparison section
 - [x] Xero PO status display — show PO status (DRAFT/AUTHORISED/BILLED) badge in the Amount Comparison card
-- [ ] Inbound email invoice submission — Mailgun webhook receives forwarded emails with PDF attachments and auto-processes them through the extraction pipeline
-- [ ] Show dedicated forwarding email address on Settings page
-- [ ] Email submission log — list of invoices submitted via email with sender, subject, timestamp
+- [x] Inbound email invoice submission — superseded Mailgun design with Microsoft Graph webhook processing for PDF attachments
+- [x] Show dedicated invoice submission address and Microsoft mailbox status on Settings page
+- [x] Email submission log — list submitted PDF invoices with sender, subject and timestamp
 - [x] Green banner when billed amount is less than PO amount — show "Billed amount is under PO, safe to approve" message
 - [x] Flag discrepancy when billed amount exceeds PO amount
 - [x] Admin Approve button for invoices without PO numbers that cannot be verified via Xero
@@ -296,11 +296,11 @@
 - [x] Add Microsoft Graph credential configuration, webhook-subscription state, and email-ingestion audit records
 - [x] Build mailbox webhook validation, message/attachment retrieval, PDF processing and duplicate-safe invoice creation
 - [x] Add automatic Graph subscription renewal, forwarding settings, submission-log UI and end-to-end tests
-- [ ] Publish the application, enable the Microsoft inbox in Settings, and process one test PDF sent to invoices@containerzone.com.au
-- [ ] Add an Exchange mail-flow marker for invoices@ traffic and validate alias-specific PDF processing after Exchange recipient normalisation
-- [ ] Diagnose the live Microsoft Graph BadRequest and add resilient low-call notification processing before the final PDF test
-- [ ] Correct Graph polymorphic attachment retrieval so PDF content is fetched from individual file-attachment resources
-- [ ] Attribute inbound email invoices to the active administrator when the configured owner identity is not present locally
+- [x] Publish the application, enable the Microsoft inbox in Settings, and process one test PDF sent to invoices@containerzone.com.au
+- [x] Add an Exchange mail-flow marker for invoices@ traffic and validate alias-specific PDF processing after Exchange recipient normalisation
+- [x] Diagnose the live Microsoft Graph BadRequest and add resilient low-call notification processing before the final PDF test
+- [x] Correct Graph polymorphic attachment retrieval so PDF content is fetched from individual file-attachment resources
+- [x] Attribute inbound email invoices to the active administrator when the configured owner identity is not present locally
 
 ## Microsoft 365 Invoice Upload Setup (Session 19)
 - [x] Provide administrator steps to create the invoices@ alias and Microsoft Graph application permissions for the inbound invoice mailbox
