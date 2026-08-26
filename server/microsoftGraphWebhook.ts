@@ -10,6 +10,9 @@ type GraphNotification = {
   resourceData?: { id?: string };
 };
 
+let notificationQueue: Promise<void> = Promise.resolve();
+const queuedMessageIds = new Set<string>();
+
 async function processNotification(notification: GraphNotification) {
   const { mailbox } = getMicrosoftGraphConfig();
   const expectedResource = `users/${mailbox}/messages`;
@@ -18,11 +21,17 @@ async function processNotification(notification: GraphNotification) {
   }
   const messageId = notification.resourceData?.id;
   if (!messageId) return;
+  if (queuedMessageIds.has(messageId)) return;
+  queuedMessageIds.add(messageId);
+  try {
   const message = await getGraphMessage(messageId);
   if (!isInvoiceAliasRecipient(message) || !message.hasAttachments) return;
   const attachments = await getGraphPdfAttachments(message.id);
   for (const attachment of attachments) await processMicrosoftEmailPdf(message, attachment);
   await updateMicrosoftGraphState(mailbox, { lastNotificationAt: new Date(), lastSubscriptionError: null });
+  } finally {
+    queuedMessageIds.delete(messageId);
+  }
 }
 
 export function registerMicrosoftGraphWebhook(app: Express) {
@@ -32,15 +41,17 @@ export function registerMicrosoftGraphWebhook(app: Express) {
     const notifications = Array.isArray(req.body?.value) ? req.body.value as GraphNotification[] : [];
     res.status(202).json({ accepted: notifications.length });
     setImmediate(() => {
-      void Promise.all(notifications.map(async (notification) => {
-        try {
-          await processNotification(notification);
-        } catch (error: any) {
-          const mailbox = getMicrosoftGraphConfig().mailbox;
-          await updateMicrosoftGraphState(mailbox, { lastSubscriptionError: error.message });
-          console.error("[microsoft-graph] Notification processing failed:", error.message);
-        }
-      }));
+      for (const notification of notifications) {
+        notificationQueue = notificationQueue.catch(() => undefined).then(async () => {
+          try {
+            await processNotification(notification);
+          } catch (error: any) {
+            const mailbox = getMicrosoftGraphConfig().mailbox;
+            await updateMicrosoftGraphState(mailbox, { lastSubscriptionError: error.message });
+            console.error("[microsoft-graph] Notification processing failed:", error.message);
+          }
+        });
+      }
     });
   });
 }

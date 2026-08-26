@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isInvoiceAliasRecipient, microsoftWebhookClientState } from "./microsoftGraphService";
+import { isInvoiceAliasRecipient, microsoftGraphRetryDelayMs, microsoftWebhookClientState } from "./microsoftGraphService";
 
 describe("Microsoft Graph inbound email safeguards", () => {
+  it("uses Retry-After values and bounded fallback delays for transient Graph throttling", () => {
+    expect(microsoftGraphRetryDelayMs("3", 0)).toBe(3000);
+    expect(microsoftGraphRetryDelayMs("invalid", 0)).toBe(1000);
+    expect(microsoftGraphRetryDelayMs(null, 2)).toBe(4000);
+  });
+
   it("processes messages addressed to the configured invoice alias only", () => {
     expect(isInvoiceAliasRecipient({
       id: "message-1",

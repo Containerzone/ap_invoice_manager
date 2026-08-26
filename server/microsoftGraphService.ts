@@ -4,6 +4,14 @@ import { getMicrosoftGraphConfig, requestMicrosoftGraphAccessToken } from "./mic
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
+export function microsoftGraphRetryDelayMs(retryAfter: string | null, attempt: number): number {
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 10_000);
+  return Math.min(1_000 * 2 ** attempt, 4_000);
+}
+
+const pause = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
 export interface GraphRecipient { emailAddress?: { address?: string } }
 export interface GraphMessage {
   id: string;
@@ -32,15 +40,25 @@ async function graphToken(): Promise<string> {
   return token.accessToken;
 }
 
-async function graphRequest<T>(path: string, init?: RequestInit): Promise<T> {
+async function graphRequest<T>(path: string, init?: RequestInit, operation = "request"): Promise<T> {
   const token = await graphToken();
-  const response = await fetch(`${GRAPH_BASE}${path}`, {
-    ...init,
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`Microsoft Graph request failed (${response.status}): ${(data as any)?.error?.code ?? "unknown_error"}`);
-  return data as T;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(`${GRAPH_BASE}${path}`, {
+      ...init,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) return data as T;
+    const retryAfter = response.headers.get("retry-after");
+    if ((response.status === 429 || response.status === 503) && attempt < 2) {
+      await pause(microsoftGraphRetryDelayMs(retryAfter, attempt));
+      continue;
+    }
+    const graphError = (data as any)?.error;
+    const suffix = response.status === 429 && retryAfter ? `; retry after ${retryAfter}s` : "";
+    throw new Error(`Microsoft Graph ${operation} failed (${response.status}): ${graphError?.code ?? "unknown_error"}${graphError?.message ? ` — ${graphError.message}` : ""}${suffix}`);
+  }
+  throw new Error(`Microsoft Graph ${operation} failed after retries`);
 }
 
 export function microsoftWebhookClientState(resource: string): string {
@@ -65,7 +83,7 @@ export function isInvoiceAliasRecipient(message: GraphMessage): boolean {
 
 export async function getGraphMessage(messageId: string): Promise<GraphMessage> {
   const { mailbox } = getMicrosoftGraphConfig();
-  return graphRequest<GraphMessage>(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}?$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments,internetMessageHeaders`);
+  return graphRequest<GraphMessage>(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}?$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments,internetMessageHeaders`, undefined, "retrieve notified message");
 }
 
 /** Confirms Mail.Read application access without reading email content. */
@@ -80,14 +98,16 @@ export async function getRecentMicrosoftMessageMetadata(limit = 10): Promise<Gra
   const { mailbox } = getMicrosoftGraphConfig();
   const count = Math.min(Math.max(limit, 1), 25);
   const data = await graphRequest<{ value?: GraphMessage[] }>(
-    `/users/${encodeURIComponent(mailbox)}/messages?$top=${count}&$orderby=receivedDateTime desc&$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments`
+    `/users/${encodeURIComponent(mailbox)}/messages?$top=${count}&$orderby=receivedDateTime desc&$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments`,
+    undefined,
+    "list mailbox message metadata"
   );
   return data.value ?? [];
 }
 
 export async function getGraphPdfAttachments(messageId: string): Promise<GraphFileAttachment[]> {
   const { mailbox } = getMicrosoftGraphConfig();
-  const data = await graphRequest<{ value?: GraphFileAttachment[] }>(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}/attachments?$select=id,name,contentType,size,contentBytes,isInline`);
+  const data = await graphRequest<{ value?: GraphFileAttachment[] }>(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}/attachments?$select=id,name,contentType,size,contentBytes,isInline`, undefined, "retrieve message attachments");
   return (data.value ?? []).filter((attachment) =>
     !attachment.isInline && attachment.contentType === "application/pdf" && Boolean(attachment.contentBytes)
   );
