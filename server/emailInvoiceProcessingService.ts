@@ -7,6 +7,7 @@ import {
   createSupplier,
   deleteLineItemsByInvoice,
   findMatchingSupplier,
+  getFirstActiveAdmin,
   getEmailInvoiceSubmission,
   getInvoiceById,
   getUserByOpenId,
@@ -18,6 +19,10 @@ import { storagePut } from "./storage";
 import type { GraphFileAttachment, GraphMessage } from "./microsoftGraphService";
 
 const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
+
+export function selectInboundInvoiceOwner<T extends { id: number }>(configuredOwner?: T, activeAdmin?: T): T | undefined {
+  return configuredOwner ?? activeAdmin;
+}
 
 function invoicePoNumbers(extracted: Awaited<ReturnType<typeof extractInvoiceData>>): string[] {
   const matches = new Set(extractAllPoNumbers(extracted as any));
@@ -87,8 +92,11 @@ export async function processMicrosoftEmailPdf(message: GraphMessage, attachment
   if (!message.id || !attachment.id || !attachment.name || !attachment.contentBytes) throw new Error("Microsoft Graph notification is missing attachment data");
   const existing = await getEmailInvoiceSubmission(message.id, attachment.id);
   if (existing) return { invoiceId: existing.invoiceId ?? undefined, status: "duplicate" };
-  const owner = await getUserByOpenId(ENV.ownerOpenId);
-  if (!owner) throw new Error("Project owner account is unavailable for inbound invoice attribution");
+  const owner = selectInboundInvoiceOwner(
+    await getUserByOpenId(ENV.ownerOpenId),
+    await getFirstActiveAdmin()
+  );
+  if (!owner) throw new Error("No active administrator is available for inbound invoice attribution");
   const submissionId = await createEmailInvoiceSubmission({
     graphMessageId: message.id,
     graphAttachmentId: attachment.id,

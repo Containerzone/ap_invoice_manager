@@ -89,6 +89,16 @@ export async function getUserByOpenId(openId: string): Promise<User | undefined>
   return result[0];
 }
 
+export async function getFirstActiveAdmin(): Promise<User | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users)
+    .where(and(eq(users.role, "admin"), eq(users.status, "active")))
+    .orderBy(users.id)
+    .limit(1);
+  return result[0];
+}
+
 export async function getAllUsers(): Promise<User[]> {
   const db = await getDb();
   if (!db) return [];
