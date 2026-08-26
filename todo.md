@@ -289,8 +289,14 @@
 ## Manual Contact Creation and Email Invoice Upload (Session 19)
 - [x] Add a manual Create Contact fallback to the Resolve & Push dialog for no-match supplier results
 - [x] Compare secure inbound-email delivery options and confirm the selected provider/architecture before implementation
-- [ ] Implement Microsoft 365 Graph PDF invoice processing, forwarding address settings, and an email submission log
+- [x] Implement Microsoft 365 Graph PDF invoice processing, forwarding address settings, and an email submission log
 - [x] Confirm whether an invoices@ alias to admin@ can route safely into the selected automated invoice-upload service
+
+## Microsoft 365 Graph Invoice Ingestion (Session 19)
+- [x] Add Microsoft Graph credential configuration, webhook-subscription state, and email-ingestion audit records
+- [x] Build mailbox webhook validation, message/attachment retrieval, PDF processing and duplicate-safe invoice creation
+- [x] Add automatic Graph subscription renewal, forwarding settings, submission-log UI and end-to-end tests
+- [ ] Publish the application, enable the Microsoft inbox in Settings, and process one test PDF sent to invoices@containerzone.com.au
 
 ## Microsoft 365 Invoice Upload Setup (Session 19)
 - [x] Provide administrator steps to create the invoices@ alias and Microsoft Graph application permissions for the inbound invoice mailbox

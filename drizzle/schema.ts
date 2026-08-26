@@ -282,6 +282,57 @@ export const xeroApiCache = mysqlTable("xero_api_cache", {
 export type XeroApiCache = typeof xeroApiCache.$inferSelect;
 export type InsertXeroApiCache = typeof xeroApiCache.$inferInsert;
 
+// ─── Microsoft 365 Graph Inbound Invoice Processing ──────────────────────────
+
+export const microsoftGraphStates = mysqlTable("microsoft_graph_states", {
+  id: int("id").autoincrement().primaryKey(),
+  mailbox: varchar("mailbox", { length: 320 }).notNull(),
+  invoiceAlias: varchar("invoiceAlias", { length: 320 }).notNull(),
+  subscriptionId: varchar("subscriptionId", { length: 128 }),
+  subscriptionExpiresAt: timestamp("subscriptionExpiresAt"),
+  scheduleCronTaskUid: varchar("scheduleCronTaskUid", { length: 65 }),
+  lastSubscriptionError: text("lastSubscriptionError"),
+  lastNotificationAt: timestamp("lastNotificationAt"),
+  lastRenewedAt: timestamp("lastRenewedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  mailboxUnique: uniqueIndex("microsoft_graph_states_mailbox_unique").on(table.mailbox),
+}));
+
+export type MicrosoftGraphState = typeof microsoftGraphStates.$inferSelect;
+export type InsertMicrosoftGraphState = typeof microsoftGraphStates.$inferInsert;
+
+export const emailInvoiceSubmissions = mysqlTable("email_invoice_submissions", {
+  id: int("id").autoincrement().primaryKey(),
+  graphMessageId: varchar("graphMessageId", { length: 512 }).notNull(),
+  graphAttachmentId: varchar("graphAttachmentId", { length: 512 }).notNull(),
+  internetMessageId: varchar("internetMessageId", { length: 512 }),
+  senderName: varchar("senderName", { length: 320 }),
+  senderAddress: varchar("senderAddress", { length: 320 }),
+  recipientAddress: varchar("recipientAddress", { length: 320 }).notNull(),
+  subject: varchar("subject", { length: 500 }),
+  receivedAt: timestamp("receivedAt"),
+  attachmentName: varchar("attachmentName", { length: 512 }).notNull(),
+  attachmentMimeType: varchar("attachmentMimeType", { length: 128 }),
+  attachmentSize: int("attachmentSize"),
+  invoiceId: int("invoiceId"),
+  status: mysqlEnum("status", ["received", "processing", "processed", "ignored", "duplicate", "failed"])
+    .default("received")
+    .notNull(),
+  errorMessage: text("errorMessage"),
+  metadata: json("metadata"),
+  processedAt: timestamp("processedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  messageAttachmentUnique: uniqueIndex("email_invoice_submissions_message_attachment_unique")
+    .on(table.graphMessageId, table.graphAttachmentId),
+}));
+
+export type EmailInvoiceSubmission = typeof emailInvoiceSubmissions.$inferSelect;
+export type InsertEmailInvoiceSubmission = typeof emailInvoiceSubmissions.$inferInsert;
+
 // ─── PO Requests (Vtiger → Xero) ─────────────────────────────────────────────
 // Each row represents one Vtiger Deal webhook event that triggered PO creation.
 

@@ -7,20 +7,25 @@ import {
   InsertEmailLog,
   InsertInvoice,
   InsertInvoiceLineItem,
+  InsertMicrosoftGraphState,
   InsertPendingInvite,
   InsertSupplier,
   InsertUser,
   InsertXeroToken,
+  EmailInvoiceSubmission,
   Invoice,
   InvoiceLineItem,
+  MicrosoftGraphState,
   PendingInvite,
   Supplier,
   User,
   XeroToken,
   conversationNotes,
   emailLogs,
+  emailInvoiceSubmissions,
   invoiceLineItems,
   invoices,
+  microsoftGraphStates,
   pendingInvites,
   suppliers,
   users,
@@ -479,6 +484,115 @@ export async function deleteXeroToken(): Promise<void> {
   const db = await getDb();
   if (!db) return;
   await db.delete(xeroTokens);
+}
+
+// ─── Microsoft 365 Graph Inbound Invoice Processing ──────────────────────────
+
+export async function getMicrosoftGraphState(mailbox: string): Promise<MicrosoftGraphState | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(microsoftGraphStates)
+    .where(eq(microsoftGraphStates.mailbox, mailbox.toLowerCase()))
+    .limit(1);
+  return rows[0];
+}
+
+export async function getMicrosoftGraphStateByScheduleTaskUid(taskUid: string): Promise<MicrosoftGraphState | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(microsoftGraphStates)
+    .where(eq(microsoftGraphStates.scheduleCronTaskUid, taskUid))
+    .limit(1);
+  return rows[0];
+}
+
+export async function upsertMicrosoftGraphState(data: InsertMicrosoftGraphState): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.insert(microsoftGraphStates).values({
+    ...data,
+    mailbox: data.mailbox.toLowerCase(),
+    invoiceAlias: data.invoiceAlias.toLowerCase(),
+  }).onDuplicateKeyUpdate({
+    set: {
+      invoiceAlias: data.invoiceAlias.toLowerCase(),
+      subscriptionId: data.subscriptionId,
+      subscriptionExpiresAt: data.subscriptionExpiresAt,
+      scheduleCronTaskUid: data.scheduleCronTaskUid,
+      lastSubscriptionError: data.lastSubscriptionError,
+      lastNotificationAt: data.lastNotificationAt,
+      lastRenewedAt: data.lastRenewedAt,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function updateMicrosoftGraphState(
+  mailbox: string,
+  data: Partial<InsertMicrosoftGraphState>
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(microsoftGraphStates)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(microsoftGraphStates.mailbox, mailbox.toLowerCase()));
+}
+
+export async function getEmailInvoiceSubmission(
+  graphMessageId: string,
+  graphAttachmentId: string
+): Promise<EmailInvoiceSubmission | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(emailInvoiceSubmissions)
+    .where(and(
+      eq(emailInvoiceSubmissions.graphMessageId, graphMessageId),
+      eq(emailInvoiceSubmissions.graphAttachmentId, graphAttachmentId),
+    ))
+    .limit(1);
+  return rows[0];
+}
+
+export async function createEmailInvoiceSubmission(
+  data: Omit<import("../drizzle/schema").InsertEmailInvoiceSubmission, "id" | "createdAt" | "updatedAt">
+): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const result = await db.insert(emailInvoiceSubmissions).values(data);
+  return (result[0] as any).insertId;
+}
+
+export async function updateEmailInvoiceSubmission(
+  id: number,
+  data: Partial<import("../drizzle/schema").InsertEmailInvoiceSubmission>
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(emailInvoiceSubmissions).set(data).where(eq(emailInvoiceSubmissions.id, id));
+}
+
+export async function getRecentEmailInvoiceSubmissions(limit = 50): Promise<EmailInvoiceSubmission[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailInvoiceSubmissions)
+    .orderBy(desc(emailInvoiceSubmissions.createdAt))
+    .limit(limit);
+}
+
+export async function getPendingEmailInvoiceSubmissions(limit = 10): Promise<EmailInvoiceSubmission[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailInvoiceSubmissions)
+    .where(eq(emailInvoiceSubmissions.status, "received"))
+    .orderBy(emailInvoiceSubmissions.createdAt)
+    .limit(limit);
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

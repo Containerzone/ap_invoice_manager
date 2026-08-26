@@ -17,6 +17,8 @@ export default function Settings() {
   const { data: xeroStatus, isLoading: xeroLoading, refetch: refetchXero } =
     trpc.xero.status.useQuery();
   const disconnectMutation = trpc.xero.disconnect.useMutation();
+  const { data: microsoftStatus, refetch: refetchMicrosoft } = trpc.microsoft.status.useQuery(undefined, { enabled: isAdmin });
+  const enableMicrosoftMutation = trpc.microsoft.enableInboxProcessing.useMutation();
 
   const utils = trpc.useUtils();
 
@@ -37,6 +39,16 @@ export default function Settings() {
       toast.success("Xero disconnected");
     } catch (e: any) {
       toast.error(e?.message ?? "Failed to disconnect Xero");
+    }
+  };
+
+  const handleEnableMicrosoftInbox = async () => {
+    try {
+      const result = await enableMicrosoftMutation.mutateAsync({ origin: window.location.origin });
+      await refetchMicrosoft();
+      toast.success(`Microsoft invoice mailbox enabled until ${new Date(result.subscriptionExpiresAt).toLocaleString()}`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Unable to enable Microsoft invoice mailbox");
     }
   };
 
@@ -229,6 +241,36 @@ export default function Settings() {
           <p className="text-xs text-muted-foreground">
             Email credentials are configured via environment variables. Dispute emails are sent from admin@containerzone.com.au via Microsoft 365.
           </p>
+          <div className="rounded-lg border bg-emerald-50/50 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">Invoice email upload</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Send supplier PDFs to <span className="font-medium">{microsoftStatus?.invoiceAlias ?? "invoices@containerzone.com.au"}</span>. The app watches the admin mailbox and accepts PDF attachments only.
+                </p>
+              </div>
+              <Button size="sm" onClick={handleEnableMicrosoftInbox} disabled={enableMicrosoftMutation.isPending}>
+                {enableMicrosoftMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : microsoftStatus?.subscriptionId ? "Renew connection" : "Enable inbox"}
+              </Button>
+            </div>
+            {microsoftStatus?.subscriptionId ? (
+              <p className="text-xs text-emerald-800">Connected. Subscription expires {microsoftStatus.subscriptionExpiresAt ? new Date(microsoftStatus.subscriptionExpiresAt).toLocaleString() : "soon"}; renewal runs automatically.</p>
+            ) : (
+              <p className="text-xs text-amber-800">Not yet activated. Enable this after publishing the current version so Microsoft can validate the secure webhook.</p>
+            )}
+            {microsoftStatus?.lastSubscriptionError && <p className="text-xs text-destructive">{microsoftStatus.lastSubscriptionError}</p>}
+            {microsoftStatus?.submissions?.length ? (
+              <div className="border-t pt-2 mt-2 space-y-1.5">
+                <p className="text-xs font-medium text-foreground">Recent email submissions</p>
+                {microsoftStatus.submissions.slice(0, 5).map((submission) => (
+                  <div key={submission.id} className="flex items-center justify-between gap-3 text-xs">
+                    <span className="truncate text-muted-foreground">{submission.attachmentName} · {submission.senderAddress ?? "Unknown sender"}</span>
+                    <span className={submission.status === "processed" ? "text-emerald-700 font-medium" : submission.status === "failed" ? "text-destructive font-medium" : "text-amber-700 font-medium"}>{submission.status}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
 

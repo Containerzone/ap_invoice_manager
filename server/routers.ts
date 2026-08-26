@@ -38,6 +38,9 @@ import {
   getPoVarianceReport,
   findDuplicateInvoice,
   findInvoicesMatchingPoNumbers,
+  getMicrosoftGraphState,
+  getRecentEmailInvoiceSubmissions,
+  upsertMicrosoftGraphState,
 } from "./db";
 import { storagePut, storageGetSignedUrl } from "./storage";
 import { extractInvoiceData, extractAllPoNumbers } from "./extractionService";
@@ -60,6 +63,10 @@ import {
 } from "./xeroService";
 import { sendDisputeEmail, generateDisputeEmailTemplate, sendInviteEmail } from "./emailService";
 import { ENV } from "./_core/env";
+import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
+import { createGraphMessageSubscription } from "./microsoftGraphService";
+import { createHeartbeatJob } from "./_core/heartbeat";
+import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray } from "drizzle-orm";
 
@@ -268,6 +275,56 @@ async function refreshXeroPoResults(
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
   system: systemRouter,
+
+  microsoft: router({
+    status: adminProcedure.query(async () => {
+      const config = getMicrosoftGraphConfig();
+      const [state, submissions] = await Promise.all([
+        getMicrosoftGraphState(config.mailbox),
+        getRecentEmailInvoiceSubmissions(50),
+      ]);
+      return {
+        mailbox: config.mailbox,
+        invoiceAlias: config.invoiceAlias,
+        subscriptionId: state?.subscriptionId ?? null,
+        subscriptionExpiresAt: state?.subscriptionExpiresAt ?? null,
+        lastSubscriptionError: state?.lastSubscriptionError ?? null,
+        lastNotificationAt: state?.lastNotificationAt ?? null,
+        submissions,
+      };
+    }),
+    enableInboxProcessing: adminProcedure
+      .input(z.object({ origin: z.string().url() }))
+      .mutation(async ({ input, ctx }) => {
+        const origin = new URL(input.origin);
+        if (origin.protocol !== "https:") throw new TRPCError({ code: "BAD_REQUEST", message: "Microsoft Graph requires a secure HTTPS notification URL." });
+        const config = getMicrosoftGraphConfig();
+        const current = await getMicrosoftGraphState(config.mailbox);
+        const subscription = await createGraphMessageSubscription(`${origin.origin}/api/microsoft/notifications`);
+        let taskUid = current?.scheduleCronTaskUid;
+        if (!taskUid) {
+          const sessionToken = parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME];
+          if (!sessionToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "A valid session is required to schedule Microsoft subscription renewal." });
+          const job = await createHeartbeatJob({
+            name: "microsoft-graph-subscription-renewal",
+            cron: "0 0 */12 * * *",
+            path: "/api/scheduled/microsoft-subscription-renewal",
+            description: "Renews the Microsoft Graph inbound invoice mailbox subscription every 12 hours.",
+          }, decodeURIComponent(sessionToken));
+          taskUid = job.taskUid;
+        }
+        await upsertMicrosoftGraphState({
+          mailbox: config.mailbox,
+          invoiceAlias: config.invoiceAlias,
+          subscriptionId: subscription.id,
+          subscriptionExpiresAt: new Date(subscription.expirationDateTime),
+          scheduleCronTaskUid: taskUid,
+          lastSubscriptionError: null,
+          lastRenewedAt: new Date(),
+        });
+        return { subscriptionExpiresAt: subscription.expirationDateTime };
+      }),
+  }),
 
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
