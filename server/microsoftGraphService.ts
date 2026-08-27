@@ -65,6 +65,15 @@ export function microsoftWebhookClientState(resource: string): string {
   return createHmac("sha256", process.env.JWT_SECRET ?? "").update(`microsoft-graph:${resource}`).digest("hex");
 }
 
+/**
+ * Subscribe to Inbox messages only. This excludes an operator's Sent Items
+ * forward copy while retaining the new inbound delivery to the invoices alias.
+ */
+export function microsoftInvoiceInboxResource(): string {
+  const { mailbox } = getMicrosoftGraphConfig();
+  return `users/${mailbox}/mailFolders/inbox/messages`;
+}
+
 export function isInvoiceAliasRecipient(message: GraphMessage): boolean {
   const { invoiceAlias } = getMicrosoftGraphConfig();
   const recipientMatch = (message.toRecipients ?? []).some((recipient) =>
@@ -82,7 +91,15 @@ export function isInvoiceAliasRecipient(message: GraphMessage): boolean {
 }
 
 export function isGraphPdfAttachment(attachment: GraphFileAttachment): boolean {
-  return !attachment.isInline && attachment.contentType === "application/pdf" && Boolean(attachment.id);
+  const filenameIsPdf = attachment.name?.trim().toLowerCase().endsWith(".pdf") ?? false;
+  return !attachment.isInline
+    && Boolean(attachment.id)
+    && (attachment.contentType?.toLowerCase() === "application/pdf" || filenameIsPdf);
+}
+
+/** Select exactly the first non-inline PDF in Graph's source attachment order. */
+export function selectFirstGraphPdfAttachment(attachments: GraphFileAttachment[]): GraphFileAttachment | undefined {
+  return attachments.find(isGraphPdfAttachment);
 }
 
 export async function getGraphMessage(messageId: string): Promise<GraphMessage> {
@@ -117,20 +134,18 @@ export async function getGraphPdfAttachments(messageId: string): Promise<GraphFi
     undefined,
     "list message attachments"
   );
-  const pdfMetadata = (data.value ?? []).filter(isGraphPdfAttachment);
-  const attachments = await Promise.all(pdfMetadata.map((attachment) =>
-    graphRequest<GraphFileAttachment>(
-      `${basePath}/${encodeURIComponent(attachment.id)}`,
-      undefined,
-      "retrieve PDF attachment content"
-    )
-  ));
-  return attachments.filter((attachment) => Boolean(attachment.contentBytes));
+  const pdfMetadata = selectFirstGraphPdfAttachment(data.value ?? []);
+  if (!pdfMetadata) return [];
+  const attachment = await graphRequest<GraphFileAttachment>(
+    `${basePath}/${encodeURIComponent(pdfMetadata.id)}`,
+    undefined,
+    "retrieve first PDF attachment content"
+  );
+  return attachment.contentBytes ? [attachment] : [];
 }
 
 export async function createGraphMessageSubscription(notificationUrl: string): Promise<{ id: string; expirationDateTime: string }> {
-  const { mailbox } = getMicrosoftGraphConfig();
-  const resource = `users/${mailbox}/messages`;
+  const resource = microsoftInvoiceInboxResource();
   return graphRequest("/subscriptions", {
     method: "POST",
     body: JSON.stringify({
@@ -141,6 +156,14 @@ export async function createGraphMessageSubscription(notificationUrl: string): P
       clientState: microsoftWebhookClientState(resource),
     }),
   });
+}
+
+export async function deleteGraphMessageSubscription(subscriptionId: string): Promise<void> {
+  await graphRequest(
+    `/subscriptions/${encodeURIComponent(subscriptionId)}`,
+    { method: "DELETE" },
+    "delete previous mailbox subscription"
+  );
 }
 
 export async function renewGraphMessageSubscription(subscriptionId: string): Promise<{ id: string; expirationDateTime: string }> {

@@ -303,6 +303,11 @@
 - [x] Correct Graph polymorphic attachment retrieval so PDF content is fetched from individual file-attachment resources
 - [x] Attribute inbound email invoices to the active administrator when the configured owner identity is not present locally
 
+## Forwarded Email and Multi-Attachment Handling (Session 19)
+- [x] Recognise invoice PDFs forwarded from the watched mailbox after Exchange recipient normalisation
+- [x] Process only the first valid PDF attachment per received message and ignore CSV and all other attachment types
+- [ ] Add regression coverage and validate forwarded email PDF ingestion
+
 ## Microsoft 365 Invoice Upload Setup (Session 19)
 - [x] Provide administrator steps to create the invoices@ alias and Microsoft Graph application permissions for the inbound invoice mailbox
 - [x] Provide detailed portal URLs and credential-copy instructions for the Microsoft Graph application registration

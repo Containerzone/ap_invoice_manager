@@ -64,7 +64,7 @@ import {
 import { sendDisputeEmail, generateDisputeEmailTemplate, sendInviteEmail } from "./emailService";
 import { ENV } from "./_core/env";
 import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
-import { createGraphMessageSubscription } from "./microsoftGraphService";
+import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
 import { parse as parseCookie } from "cookie";
@@ -301,6 +301,13 @@ export const appRouter = router({
         if (origin.protocol !== "https:") throw new TRPCError({ code: "BAD_REQUEST", message: "Microsoft Graph requires a secure HTTPS notification URL." });
         const config = getMicrosoftGraphConfig();
         const current = await getMicrosoftGraphState(config.mailbox);
+        if (current?.subscriptionId) {
+          try {
+            await deleteGraphMessageSubscription(current.subscriptionId);
+          } catch (error: any) {
+            console.warn("[microsoft-graph] Could not remove the previous subscription before replacement:", error.message);
+          }
+        }
         const subscription = await createGraphMessageSubscription(`${origin.origin}/api/microsoft/notifications`);
         let taskUid = current?.scheduleCronTaskUid;
         if (!taskUid) {

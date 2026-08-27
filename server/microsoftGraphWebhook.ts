@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
-import { getGraphMessage, getGraphPdfAttachments, isInvoiceAliasRecipient, microsoftWebhookClientState } from "./microsoftGraphService";
+import { getGraphMessage, getGraphPdfAttachments, isInvoiceAliasRecipient, microsoftInvoiceInboxResource, microsoftWebhookClientState } from "./microsoftGraphService";
 import { processMicrosoftEmailPdf } from "./emailInvoiceProcessingService";
 import { getMicrosoftGraphState, updateMicrosoftGraphState } from "./db";
 
@@ -14,8 +14,7 @@ let notificationQueue: Promise<void> = Promise.resolve();
 const queuedMessageIds = new Set<string>();
 
 async function processNotification(notification: GraphNotification) {
-  const { mailbox } = getMicrosoftGraphConfig();
-  const expectedResource = `users/${mailbox}/messages`;
+  const expectedResource = microsoftInvoiceInboxResource();
   if (notification.clientState !== microsoftWebhookClientState(expectedResource)) {
     throw new Error("Rejected Microsoft Graph notification with an invalid client state");
   }
@@ -26,8 +25,10 @@ async function processNotification(notification: GraphNotification) {
   try {
   const message = await getGraphMessage(messageId);
   if (!isInvoiceAliasRecipient(message) || !message.hasAttachments) return;
-  const attachments = await getGraphPdfAttachments(message.id);
-  for (const attachment of attachments) await processMicrosoftEmailPdf(message, attachment);
+  const [attachment] = await getGraphPdfAttachments(message.id);
+  if (!attachment) return;
+  await processMicrosoftEmailPdf(message, attachment);
+  const { mailbox } = getMicrosoftGraphConfig();
   await updateMicrosoftGraphState(mailbox, { lastNotificationAt: new Date(), lastSubscriptionError: null });
   } finally {
     queuedMessageIds.delete(messageId);
