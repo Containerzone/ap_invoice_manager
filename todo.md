@@ -306,7 +306,7 @@
 ## Forwarded Email and Multi-Attachment Handling (Session 19)
 - [x] Recognise invoice PDFs forwarded from the watched mailbox after Exchange recipient normalisation
 - [x] Process only the first valid PDF attachment per received message and ignore CSV and all other attachment types
-- [ ] Add regression coverage and validate forwarded email PDF ingestion
+- [x] Add regression coverage and validate forwarded email PDF ingestion
 
 ## Microsoft 365 Invoice Upload Setup (Session 19)
 - [x] Provide administrator steps to create the invoices@ alias and Microsoft Graph application permissions for the inbound invoice mailbox
