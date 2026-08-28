@@ -308,6 +308,9 @@
 - [x] Process only the first valid PDF attachment per received message and ignore CSV and all other attachment types
 - [x] Add regression coverage and validate forwarded email PDF ingestion
 
+## Inbound Email Invoice Visibility (Session 19)
+- [x] Diagnose and correct why the most recent email submission did not create or populate a visible invoice in the UI
+
 ## Microsoft 365 Invoice Upload Setup (Session 19)
 - [x] Provide administrator steps to create the invoices@ alias and Microsoft Graph application permissions for the inbound invoice mailbox
 - [x] Provide detailed portal URLs and credential-copy instructions for the Microsoft Graph application registration

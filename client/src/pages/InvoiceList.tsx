@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatRelativeTime } from "@/lib/invoiceUtils";
+import { externalInvoiceListRefreshOptions } from "@/lib/invoiceListRefresh";
 import { Upload, Search, FileText, Filter, Users, ChevronUp, ChevronDown, ChevronsUpDown, X, MessageSquare, StickyNote } from "lucide-react";
 
 // ── Status options ────────────────────────────────────────────────────────────
@@ -167,7 +168,7 @@ export default function InvoiceList() {
   const { data: invoices, isLoading } = trpc.invoices.list.useQuery({
     search: search || undefined,
     includeArchived: isArchivedSelected ? true : undefined,
-  });
+  }, externalInvoiceListRefreshOptions);
 
   // ── Client-side filter + sort ─────────────────────────────────────────────
   const displayedInvoices = useMemo(() => {
