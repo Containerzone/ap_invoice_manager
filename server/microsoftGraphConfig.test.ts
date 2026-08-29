@@ -9,7 +9,7 @@ describe("Microsoft Graph credential configuration", () => {
     expect(config.tenantId).not.toHaveLength(0);
     expect(config.clientId).not.toHaveLength(0);
     expect(config.clientSecret).not.toHaveLength(0);
-    expect(config.mailbox).toBe("admin@containerzone.com.au");
+    expect(config.mailbox).toBe("invoices@containerzone.com.au");
     expect(config.invoiceAlias).toBe("invoices@containerzone.com.au");
   });
 
