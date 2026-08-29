@@ -319,6 +319,7 @@
 ## Dedicated Invoices Mailbox Activation (Session 19)
 - [ ] Update the Microsoft Graph watched mailbox to invoices@containerzone.com.au, replace the subscription, and verify dedicated-mailbox access
 - [ ] Recover the two missed forwarded invoices and validate a new direct or forwarded PDF delivery
+- [x] Reuse the existing Microsoft renewal schedule during dedicated mailbox activation instead of creating a duplicate schedule
 
 ## Microsoft 365 Invoice Upload Setup (Session 19)
 - [x] Provide administrator steps to create the invoices@ alias and Microsoft Graph application permissions for the inbound invoice mailbox

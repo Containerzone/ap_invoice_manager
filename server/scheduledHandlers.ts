@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { sdk } from "./_core/sdk";
-import { deleteOldArchivedInvoices } from "./db";
-import { getMicrosoftGraphStateByScheduleTaskUid, updateMicrosoftGraphState } from "./db";
+import { deleteOldArchivedInvoices, getMicrosoftGraphState, updateMicrosoftGraphState } from "./db";
+import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
 import { renewGraphMessageSubscription } from "./microsoftGraphService";
 
 /**
@@ -35,7 +35,11 @@ export async function microsoftSubscriptionRenewalHandler(req: Request, res: Res
   try {
     const user = await sdk.authenticateRequest(req);
     if (!user.isCron || !user.taskUid) return res.status(403).json({ error: "cron-only" });
-    const state = await getMicrosoftGraphStateByScheduleTaskUid(user.taskUid);
+    const config = getMicrosoftGraphConfig();
+    const state = await getMicrosoftGraphState(config.mailbox);
+    if (state?.scheduleCronTaskUid && state.scheduleCronTaskUid !== user.taskUid) {
+      return res.status(403).json({ error: "unexpected-renewal-task" });
+    }
     if (!state?.subscriptionId) return res.json({ ok: true, skipped: "no-subscription" });
     const subscription = await renewGraphMessageSubscription(state.subscriptionId);
     await updateMicrosoftGraphState(state.mailbox, {

@@ -520,6 +520,19 @@ export async function getMicrosoftGraphStateByScheduleTaskUid(taskUid: string): 
   return rows[0];
 }
 
+/** Returns the renewal-task UID from the prior invoice mailbox for safe reuse. */
+export async function getLatestMicrosoftRenewalScheduleTaskUid(): Promise<string | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select({ taskUid: microsoftGraphStates.scheduleCronTaskUid })
+    .from(microsoftGraphStates)
+    .where(sql`${microsoftGraphStates.scheduleCronTaskUid} IS NOT NULL`)
+    .orderBy(desc(microsoftGraphStates.updatedAt))
+    .limit(1);
+  return rows[0]?.taskUid ?? undefined;
+}
+
 export async function upsertMicrosoftGraphState(data: InsertMicrosoftGraphState): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");

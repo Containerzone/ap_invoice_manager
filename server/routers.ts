@@ -39,6 +39,7 @@ import {
   findDuplicateInvoice,
   findInvoicesMatchingPoNumbers,
   getMicrosoftGraphState,
+  getLatestMicrosoftRenewalScheduleTaskUid,
   getRecentEmailInvoiceSubmissions,
   upsertMicrosoftGraphState,
 } from "./db";
@@ -67,6 +68,7 @@ import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
+import { selectMicrosoftRenewalTaskUid } from "./microsoftGraphSchedule";
 import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray } from "drizzle-orm";
@@ -309,7 +311,8 @@ export const appRouter = router({
           }
         }
         const subscription = await createGraphMessageSubscription(`${origin.origin}/api/microsoft/notifications`);
-        let taskUid = current?.scheduleCronTaskUid;
+        const priorMailboxTaskUid = await getLatestMicrosoftRenewalScheduleTaskUid();
+        let taskUid = selectMicrosoftRenewalTaskUid(current?.scheduleCronTaskUid, priorMailboxTaskUid);
         if (!taskUid) {
           const sessionToken = parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME];
           if (!sessionToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "A valid session is required to schedule Microsoft subscription renewal." });
