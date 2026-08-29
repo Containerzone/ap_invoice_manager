@@ -312,12 +312,12 @@
 - [x] Diagnose and correct why the most recent email submission did not create or populate a visible invoice in the UI
 
 ## Missing Forwarded Email Submissions (Session 19)
-- [ ] Identify and recover the two forwarded invoice emails immediately before invoice 10924; correct the processing failure that skipped them
-- [ ] Move invoice ingestion from the invoices@ alias on the admin mailbox to a dedicated invoices@ Microsoft 365 mailbox and replace the Graph subscription
+- [x] Identify and recover the two forwarded invoice emails immediately before invoice 10924; correct the processing failure that skipped them
+- [x] Move invoice ingestion from the invoices@ alias on the admin mailbox to a dedicated invoices@ Microsoft 365 mailbox and replace the Graph subscription
 - [x] Compare Gmail and internal forwarded-message delivery metadata to explain the apparent processing difference
 
 ## Dedicated Invoices Mailbox Activation (Session 19)
-- [ ] Update the Microsoft Graph watched mailbox to invoices@containerzone.com.au, replace the subscription, and verify dedicated-mailbox access
+- [x] Update the Microsoft Graph watched mailbox to invoices@containerzone.com.au, replace the subscription, and verify dedicated-mailbox access
 - [ ] Recover the two missed forwarded invoices and validate a new direct or forwarded PDF delivery
 - [x] Reuse the existing Microsoft renewal schedule during dedicated mailbox activation instead of creating a duplicate schedule
 

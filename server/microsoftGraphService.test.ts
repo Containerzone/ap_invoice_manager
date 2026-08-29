@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isGraphPdfAttachment, isInvoiceAliasRecipient, microsoftGraphRetryDelayMs, microsoftWebhookClientState, selectFirstGraphPdfAttachment } from "./microsoftGraphService";
+import { isGraphPdfAttachment, isInvoiceAliasRecipient, microsoftGraphMessageResource, microsoftGraphRetryDelayMs, microsoftWebhookClientState, selectFirstGraphPdfAttachment } from "./microsoftGraphService";
 
 describe("Microsoft Graph inbound email safeguards", () => {
   it("uses Retry-After values and bounded fallback delays for transient Graph throttling", () => {
@@ -45,5 +45,10 @@ describe("Microsoft Graph inbound email safeguards", () => {
     const resource = "users/admin@containerzone.com.au/messages";
     expect(microsoftWebhookClientState(resource)).toBe(microsoftWebhookClientState(resource));
     expect(microsoftWebhookClientState(resource)).not.toBe(microsoftWebhookClientState("users/other@example.com/messages"));
+  });
+
+  it("builds a correctly encoded explicit mailbox message resource for controlled recovery", () => {
+    expect(microsoftGraphMessageResource("admin@containerzone.com.au", "AAMk+abc/def"))
+      .toBe("/users/admin%40containerzone.com.au/messages/AAMk%2Babc%2Fdef");
   });
 });

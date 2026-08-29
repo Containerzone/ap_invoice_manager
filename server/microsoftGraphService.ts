@@ -74,6 +74,10 @@ export function microsoftInvoiceInboxResource(): string {
   return `users/${mailbox}/mailFolders/inbox/messages`;
 }
 
+export function microsoftGraphMessageResource(mailbox: string, messageId: string): string {
+  return `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}`;
+}
+
 export function isInvoiceAliasRecipient(message: GraphMessage): boolean {
   const { invoiceAlias } = getMicrosoftGraphConfig();
   const recipientMatch = (message.toRecipients ?? []).some((recipient) =>
@@ -102,9 +106,10 @@ export function selectFirstGraphPdfAttachment(attachments: GraphFileAttachment[]
   return attachments.find(isGraphPdfAttachment);
 }
 
-export async function getGraphMessage(messageId: string): Promise<GraphMessage> {
+export async function getGraphMessage(messageId: string, mailboxOverride?: string): Promise<GraphMessage> {
   const { mailbox } = getMicrosoftGraphConfig();
-  return graphRequest<GraphMessage>(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}?$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments,internetMessageHeaders`, undefined, "retrieve notified message");
+  const mailboxToRead = mailboxOverride ?? mailbox;
+  return graphRequest<GraphMessage>(`${microsoftGraphMessageResource(mailboxToRead, messageId)}?$select=id,internetMessageId,subject,receivedDateTime,from,toRecipients,hasAttachments,internetMessageHeaders`, undefined, "retrieve notified message");
 }
 
 /** Confirms Mail.Read application access without reading email content. */
@@ -126,9 +131,10 @@ export async function getRecentMicrosoftMessageMetadata(limit = 10): Promise<Gra
   return data.value ?? [];
 }
 
-export async function getGraphPdfAttachments(messageId: string): Promise<GraphFileAttachment[]> {
+export async function getGraphPdfAttachments(messageId: string, mailboxOverride?: string): Promise<GraphFileAttachment[]> {
   const { mailbox } = getMicrosoftGraphConfig();
-  const basePath = `/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(messageId)}/attachments`;
+  const mailboxToRead = mailboxOverride ?? mailbox;
+  const basePath = `${microsoftGraphMessageResource(mailboxToRead, messageId)}/attachments`;
   const data = await graphRequest<{ value?: GraphFileAttachment[] }>(
     `${basePath}?$select=id,name,contentType,size,isInline`,
     undefined,
