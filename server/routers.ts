@@ -2088,8 +2088,9 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    // Delete invoice (admin only)
-    delete: adminProcedure
+    // Delete invoice (any authenticated active user). Disabled users are rejected
+    // by protectedProcedure before this irreversible operation can run.
+    delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         const invoice = await getInvoiceById(input.id);

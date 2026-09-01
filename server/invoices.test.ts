@@ -29,6 +29,7 @@ vi.mock("./db", () => ({
   updateLineItem: vi.fn().mockResolvedValue(undefined),
   addLineItem: vi.fn().mockResolvedValue(1),
   deleteLineItem: vi.fn().mockResolvedValue(undefined),
+  deleteInvoice: vi.fn().mockResolvedValue(undefined),
   saveQueryPoints: vi.fn().mockResolvedValue(undefined),
   getDashboardMetrics: vi.fn().mockResolvedValue({
     total: 0, flagged: 0, openQueries: 0, resolvedThisMonth: 0,
@@ -115,6 +116,52 @@ function makeUserCtx(): TrpcContext {
     user: { ...makeAdminCtx().user!, id: 2, role: "user", openId: "user-open-id" },
   };
 }
+
+function makeDisabledUserCtx(): TrpcContext {
+  const ctx = makeUserCtx();
+  return {
+    ...ctx,
+    user: { ...ctx.user!, status: "disabled" },
+  };
+}
+
+function makeUnauthenticatedCtx(): TrpcContext {
+  return {
+    ...makeAdminCtx(),
+    user: null,
+  };
+}
+
+describe("invoices.delete", () => {
+  it("allows active staff and admins to delete an existing invoice", async () => {
+    const { getInvoiceById, deleteInvoice } = await import("./db");
+    vi.mocked(getInvoiceById)
+      .mockResolvedValueOnce({ id: 42 } as any)
+      .mockResolvedValueOnce({ id: 42 } as any);
+    vi.mocked(deleteInvoice).mockClear();
+
+    await expect(appRouter.createCaller(makeUserCtx()).invoices.delete({ id: 42 }))
+      .resolves.toEqual({ success: true });
+    await expect(appRouter.createCaller(makeAdminCtx()).invoices.delete({ id: 42 }))
+      .resolves.toEqual({ success: true });
+
+    expect(vi.mocked(deleteInvoice)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(deleteInvoice)).toHaveBeenNthCalledWith(1, 42);
+    expect(vi.mocked(deleteInvoice)).toHaveBeenNthCalledWith(2, 42);
+  });
+
+  it("rejects unauthenticated and disabled callers before any deletion", async () => {
+    const { deleteInvoice } = await import("./db");
+    vi.mocked(deleteInvoice).mockClear();
+
+    await expect(appRouter.createCaller(makeUnauthenticatedCtx()).invoices.delete({ id: 42 }))
+      .rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(appRouter.createCaller(makeDisabledUserCtx()).invoices.delete({ id: 42 }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    expect(vi.mocked(deleteInvoice)).not.toHaveBeenCalled();
+  });
+});
 
 describe("invoices.metrics", () => {
   it("returns dashboard metrics for authenticated users", async () => {

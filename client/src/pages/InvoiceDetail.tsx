@@ -1065,7 +1065,7 @@ export default function InvoiceDetail() {
             </Button>
           )}
 
-          {user?.role === "admin" && !editMode && (
+          {user && !editMode && (
             <Button variant="outline" size="sm" className="gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300" onClick={() => setShowDeleteDialog(true)}>
               <Trash2 className="h-3.5 w-3.5" />
               Delete

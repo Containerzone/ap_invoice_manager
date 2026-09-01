@@ -321,6 +321,10 @@
 - [ ] Recover the two missed forwarded invoices and validate a new direct or forwarded PDF delivery
 - [x] Reuse the existing Microsoft renewal schedule during dedicated mailbox activation instead of creating a duplicate schedule
 
+## Staff Invoice Deletion (Session 19)
+- [x] Allow staff users to open the existing invoice deletion confirmation and perform the same protected deletion operation
+- [x] Add regression coverage confirming both active staff and admins can delete invoices while unauthenticated users cannot
+
 ## Microsoft 365 Invoice Upload Setup (Session 19)
 - [x] Provide administrator steps to create the invoices@ alias and Microsoft Graph application permissions for the inbound invoice mailbox
 - [x] Provide detailed portal URLs and credential-copy instructions for the Microsoft Graph application registration
