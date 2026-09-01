@@ -243,6 +243,7 @@
 
 ## Route-Based Transport PO SOP (Session 19)
 - [x] Produce a standalone SOP explaining all automated transport PO prefixes, with in-depth rail-yard route rules for AD, BD, DD and ED
+- [x] Deliver the route-based transport PO SOP as a standalone Word document and remove its source document from the application project
 
 ## Safe Xero Supplier Contact Matching (Session 19)
 - [x] Add name-first and email-validation Xero contact matching, including distinct no-match, name/email conflict and multiple-candidate outcomes
