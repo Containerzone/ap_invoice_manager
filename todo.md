@@ -337,5 +337,9 @@
 - [x] Investigate D702796 and map every non-explicit/verified Stage 1 transport supplier field to the exact CONTAINERZONE Xero contact
 - [x] Add regression coverage ensuring unmapped transport costs use CONTAINERZONE rather than an ambiguous external supplier contact
 
+## D702837 PO Webhook Investigation (Session 19)
+- [x] Trace the D702837 webhook record, payload and processing outcome to determine why no purchase orders were created
+- [x] Apply and validate a narrowly scoped correction or provide the verified operational outcome
+
 ## Xero Usage Since Reset (Session 19)
 - [x] Calculate the number of Xero API calls used since the current daily allowance reset

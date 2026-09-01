@@ -223,6 +223,15 @@ function normaliseKey(raw: string): string {
 }
 
 /**
+ * Identifies the transport-cost fields recognised by the Stage 1 PO mapping.
+ * An event containing only a deal ID has no source amounts from which a PO can
+ * be created and must be surfaced as a failed webhook rather than a success.
+ */
+export function getMappedTransportCostFields(payload: Record<string, any>): string[] {
+  return Object.keys(payload).filter((rawKey) => Boolean(FIELD_MAP[normaliseKey(rawKey)]));
+}
+
+/**
  * Build the Xero PO number from the deal number and field config.
  * Deal number arrives as "D702118" — we extract the numeric part.
  */
@@ -414,13 +423,6 @@ async function createXeroDraftPO(opts: {
 export async function processVtigerWebhook(
   payload: Record<string, any>
 ): Promise<ProcessWebhookResult> {
-  const clientId = process.env.XERO_CLIENT_ID;
-  const clientSecret = process.env.XERO_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    throw new Error("XERO_CLIENT_ID or XERO_CLIENT_SECRET not configured");
-  }
-
   // Extract deal number — Vtiger sends "D702118" with a trailing space sometimes
   const rawDealId =
     payload["deal id "] ??
@@ -437,6 +439,20 @@ export async function processVtigerWebhook(
   const dealDigits = dealNumber.replace(/^D/i, ""); // e.g. "702118"
 
   console.log(`[Vtiger PO] Processing deal: ${dealNumber}`);
+
+  const mappedTransportFields = getMappedTransportCostFields(payload);
+  if (mappedTransportFields.length === 0) {
+    throw new Error(
+      `No mapped transport cost fields were received for deal ${dealNumber}; no purchase orders were created. Update the Vtiger webhook to include the Stage 1 transport-cost fields.`,
+    );
+  }
+
+  const clientId = process.env.XERO_CLIENT_ID;
+  const clientSecret = process.env.XERO_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error("XERO_CLIENT_ID or XERO_CLIENT_SECRET not configured");
+  }
 
   // Get Xero auth token
   const auth = await getValidAccessToken(clientId, clientSecret);

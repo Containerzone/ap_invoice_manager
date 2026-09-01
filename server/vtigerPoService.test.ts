@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { chooseStageOnePoContact, STAGE_ONE_FALLBACK_SUPPLIER } from "./vtigerPoService";
+import {
+  chooseStageOnePoContact,
+  getMappedTransportCostFields,
+  processVtigerWebhook,
+  STAGE_ONE_FALLBACK_SUPPLIER,
+} from "./vtigerPoService";
+
+describe("Vtiger webhook payload validation", () => {
+  it("identifies configured Stage 1 transport-cost fields despite inconsistent label spacing", () => {
+    expect(getMappedTransportCostFields({
+      "deal id ": "D702837",
+      " cf_quotes_emptydelivery ": "125.00",
+      "unrelated field": "ignored",
+    })).toEqual([" cf_quotes_emptydelivery "]);
+  });
+
+  it("rejects an ID-only event before attempting Xero work", async () => {
+    await expect(processVtigerWebhook({ "deal id ": "D702837" }))
+      .rejects.toThrow("No mapped transport cost fields were received for deal D702837");
+  });
+});
 
 describe("Stage 1 supplier fallback", () => {
   it("uses the exact matched Xero contact when supplier resolution succeeds", () => {

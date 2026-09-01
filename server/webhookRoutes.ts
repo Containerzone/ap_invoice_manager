@@ -33,12 +33,19 @@ router.post("/api/vtiger-webhook", async (req: Request, res: Response) => {
 
     // Extract Deal ID from common Vtiger webhook field names
     // Vtiger typically sends: id, record_id, crmid, or data.id
+    const webhookDealNumber =
+      body["deal id "] ??
+      body["deal id"] ??
+      body.deal_id ??
+      null;
+
     const dealId =
       body.id ??
       body.record_id ??
       body.crmid ??
       body.data?.id ??
       body.data?.crmid ??
+      webhookDealNumber ??
       `unknown-${Date.now()}`;
 
     const dealNumber =
@@ -47,6 +54,7 @@ router.post("/api/vtiger-webhook", async (req: Request, res: Response) => {
       body.potentialname ??
       body.data?.deal_no ??
       body.data?.opportunity_no ??
+      webhookDealNumber ??
       null;
 
     const dealName =
