@@ -9,6 +9,16 @@ import {
 } from "./xeroRequestManager";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
+const DEFAULT_BILL_ACCOUNT_CODE = "310";
+
+/**
+ * Xero rejects blank AccountCode values. Historic Xero PO lines can return an
+ * empty string rather than null, so normalise both missing and blank values to
+ * the standard purchase account while leaving configured codes unchanged.
+ */
+export function resolveXeroBillAccountCode(accountCode?: string | null): string {
+  return accountCode?.trim() || DEFAULT_BILL_ACCOUNT_CODE;
+}
 const XERO_IDENTITY_BASE = "https://api.xero.com/connections";
 const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
 const XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize";
@@ -549,8 +559,8 @@ export async function createXeroDraftBill(
       UnitAmount: li.unitAmount,
       // TaxType is mandatory for ACCPAY bills in Xero — always set it
       TaxType: li.taxType ?? "INPUT",
-      // AccountCode is mandatory — use provided value or default to 310 (Purchases)
-      AccountCode: li.accountCode ?? "310",
+      // AccountCode is mandatory — including when a historic source line returns an empty string.
+      AccountCode: resolveXeroBillAccountCode(li.accountCode),
     })),
   };
 
@@ -1188,8 +1198,8 @@ export async function convertPOsToBill(
       UnitAmount: li.unitAmount,
       // TaxType is mandatory for ACCPAY bills — always set it; inherit from PO or default to INPUT (GST on Expenses)
       TaxType: li.taxType ?? "INPUT",
-      // AccountCode is mandatory — inherit from PO or default to 310 (Purchases)
-      AccountCode: li.accountCode ?? "310",
+      // AccountCode is mandatory — including when a historic PO line returns an empty string.
+      AccountCode: resolveXeroBillAccountCode(li.accountCode),
     })),
   };
 
