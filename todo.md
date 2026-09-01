@@ -241,6 +241,9 @@
 - [x] Deliver standalone SOP attachment with worked examples for every PO-number pattern; no application functionality changes
 - [x] Deliver standalone SOP titled "Transport Purchase Order Numbers" covering only Stage 1 automated operational transport POs, with detailed examples
 
+## Route-Based Transport PO SOP (Session 19)
+- [x] Produce a standalone SOP explaining all automated transport PO prefixes, with in-depth rail-yard route rules for AD, BD, DD and ED
+
 ## Safe Xero Supplier Contact Matching (Session 19)
 - [x] Add name-first and email-validation Xero contact matching, including distinct no-match, name/email conflict and multiple-candidate outcomes
 - [x] Block automatic contact creation for name/email conflicts or multiple candidates; add an authorised contact-selection/approval path
@@ -340,6 +343,10 @@
 ## D702837 PO Webhook Investigation (Session 19)
 - [x] Trace the D702837 webhook record, payload and processing outcome to determine why no purchase orders were created
 - [x] Apply and validate a narrowly scoped correction or provide the verified operational outcome
+
+## Workflow Failure Monitoring and Alerts (Session 19)
+- [ ] Define monitored automation outcomes, alert recipients and immediate-notification delivery method for workflow failures
+- [ ] Implement and validate the selected real-time failure alerts and an operational failure history view
 
 ## Xero Usage Since Reset (Session 19)
 - [x] Calculate the number of Xero API calls used since the current daily allowance reset
