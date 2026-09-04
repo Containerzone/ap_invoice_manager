@@ -354,8 +354,11 @@
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values
 
 ## Workflow Failure Monitoring and Alerts (Session 19)
-- [ ] Define monitored automation outcomes, alert recipients and immediate-notification delivery method for workflow failures
-- [ ] Implement and validate the selected real-time failure alerts and an operational failure history view
+- [x] Record webhook, Xero, email-ingestion and scheduled-workflow failures in a durable operational register
+- [x] Send immediate workflow-failure email alerts to fckyle@gmail.com and ashishgupta020202@gmail.com
+- [x] Add and validate an admin operational-failure register with failure details and resolution status
+- [x] Add a daily reconciliation summary for open and newly recorded workflow failures
+- [ ] Publish the monitoring update and activate the daily reconciliation schedule from the Operational Failures page
 
 ## Xero Usage Since Reset (Session 19)
 - [x] Calculate the number of Xero API calls used since the current daily allowance reset

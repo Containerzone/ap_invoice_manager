@@ -19,6 +19,8 @@ import {
   PendingInvite,
   Supplier,
   User,
+  WorkflowFailure,
+  WorkflowMonitoringSettings,
   XeroToken,
   conversationNotes,
   emailLogs,
@@ -29,6 +31,8 @@ import {
   pendingInvites,
   suppliers,
   users,
+  workflowFailures,
+  workflowMonitoringSettings,
   xeroApiCache,
   xeroTokens,
 } from "../drizzle/schema";
@@ -616,6 +620,129 @@ export async function getPendingEmailInvoiceSubmissions(limit = 10): Promise<Ema
     .where(eq(emailInvoiceSubmissions.status, "received"))
     .orderBy(emailInvoiceSubmissions.createdAt)
     .limit(limit);
+}
+
+// ─── Workflow Failure Monitoring ─────────────────────────────────────────────
+
+export type WorkflowFailureInput = {
+  workflowType: string;
+  recordKey: string;
+  title: string;
+  errorMessage: string;
+  details?: Record<string, unknown>;
+  severity?: "warning" | "error";
+};
+
+/**
+ * Stores one active failure per workflow/record pair and coalesces repeated
+ * occurrences. A reopened failure is eligible for a fresh immediate alert.
+ */
+export async function recordWorkflowFailure(input: WorkflowFailureInput): Promise<{
+  failure: WorkflowFailure;
+  shouldAlert: boolean;
+}> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const now = new Date();
+  const existing = (await db.select().from(workflowFailures).where(and(
+    eq(workflowFailures.workflowType, input.workflowType),
+    eq(workflowFailures.recordKey, input.recordKey),
+  )).limit(1))[0];
+
+  if (existing) {
+    const reopened = existing.status === "resolved";
+    const recentlyAlerted = existing.lastAlertedAt && now.getTime() - existing.lastAlertedAt.getTime() < 30 * 60 * 1000;
+    await db.update(workflowFailures).set({
+      title: input.title,
+      errorMessage: input.errorMessage,
+      details: input.details ?? null,
+      severity: input.severity ?? "error",
+      status: "open",
+      occurrenceCount: (existing.occurrenceCount ?? 0) + 1,
+      lastOccurredAt: now,
+      resolvedAt: null,
+      resolvedBy: null,
+      resolutionNotes: null,
+      ...(reopened ? { lastAlertedAt: null, alertError: null } : {}),
+      updatedAt: now,
+    }).where(eq(workflowFailures.id, existing.id));
+    const failure = (await db.select().from(workflowFailures).where(eq(workflowFailures.id, existing.id)).limit(1))[0]!;
+    return { failure, shouldAlert: reopened || !recentlyAlerted };
+  }
+
+  const result = await db.insert(workflowFailures).values({
+    workflowType: input.workflowType,
+    recordKey: input.recordKey,
+    title: input.title,
+    errorMessage: input.errorMessage,
+    details: input.details ?? null,
+    severity: input.severity ?? "error",
+    status: "open",
+    occurrenceCount: 1,
+    firstOccurredAt: now,
+    lastOccurredAt: now,
+  });
+  const id = (result[0] as any).insertId as number;
+  const failure = (await db.select().from(workflowFailures).where(eq(workflowFailures.id, id)).limit(1))[0]!;
+  return { failure, shouldAlert: true };
+}
+
+export async function updateWorkflowFailureAlertAttempt(id: number, error?: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(workflowFailures).set({
+    lastAlertedAt: new Date(),
+    alertError: error ?? null,
+    updatedAt: new Date(),
+  }).where(eq(workflowFailures.id, id));
+}
+
+export async function getRecentWorkflowFailures(limit = 100): Promise<WorkflowFailure[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(workflowFailures).orderBy(desc(workflowFailures.lastOccurredAt)).limit(limit);
+}
+
+export async function getOpenWorkflowFailures(): Promise<WorkflowFailure[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(workflowFailures)
+    .where(eq(workflowFailures.status, "open"))
+    .orderBy(desc(workflowFailures.lastOccurredAt));
+}
+
+export async function resolveWorkflowFailure(id: number, resolvedBy: number, resolutionNotes?: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(workflowFailures).set({
+    status: "resolved",
+    resolvedAt: new Date(),
+    resolvedBy,
+    resolutionNotes: resolutionNotes?.trim() || null,
+    updatedAt: new Date(),
+  }).where(eq(workflowFailures.id, id));
+}
+
+export async function getWorkflowMonitoringSettings(): Promise<WorkflowMonitoringSettings | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(workflowMonitoringSettings).orderBy(workflowMonitoringSettings.id).limit(1))[0];
+}
+
+export async function updateWorkflowMonitoringSettings(data: {
+  dailySummaryCronTaskUid?: string | null;
+  lastDailySummaryAt?: Date | null;
+}): Promise<WorkflowMonitoringSettings> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const current = await getWorkflowMonitoringSettings();
+  if (current) {
+    await db.update(workflowMonitoringSettings).set({ ...data, updatedAt: new Date() }).where(eq(workflowMonitoringSettings.id, current.id));
+    return (await getWorkflowMonitoringSettings())!;
+  }
+  const result = await db.insert(workflowMonitoringSettings).values(data);
+  const id = (result[0] as any).insertId as number;
+  return (await db.select().from(workflowMonitoringSettings).where(eq(workflowMonitoringSettings.id, id)).limit(1))[0]!;
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

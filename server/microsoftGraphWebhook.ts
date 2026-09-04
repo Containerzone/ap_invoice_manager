@@ -3,6 +3,7 @@ import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
 import { getGraphMessage, getGraphPdfAttachments, isInvoiceAliasRecipient, microsoftInvoiceInboxResource, microsoftWebhookClientState } from "./microsoftGraphService";
 import { processMicrosoftEmailPdf } from "./emailInvoiceProcessingService";
 import { getMicrosoftGraphState, updateMicrosoftGraphState } from "./db";
+import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
 type GraphNotification = {
   clientState?: string;
@@ -49,6 +50,14 @@ export function registerMicrosoftGraphWebhook(app: Express) {
           } catch (error: any) {
             const mailbox = getMicrosoftGraphConfig().mailbox;
             await updateMicrosoftGraphState(mailbox, { lastSubscriptionError: error.message });
+            reportWorkflowFailureSafely({
+              workflowType: "microsoft-graph-notification",
+              recordKey: `graph-message:${notification.resourceData?.id ?? "unknown"}`,
+              title: "Microsoft invoice notification processing failed",
+              errorMessage: error.message ?? "Microsoft Graph notification processing failed",
+              details: { mailbox, messageId: notification.resourceData?.id, resource: notification.resource },
+              severity: "error",
+            });
             console.error("[microsoft-graph] Notification processing failed:", error.message);
           }
         });

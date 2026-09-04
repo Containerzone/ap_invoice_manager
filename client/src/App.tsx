@@ -21,6 +21,7 @@ import XeroCallback from "./pages/XeroCallback";
 import BulkQuery from "./pages/BulkQuery";
 import Reports from "./pages/Reports";
 import PoRequests from "./pages/PoRequests";
+import OperationalFailures from "./pages/OperationalFailures";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -82,6 +83,9 @@ function AppRoutes() {
               </Route>
               <Route path="/reports" component={Reports} />
               <Route path="/po-requests" component={PoRequests} />
+              <Route path="/operational-failures">
+                <AdminGuard><OperationalFailures /></AdminGuard>
+              </Route>
               <Route component={NotFound} />
             </Switch>
           </DashboardLayout>

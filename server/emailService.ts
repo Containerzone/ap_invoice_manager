@@ -162,6 +162,36 @@ export async function sendInviteEmail(opts: SendInviteEmailOptions): Promise<{ s
   }
 }
 
+/** Sends an operational alert without creating an invoice-linked email record. */
+export async function sendOperationalAlertEmail(opts: {
+  recipients: string[];
+  subject: string;
+  body: string;
+}): Promise<{ success: boolean; error?: string }> {
+  if (opts.recipients.length === 0) {
+    return { success: false, error: "No workflow alert recipients are configured" };
+  }
+  try {
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT ?? 587),
+      secure: Number(process.env.SMTP_PORT ?? 587) === 465,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+    await transporter.sendMail({
+      from: `"ContainerZone AP Monitor" <${process.env.SMTP_USER ?? FROM_ADDRESS}>`,
+      to: opts.recipients.join(", "),
+      subject: opts.subject,
+      html: opts.body.replace(/\n/g, "<br>"),
+      text: opts.body,
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Workflow Alert] Email delivery failed:", error?.message ?? error);
+    return { success: false, error: error?.message ?? "Unknown email delivery failure" };
+  }
+}
+
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(amount);
 }

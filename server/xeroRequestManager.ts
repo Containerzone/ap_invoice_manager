@@ -6,6 +6,7 @@ import {
   setXeroApiCache,
   updateXeroRateLimitState,
 } from "./db";
+import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
 export type XeroRequestAuth = { token: string; tenantId: string };
 
@@ -113,8 +114,28 @@ export async function runXeroRequest<T>(
       return response;
     } catch (error: any) {
       if (error?.response?.status === 429) {
-        return await recordRateLimit(auth.tenantId, error.response.headers);
+        try {
+          return await recordRateLimit(auth.tenantId, error.response.headers);
+        } catch (rateLimitError: any) {
+          reportWorkflowFailureSafely({
+            workflowType: "xero-api",
+            recordKey: `xero:${auth.tenantId}:${operationName}`,
+            title: `Xero request limit reached: ${operationName}`,
+            errorMessage: rateLimitError?.message ?? "Xero request limit reached",
+            details: { operation: operationName, httpStatus: 429 },
+            severity: "warning",
+          });
+          throw rateLimitError;
+        }
       }
+      reportWorkflowFailureSafely({
+        workflowType: "xero-api",
+        recordKey: `xero:${auth.tenantId}:${operationName}`,
+        title: `Xero request failed: ${operationName}`,
+        errorMessage: error?.message ?? "Xero API request failed",
+        details: { operation: operationName, httpStatus: error?.response?.status },
+        severity: "error",
+      });
       throw error;
     }
   } finally {

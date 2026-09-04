@@ -11,6 +11,7 @@ import { getDb } from "./db";
 import { poRequests } from "../drizzle/schema";
 import { processVtigerWebhook } from "./vtigerPoService";
 import { eq } from "drizzle-orm";
+import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
 const router = Router();
 
@@ -108,6 +109,19 @@ router.post("/api/vtiger-webhook", async (req: Request, res: Response) => {
           processedAt: new Date(),
         }).where(eq(poRequests.id, row.id));
 
+        if (result.overallStatus === "failed" || result.overallStatus === "partial") {
+          const failedResults = result.poResults.filter((po) => po.status === "error");
+          reportWorkflowFailureSafely({
+            workflowType: "vtiger-po-webhook",
+            recordKey: `po-request:${row.id}`,
+            title: `PO creation ${result.overallStatus} for ${result.dealNumber}`,
+            errorMessage: failedResults.map((po) => `${po.poNumber}: ${po.error ?? "PO creation failed"}`).join("; ")
+              || `Vtiger PO webhook completed with status ${result.overallStatus}`,
+            details: { dealNumber: result.dealNumber, poRequestId: row.id, overallStatus: result.overallStatus },
+            severity: "error",
+          });
+        }
+
         console.log(`[Vtiger Webhook] PO creation complete for deal ${result.dealNumber}: ${result.overallStatus}`);
       } catch (err: any) {
         console.error(`[Vtiger Webhook] PO creation failed for deal ${dealId}:`, err.message);
@@ -116,6 +130,14 @@ router.post("/api/vtiger-webhook", async (req: Request, res: Response) => {
           errorMessage: err.message,
           processedAt: new Date(),
         }).where(eq(poRequests.id, row.id));
+        reportWorkflowFailureSafely({
+          workflowType: "vtiger-po-webhook",
+          recordKey: `po-request:${row.id}`,
+          title: `PO creation failed for ${row.vtigerDealNumber ?? String(dealId)}`,
+          errorMessage: err.message ?? "Vtiger PO workflow failed",
+          details: { dealNumber: row.vtigerDealNumber, poRequestId: row.id },
+          severity: "error",
+        });
       }
     });
   } catch (err: any) {

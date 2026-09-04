@@ -369,3 +369,45 @@ export const poRequests = mysqlTable("po_requests", {
 
 export type PoRequest = typeof poRequests.$inferSelect;
 export type InsertPoRequest = typeof poRequests.$inferInsert;
+
+// ─── Workflow Failure Monitoring ─────────────────────────────────────────────
+
+/** Durable, de-duplicated operational failures from all automated workflows. */
+export const workflowFailures = mysqlTable("workflow_failures", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  recordKey: varchar("recordKey", { length: 255 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  errorMessage: text("errorMessage").notNull(),
+  details: json("details"),
+  severity: mysqlEnum("severity", ["warning", "error"]).default("error").notNull(),
+  status: mysqlEnum("status", ["open", "resolved"]).default("open").notNull(),
+  occurrenceCount: int("occurrenceCount").default(1).notNull(),
+  firstOccurredAt: timestamp("firstOccurredAt").defaultNow().notNull(),
+  lastOccurredAt: timestamp("lastOccurredAt").defaultNow().notNull(),
+  lastAlertedAt: timestamp("lastAlertedAt"),
+  alertError: text("alertError"),
+  resolvedAt: timestamp("resolvedAt"),
+  resolvedBy: int("resolvedBy"),
+  resolutionNotes: text("resolutionNotes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  workflowRecordUnique: uniqueIndex("workflow_failures_workflow_record_unique")
+    .on(table.workflowType, table.recordKey),
+}));
+
+export type WorkflowFailure = typeof workflowFailures.$inferSelect;
+export type InsertWorkflowFailure = typeof workflowFailures.$inferInsert;
+
+/** Project-level settings for the operational failure monitor. */
+export const workflowMonitoringSettings = mysqlTable("workflow_monitoring_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  dailySummaryCronTaskUid: varchar("dailySummaryCronTaskUid", { length: 65 }),
+  lastDailySummaryAt: timestamp("lastDailySummaryAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WorkflowMonitoringSettings = typeof workflowMonitoringSettings.$inferSelect;
+export type InsertWorkflowMonitoringSettings = typeof workflowMonitoringSettings.$inferInsert;

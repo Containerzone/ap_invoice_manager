@@ -22,7 +22,7 @@ import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
   LayoutDashboard, LogOut, PanelLeft, Users, FileText,
-  Building2, Settings, ShieldCheck, BarChart3, ShoppingCart
+  Building2, Settings, ShieldCheck, BarChart3, ShoppingCart, Siren
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -35,6 +35,7 @@ const menuItems = [
   { icon: FileText,        label: "Invoices",    path: "/invoices",    adminOnly: false },
   { icon: BarChart3,       label: "Reports",     path: "/reports",     adminOnly: false },
   { icon: ShoppingCart,    label: "PO Requests", path: "/po-requests", adminOnly: false },
+  { icon: Siren,           label: "Operational Failures", path: "/operational-failures", adminOnly: true },
   { icon: Building2,       label: "Suppliers",   path: "/suppliers",   adminOnly: false },
   { icon: Users,           label: "Users",       path: "/users",       adminOnly: true  },
   { icon: Settings,        label: "Settings",    path: "/settings",    adminOnly: true  },

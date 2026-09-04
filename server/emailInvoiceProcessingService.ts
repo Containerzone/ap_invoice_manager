@@ -17,6 +17,7 @@ import {
 import { extractAllPoNumbers, extractInvoiceData } from "./extractionService";
 import { storagePut } from "./storage";
 import type { GraphFileAttachment, GraphMessage } from "./microsoftGraphService";
+import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
 const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
 
@@ -123,6 +124,14 @@ export async function processMicrosoftEmailPdf(message: GraphMessage, attachment
     return { invoiceId, status: "processed" };
   } catch (error: any) {
     await updateEmailInvoiceSubmission(submissionId, { status: "failed", errorMessage: error.message, processedAt: new Date() });
+    reportWorkflowFailureSafely({
+      workflowType: "microsoft-invoice-ingestion",
+      recordKey: `email-submission:${submissionId}`,
+      title: `Invoice email processing failed: ${attachment.name}`,
+      errorMessage: error.message ?? "Inbound invoice PDF processing failed",
+      details: { submissionId, messageId: message.id, attachmentName: attachment.name, subject: message.subject },
+      severity: "error",
+    });
     throw error;
   }
 }

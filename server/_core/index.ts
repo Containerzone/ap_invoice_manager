@@ -49,9 +49,10 @@ async function startServer() {
     })
   );
   // ── Scheduled task handlers (/api/scheduled/*) ─────────────────────────────
-  const { archiveCleanupHandler, microsoftSubscriptionRenewalHandler } = await import("../scheduledHandlers");
+  const { archiveCleanupHandler, microsoftSubscriptionRenewalHandler, workflowFailureReconciliationHandler } = await import("../scheduledHandlers");
   app.post("/api/scheduled/archive-cleanup", archiveCleanupHandler);
   app.post("/api/scheduled/microsoft-subscription-renewal", microsoftSubscriptionRenewalHandler);
+  app.post("/api/scheduled/workflow-failure-reconciliation", workflowFailureReconciliationHandler);
 
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {

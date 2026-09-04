@@ -41,7 +41,12 @@ import {
   getMicrosoftGraphState,
   getLatestMicrosoftRenewalScheduleTaskUid,
   getRecentEmailInvoiceSubmissions,
+  getRecentWorkflowFailures,
+  getOpenWorkflowFailures,
+  getWorkflowMonitoringSettings,
+  resolveWorkflowFailure,
   upsertMicrosoftGraphState,
+  updateWorkflowMonitoringSettings,
 } from "./db";
 import { storagePut, storageGetSignedUrl } from "./storage";
 import { extractInvoiceData, extractAllPoNumbers } from "./extractionService";
@@ -69,6 +74,7 @@ import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
 import { selectMicrosoftRenewalTaskUid } from "./microsoftGraphSchedule";
+import { getWorkflowAlertRecipientCount } from "./workflowAlertService";
 import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray } from "drizzle-orm";
@@ -2354,6 +2360,49 @@ export const appRouter = router({
   }),
 
   // ─── PO Requests (Vtiger → Xero) ─────────────────────────────────────────────
+  workflowMonitoring: router({
+    status: adminProcedure.query(async () => {
+      const [settings, openFailures] = await Promise.all([
+        getWorkflowMonitoringSettings(),
+        getOpenWorkflowFailures(),
+      ]);
+      return {
+        openFailureCount: openFailures.length,
+        alertRecipientCount: getWorkflowAlertRecipientCount(),
+        dailySummaryEnabled: Boolean(settings?.dailySummaryCronTaskUid),
+        dailySummaryCronTaskUid: settings?.dailySummaryCronTaskUid ?? null,
+        lastDailySummaryAt: settings?.lastDailySummaryAt ?? null,
+      };
+    }),
+    list: adminProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).default(100) }))
+      .query(({ input }) => getRecentWorkflowFailures(input.limit)),
+    resolve: adminProcedure
+      .input(z.object({ id: z.number(), resolutionNotes: z.string().max(2000).optional() }))
+      .mutation(async ({ input, ctx }) => {
+        await resolveWorkflowFailure(input.id, ctx.user.id, input.resolutionNotes);
+        return { success: true };
+      }),
+    enableDailySummary: adminProcedure.mutation(async ({ ctx }) => {
+      const existing = await getWorkflowMonitoringSettings();
+      if (existing?.dailySummaryCronTaskUid) {
+        return { enabled: true, alreadyEnabled: true };
+      }
+      const sessionToken = parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME];
+      if (!sessionToken) {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "A valid session is required to schedule the daily reconciliation summary." });
+      }
+      const job = await createHeartbeatJob({
+        name: "workflow-failure-daily-reconciliation",
+        cron: "0 0 21 * * *",
+        path: "/api/scheduled/workflow-failure-reconciliation",
+        description: "Sends the daily ContainerZone AP operational failure reconciliation summary.",
+      }, decodeURIComponent(sessionToken));
+      await updateWorkflowMonitoringSettings({ dailySummaryCronTaskUid: job.taskUid });
+      return { enabled: true, alreadyEnabled: false, nextExecutionAt: job.nextExecutionAt ?? null };
+    }),
+  }),
+
   poRequests: router({
     list: protectedProcedure
       .input(
