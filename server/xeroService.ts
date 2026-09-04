@@ -19,6 +19,18 @@ const DEFAULT_BILL_ACCOUNT_CODE = "310";
 export function resolveXeroBillAccountCode(accountCode?: string | null): string {
   return accountCode?.trim() || DEFAULT_BILL_ACCOUNT_CODE;
 }
+
+/**
+ * Xero can return UpdatedDateUTC either as an ISO timestamp or its legacy
+ * /Date(UnixMilliseconds+offset)/ representation. Never allow an unparseable
+ * source value to abort PO verification merely while preparing a display date.
+ */
+export function formatXeroUtcDate(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const legacyMatch = /^\/Date\((-?\d+)(?:[+-]\d{4})?\)\/$/.exec(value.trim());
+  const date = legacyMatch ? new Date(Number(legacyMatch[1])) : new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString().split("T")[0];
+}
 const XERO_IDENTITY_BASE = "https://api.xero.com/connections";
 const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
 const XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize";
@@ -1590,7 +1602,7 @@ export async function getXeroPOPaymentStatus(
     return {
       isPaid,
       paidAmount: amountPaid > 0 ? amountPaid : undefined,
-      paidDate: po.UpdatedDateUTC ? new Date(po.UpdatedDateUTC).toISOString().split("T")[0] : undefined,
+      paidDate: formatXeroUtcDate(po.UpdatedDateUTC),
     };
   } catch (err: any) {
     if (!err?.response) throw err;

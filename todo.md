@@ -349,6 +349,10 @@
 - [x] Trace the reported Xero bill creation error to the affected invoice and identify why its bill line has no account code or ID
 - [x] Add and validate a safe account-code fallback for affected bill line items without altering valid configured codes
 
+## Invoice Date Formatting Error (Session 19)
+- [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
+- [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values
+
 ## Workflow Failure Monitoring and Alerts (Session 19)
 - [ ] Define monitored automation outcomes, alert recipients and immediate-notification delivery method for workflow failures
 - [ ] Implement and validate the selected real-time failure alerts and an operational failure history view
