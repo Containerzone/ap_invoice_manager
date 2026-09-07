@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const { mockReportWorkflowFailureSafely } = vi.hoisted(() => ({
+  mockReportWorkflowFailureSafely: vi.fn(),
+}));
+
 vi.mock("./db", () => ({
   getXeroToken: vi.fn(),
   updateXeroRateLimitState: vi.fn(),
   getXeroApiCache: vi.fn(),
   setXeroApiCache: vi.fn(),
   invalidateXeroApiCache: vi.fn(),
+}));
+vi.mock("./workflowAlertService", () => ({
+  reportWorkflowFailureSafely: mockReportWorkflowFailureSafely,
 }));
 
 import {
@@ -104,5 +111,35 @@ describe("central Xero request manager", () => {
     expect(operation).toHaveBeenCalledTimes(1);
     expect(firstResult).toEqual(secondResult);
     expect(setXeroApiCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not create an operational alert for an expected missing purchase-order lookup", async () => {
+    vi.mocked(getXeroToken).mockResolvedValue({ tenantId: "tenant-not-found", rateLimitPausedUntil: null } as any);
+    const operation = vi.fn().mockRejectedValue({ response: { status: 404 }, message: "Request failed with status code 404" });
+
+    await expect(runXeroRequest(
+      { token: "token", tenantId: "tenant-not-found" },
+      "GET purchase-order:P702869",
+      operation,
+    )).rejects.toEqual(expect.objectContaining({ response: { status: 404 } }));
+
+    expect(mockReportWorkflowFailureSafely).not.toHaveBeenCalled();
+  });
+
+  it("still creates an operational alert for an unexpected Xero request failure", async () => {
+    vi.mocked(getXeroToken).mockResolvedValue({ tenantId: "tenant-server-error", rateLimitPausedUntil: null } as any);
+    const operation = vi.fn().mockRejectedValue({ response: { status: 500 }, message: "Request failed with status code 500" });
+
+    await expect(runXeroRequest(
+      { token: "token", tenantId: "tenant-server-error" },
+      "GET purchase-order:P702869",
+      operation,
+    )).rejects.toEqual(expect.objectContaining({ response: { status: 500 } }));
+
+    expect(mockReportWorkflowFailureSafely).toHaveBeenCalledWith(expect.objectContaining({
+      workflowType: "xero-api",
+      severity: "error",
+      details: { operation: "GET purchase-order:P702869", httpStatus: 500 },
+    }));
   });
 });

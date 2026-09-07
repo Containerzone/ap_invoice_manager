@@ -359,6 +359,7 @@
 - [x] Add and validate an admin operational-failure register with failure details and resolution status
 - [x] Add a daily reconciliation summary for open and newly recorded workflow failures
 - [ ] Publish the monitoring update and activate the daily reconciliation schedule from the Operational Failures page
+- [x] Suppress immediate workflow alerts for expected Xero purchase-order 404 lookup outcomes while preserving alerts for genuine Xero failures
 
 ## Xero Usage Since Reset (Session 19)
 - [x] Calculate the number of Xero API calls used since the current daily allowance reset
