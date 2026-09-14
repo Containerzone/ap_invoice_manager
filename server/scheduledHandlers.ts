@@ -9,7 +9,11 @@ import {
   updateWorkflowMonitoringSettings,
 } from "./db";
 import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
-import { renewGraphMessageSubscription } from "./microsoftGraphService";
+import {
+  createGraphMessageSubscription,
+  isMissingGraphSubscriptionError,
+  renewGraphMessageSubscription,
+} from "./microsoftGraphService";
 import { getWorkflowAlertRecipients, reportWorkflowFailureSafely } from "./workflowAlertService";
 import { sendOperationalAlertEmail } from "./emailService";
 
@@ -58,13 +62,26 @@ export async function microsoftSubscriptionRenewalHandler(req: Request, res: Res
       return res.status(403).json({ error: "unexpected-renewal-task" });
     }
     if (!state?.subscriptionId) return res.json({ ok: true, skipped: "no-subscription" });
-    const subscription = await renewGraphMessageSubscription(state.subscriptionId);
+    let subscription;
+    let recreated = false;
+    try {
+      subscription = await renewGraphMessageSubscription(state.subscriptionId);
+    } catch (error) {
+      if (!isMissingGraphSubscriptionError(error)) throw error;
+      const host = req.get("host");
+      if (!host) throw new Error("Cannot recreate Microsoft Graph subscription because the scheduled request host is unavailable.");
+      // Graph validates the callback during creation. The authenticated Heartbeat request supplies the live production host.
+      subscription = await createGraphMessageSubscription(`https://${host}/api/microsoft/notifications`);
+      recreated = true;
+      console.warn(`[microsoft-graph-renewal] Recreated missing subscription for ${state.mailbox}`);
+    }
     await updateMicrosoftGraphState(state.mailbox, {
+      subscriptionId: subscription.id,
       subscriptionExpiresAt: new Date(subscription.expirationDateTime),
       lastRenewedAt: new Date(),
       lastSubscriptionError: null,
     });
-    return res.json({ ok: true, subscriptionExpiresAt: subscription.expirationDateTime });
+    return res.json({ ok: true, recreated, subscriptionExpiresAt: subscription.expirationDateTime });
   } catch (err: any) {
     console.error("[microsoft-graph-renewal] Error:", err.message);
     reportWorkflowFailureSafely({

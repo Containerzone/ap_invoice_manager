@@ -324,6 +324,7 @@
 - [x] Update the Microsoft Graph watched mailbox to invoices@containerzone.com.au, replace the subscription, and verify dedicated-mailbox access
 - [ ] Recover the two missed forwarded invoices and validate a new direct or forwarded PDF delivery
 - [x] Reuse the existing Microsoft renewal schedule during dedicated mailbox activation instead of creating a duplicate schedule
+- [ ] Recover safely when Microsoft Graph reports the persisted inbox subscription is missing during renewal, then restore and validate the replacement subscription
 
 ## Staff Invoice Deletion (Session 19)
 - [x] Allow staff users to open the existing invoice deletion confirmation and perform the same protected deletion operation

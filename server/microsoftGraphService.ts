@@ -178,3 +178,9 @@ export async function renewGraphMessageSubscription(subscriptionId: string): Pro
     body: JSON.stringify({ expirationDateTime: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString() }),
   });
 }
+
+/** Microsoft removes a subscription after expiry or manual deletion; renewal then returns this specific 404. */
+export function isMissingGraphSubscriptionError(error: unknown): boolean {
+  return error instanceof Error
+    && /Microsoft Graph .*failed \(404\): ResourceNotFound\b/.test(error.message);
+}
