@@ -1,0 +1,1 @@
+ALTER TABLE `workflow_monitoring_settings` ADD `mailboxReconciliationCronTaskUid` varchar(65);

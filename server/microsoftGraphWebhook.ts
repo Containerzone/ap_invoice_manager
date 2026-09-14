@@ -1,9 +1,10 @@
 import type { Express, Request, Response } from "express";
 import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
-import { getGraphMessage, getGraphPdfAttachments, isInvoiceAliasRecipient, microsoftInvoiceInboxResource, microsoftWebhookClientState } from "./microsoftGraphService";
+import { getGraphMessage, getGraphPdfAttachments, getRecentMicrosoftMessageMetadata, isInvoiceAliasRecipient, microsoftInvoiceInboxResource, microsoftWebhookClientState } from "./microsoftGraphService";
 import { processMicrosoftEmailPdf } from "./emailInvoiceProcessingService";
 import { getMicrosoftGraphState, updateMicrosoftGraphState } from "./db";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
+import { reconcileRecentInvoiceMessages } from "./microsoftGraphReconciliation";
 
 type GraphNotification = {
   clientState?: string;
@@ -14,6 +15,22 @@ type GraphNotification = {
 let notificationQueue: Promise<void> = Promise.resolve();
 const queuedMessageIds = new Set<string>();
 
+export async function processMicrosoftInvoiceMessage(messageId: string): Promise<void> {
+  if (queuedMessageIds.has(messageId)) return;
+  queuedMessageIds.add(messageId);
+  try {
+    const message = await getGraphMessage(messageId);
+    if (!isInvoiceAliasRecipient(message) || !message.hasAttachments) return;
+    const [attachment] = await getGraphPdfAttachments(message.id);
+    if (!attachment) return;
+    await processMicrosoftEmailPdf(message, attachment);
+    const { mailbox } = getMicrosoftGraphConfig();
+    await updateMicrosoftGraphState(mailbox, { lastNotificationAt: new Date(), lastSubscriptionError: null });
+  } finally {
+    queuedMessageIds.delete(messageId);
+  }
+}
+
 async function processNotification(notification: GraphNotification) {
   const expectedResource = microsoftInvoiceInboxResource();
   if (notification.clientState !== microsoftWebhookClientState(expectedResource)) {
@@ -21,19 +38,13 @@ async function processNotification(notification: GraphNotification) {
   }
   const messageId = notification.resourceData?.id;
   if (!messageId) return;
-  if (queuedMessageIds.has(messageId)) return;
-  queuedMessageIds.add(messageId);
-  try {
-  const message = await getGraphMessage(messageId);
-  if (!isInvoiceAliasRecipient(message) || !message.hasAttachments) return;
-  const [attachment] = await getGraphPdfAttachments(message.id);
-  if (!attachment) return;
-  await processMicrosoftEmailPdf(message, attachment);
-  const { mailbox } = getMicrosoftGraphConfig();
-  await updateMicrosoftGraphState(mailbox, { lastNotificationAt: new Date(), lastSubscriptionError: null });
-  } finally {
-    queuedMessageIds.delete(messageId);
-  }
+  await processMicrosoftInvoiceMessage(messageId);
+}
+
+/** Bounded catch-up for recent PDF emails that arrived while Graph notifications were unavailable. */
+export async function reconcileRecentMicrosoftInvoiceMessages() {
+  const messages = await getRecentMicrosoftMessageMetadata(25);
+  return reconcileRecentInvoiceMessages(messages, processMicrosoftInvoiceMessage);
 }
 
 export function registerMicrosoftGraphWebhook(app: Express) {

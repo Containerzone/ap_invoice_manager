@@ -14,6 +14,7 @@ import {
   isMissingGraphSubscriptionError,
   renewGraphMessageSubscription,
 } from "./microsoftGraphService";
+import { reconcileRecentMicrosoftInvoiceMessages } from "./microsoftGraphWebhook";
 import { getWorkflowAlertRecipients, reportWorkflowFailureSafely } from "./workflowAlertService";
 import { sendOperationalAlertEmail } from "./emailService";
 
@@ -90,6 +91,41 @@ export async function microsoftSubscriptionRenewalHandler(req: Request, res: Res
       title: "Microsoft invoice mailbox subscription renewal failed",
       errorMessage: err.message ?? "Microsoft Graph renewal failed",
       details: { mailbox: getMicrosoftGraphConfig().mailbox },
+      severity: "error",
+    });
+    return res.status(500).json({ error: err.message, timestamp: new Date().toISOString() });
+  }
+}
+
+/** Reconciles recent Inbox PDFs when Graph notifications were delayed or not delivered. */
+export async function microsoftInvoiceReconciliationHandler(req: Request, res: Response) {
+  try {
+    const user = await sdk.authenticateRequest(req);
+    if (!user.isCron || !user.taskUid) return res.status(403).json({ error: "cron-only" });
+    const settings = await getWorkflowMonitoringSettings();
+    if (!settings?.mailboxReconciliationCronTaskUid || settings.mailboxReconciliationCronTaskUid !== user.taskUid) {
+      return res.status(403).json({ error: "unexpected-mailbox-reconciliation-task" });
+    }
+    const result = await reconcileRecentMicrosoftInvoiceMessages();
+    if (result.failedMessageIds.length) {
+      reportWorkflowFailureSafely({
+        workflowType: "microsoft-graph-reconciliation",
+        recordKey: "recent-inbox-pdf-reconciliation",
+        title: "Microsoft invoice inbox reconciliation had processing failures",
+        errorMessage: `${result.failedMessageIds.length} recent mailbox message(s) could not be reconciled`,
+        details: { failedMessageIds: result.failedMessageIds, considered: result.considered },
+        severity: "error",
+      });
+    }
+    return res.json({ ok: true, ...result });
+  } catch (err: any) {
+    console.error("[microsoft-graph-reconciliation] Error:", err.message);
+    reportWorkflowFailureSafely({
+      workflowType: "microsoft-graph-reconciliation",
+      recordKey: "recent-inbox-pdf-reconciliation",
+      title: "Microsoft invoice inbox reconciliation failed",
+      errorMessage: err.message ?? "Microsoft inbox reconciliation failed",
+      details: { path: req.path },
       severity: "error",
     });
     return res.status(500).json({ error: err.message, timestamp: new Date().toISOString() });

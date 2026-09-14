@@ -405,6 +405,7 @@ export type InsertWorkflowFailure = typeof workflowFailures.$inferInsert;
 export const workflowMonitoringSettings = mysqlTable("workflow_monitoring_settings", {
   id: int("id").autoincrement().primaryKey(),
   dailySummaryCronTaskUid: varchar("dailySummaryCronTaskUid", { length: 65 }),
+  mailboxReconciliationCronTaskUid: varchar("mailboxReconciliationCronTaskUid", { length: 65 }),
   lastDailySummaryAt: timestamp("lastDailySummaryAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
