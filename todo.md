@@ -324,7 +324,7 @@
 - [x] Update the Microsoft Graph watched mailbox to invoices@containerzone.com.au, replace the subscription, and verify dedicated-mailbox access
 - [ ] Recover the two missed forwarded invoices and validate a new direct or forwarded PDF delivery
 - [x] Reuse the existing Microsoft renewal schedule during dedicated mailbox activation instead of creating a duplicate schedule
-- [ ] Recover safely when Microsoft Graph reports the persisted inbox subscription is missing during renewal, then restore and validate the replacement subscription
+- [x] Recover safely when Microsoft Graph reports the persisted inbox subscription is missing during renewal, then restore and validate the replacement subscription
 
 ## Staff Invoice Deletion (Session 19)
 - [x] Allow staff users to open the existing invoice deletion confirmation and perform the same protected deletion operation
@@ -359,7 +359,7 @@
 - [x] Send immediate workflow-failure email alerts to fckyle@gmail.com and ashishgupta020202@gmail.com
 - [x] Add and validate an admin operational-failure register with failure details and resolution status
 - [x] Add a daily reconciliation summary for open and newly recorded workflow failures
-- [ ] Publish the monitoring update and activate the daily reconciliation schedule from the Operational Failures page
+- [x] Publish the monitoring update and activate the daily reconciliation schedule from the Operational Failures page
 - [x] Suppress immediate workflow alerts for expected Xero purchase-order 404 lookup outcomes while preserving alerts for genuine Xero failures
 
 ## Xero Usage Since Reset (Session 19)
