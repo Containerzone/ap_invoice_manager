@@ -333,6 +333,7 @@ export const appRouter = router({
         await upsertMicrosoftGraphState({
           mailbox: config.mailbox,
           invoiceAlias: config.invoiceAlias,
+          notificationUrl: `${origin.origin}/api/microsoft/notifications`,
           subscriptionId: subscription.id,
           subscriptionExpiresAt: new Date(subscription.expirationDateTime),
           scheduleCronTaskUid: taskUid,

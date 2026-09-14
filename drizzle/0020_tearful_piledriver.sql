@@ -1,0 +1,1 @@
+ALTER TABLE `microsoft_graph_states` ADD `notificationUrl` varchar(1024);

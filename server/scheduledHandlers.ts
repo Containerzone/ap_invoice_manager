@@ -68,10 +68,10 @@ export async function microsoftSubscriptionRenewalHandler(req: Request, res: Res
       subscription = await renewGraphMessageSubscription(state.subscriptionId);
     } catch (error) {
       if (!isMissingGraphSubscriptionError(error)) throw error;
-      const host = req.get("host");
-      if (!host) throw new Error("Cannot recreate Microsoft Graph subscription because the scheduled request host is unavailable.");
-      // Graph validates the callback during creation. The authenticated Heartbeat request supplies the live production host.
-      subscription = await createGraphMessageSubscription(`https://${host}/api/microsoft/notifications`);
+      if (!state.notificationUrl) {
+        throw new Error("Cannot recreate Microsoft Graph subscription because its approved public notification URL is unavailable. Re-enable the inbox from Settings to store the public callback URL.");
+      }
+      subscription = await createGraphMessageSubscription(state.notificationUrl);
       recreated = true;
       console.warn(`[microsoft-graph-renewal] Recreated missing subscription for ${state.mailbox}`);
     }

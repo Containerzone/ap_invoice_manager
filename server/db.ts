@@ -547,6 +547,7 @@ export async function upsertMicrosoftGraphState(data: InsertMicrosoftGraphState)
   }).onDuplicateKeyUpdate({
     set: {
       invoiceAlias: data.invoiceAlias.toLowerCase(),
+      notificationUrl: data.notificationUrl,
       subscriptionId: data.subscriptionId,
       subscriptionExpiresAt: data.subscriptionExpiresAt,
       scheduleCronTaskUid: data.scheduleCronTaskUid,

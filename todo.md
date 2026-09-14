@@ -325,6 +325,7 @@
 - [ ] Recover the two missed forwarded invoices and validate a new direct or forwarded PDF delivery
 - [x] Reuse the existing Microsoft renewal schedule during dedicated mailbox activation instead of creating a duplicate schedule
 - [x] Recover safely when Microsoft Graph reports the persisted inbox subscription is missing during renewal, then restore and validate the replacement subscription
+- [ ] Ensure automatic Graph subscription recovery uses the public application callback origin, then replace and validate the live event-delivery subscription
 
 ## Staff Invoice Deletion (Session 19)
 - [x] Allow staff users to open the existing invoice deletion confirmation and perform the same protected deletion operation

@@ -288,6 +288,7 @@ export const microsoftGraphStates = mysqlTable("microsoft_graph_states", {
   id: int("id").autoincrement().primaryKey(),
   mailbox: varchar("mailbox", { length: 320 }).notNull(),
   invoiceAlias: varchar("invoiceAlias", { length: 320 }).notNull(),
+  notificationUrl: varchar("notificationUrl", { length: 1024 }),
   subscriptionId: varchar("subscriptionId", { length: 128 }),
   subscriptionExpiresAt: timestamp("subscriptionExpiresAt"),
   scheduleCronTaskUid: varchar("scheduleCronTaskUid", { length: 65 }),

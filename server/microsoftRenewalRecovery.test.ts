@@ -44,6 +44,7 @@ describe("Microsoft Graph subscription renewal recovery", () => {
       mailbox: "invoices@containerzone.com.au",
       subscriptionId: "expired-subscription-id",
       scheduleCronTaskUid: "renewal-task",
+      notificationUrl: "https://apinvmanager-dm3caxom.manus.space/api/microsoft/notifications",
     });
     mockRenewSubscription.mockRejectedValue(new Error("Microsoft Graph request failed (404): ResourceNotFound — The object was not found."));
     mockCreateSubscription.mockResolvedValue({ id: "replacement-subscription-id", expirationDateTime: "2026-09-16T00:00:00.000Z" });
@@ -52,9 +53,7 @@ describe("Microsoft Graph subscription renewal recovery", () => {
   it("recreates a missing subscription using the deployed callback host and preserves the renewal schedule", async () => {
     const response = { status: vi.fn(), json: vi.fn() };
     response.status.mockReturnValue(response);
-    const request = {
-      get: vi.fn((name: string) => name === "host" ? "apinvmanager-dm3caxom.manus.space" : undefined),
-    };
+    const request = {};
 
     await microsoftSubscriptionRenewalHandler(request as any, response as any);
 
