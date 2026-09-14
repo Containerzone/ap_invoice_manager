@@ -142,4 +142,21 @@ describe("central Xero request manager", () => {
       details: { operation: "GET purchase-order:P702869", httpStatus: 500 },
     }));
   });
+
+  it("retries one transient gateway failure only when an idempotent operation opts in", async () => {
+    vi.mocked(getXeroToken).mockResolvedValue({ tenantId: "tenant-attachment-retry", rateLimitPausedUntil: null } as any);
+    const operation = vi.fn()
+      .mockRejectedValueOnce({ response: { status: 504 }, message: "Request failed with status code 504" })
+      .mockResolvedValueOnce({ data: { Attachments: [{ FileName: "invoice.pdf" }] }, headers: {} });
+
+    await expect(runXeroRequest(
+      { token: "token", tenantId: "tenant-attachment-retry" },
+      "upload invoice attachment",
+      operation,
+      { retryTransientGatewayFailures: true },
+    )).resolves.toEqual(expect.objectContaining({ data: expect.anything() }));
+
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(mockReportWorkflowFailureSafely).not.toHaveBeenCalled();
+  });
 });

@@ -20,6 +20,10 @@ function isExpectedPurchaseOrderNotFound(operationName: string, error: any): boo
   return error?.response?.status === 404 && operationName.startsWith("GET purchase-order:");
 }
 
+function isTransientGatewayFailure(error: any): boolean {
+  return [502, 503, 504].includes(error?.response?.status);
+}
+
 function headerValue(headers: unknown, name: string): string | null {
   const values = headers as Record<string, unknown> | undefined;
   const raw = values?.[name] ?? values?.[name.toLowerCase()];
@@ -100,6 +104,7 @@ export async function runXeroRequest<T>(
   auth: XeroRequestAuth,
   operationName: string,
   operation: () => Promise<AxiosResponse<T>>,
+  options: { retryTransientGatewayFailures?: boolean } = {},
 ): Promise<AxiosResponse<T>> {
   const previousTail = tenantTails.get(auth.tenantId) ?? Promise.resolve();
   let release!: () => void;
@@ -110,41 +115,50 @@ export async function runXeroRequest<T>(
   await previousTail.catch(() => undefined);
   try {
     await assertTenantNotPaused(auth.tenantId);
-    const elapsed = Date.now() - (tenantLastRequestAt.get(auth.tenantId) ?? 0);
-    await wait(MIN_REQUEST_INTERVAL_MS - elapsed);
-    tenantLastRequestAt.set(auth.tenantId, Date.now());
-    try {
-      const response = await operation();
-      await recordHeaders(auth.tenantId, response.headers);
-      return response;
-    } catch (error: any) {
-      if (error?.response?.status === 429) {
-        try {
-          return await recordRateLimit(auth.tenantId, error.response.headers);
-        } catch (rateLimitError: any) {
+    const maxAttempts = options.retryTransientGatewayFailures ? 2 : 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const elapsed = Date.now() - (tenantLastRequestAt.get(auth.tenantId) ?? 0);
+      await wait(MIN_REQUEST_INTERVAL_MS - elapsed);
+      tenantLastRequestAt.set(auth.tenantId, Date.now());
+      try {
+        const response = await operation();
+        await recordHeaders(auth.tenantId, response.headers);
+        return response;
+      } catch (error: any) {
+        if (error?.response?.status === 429) {
+          try {
+            return await recordRateLimit(auth.tenantId, error.response.headers);
+          } catch (rateLimitError: any) {
+            reportWorkflowFailureSafely({
+              workflowType: "xero-api",
+              recordKey: `xero:${auth.tenantId}:${operationName}`,
+              title: `Xero request limit reached: ${operationName}`,
+              errorMessage: rateLimitError?.message ?? "Xero request limit reached",
+              details: { operation: operationName, httpStatus: 429 },
+              severity: "warning",
+            });
+            throw rateLimitError;
+          }
+        }
+        if (isTransientGatewayFailure(error) && attempt + 1 < maxAttempts) {
+          console.warn(`[Xero] ${operationName} received ${error.response.status}; retrying once with the same idempotency key.`);
+          await wait(1_000);
+          continue;
+        }
+        if (!isExpectedPurchaseOrderNotFound(operationName, error)) {
           reportWorkflowFailureSafely({
             workflowType: "xero-api",
             recordKey: `xero:${auth.tenantId}:${operationName}`,
-            title: `Xero request limit reached: ${operationName}`,
-            errorMessage: rateLimitError?.message ?? "Xero request limit reached",
-            details: { operation: operationName, httpStatus: 429 },
-            severity: "warning",
+            title: `Xero request failed: ${operationName}`,
+            errorMessage: error?.message ?? "Xero API request failed",
+            details: { operation: operationName, httpStatus: error?.response?.status },
+            severity: "error",
           });
-          throw rateLimitError;
         }
+        throw error;
       }
-      if (!isExpectedPurchaseOrderNotFound(operationName, error)) {
-        reportWorkflowFailureSafely({
-          workflowType: "xero-api",
-          recordKey: `xero:${auth.tenantId}:${operationName}`,
-          title: `Xero request failed: ${operationName}`,
-          errorMessage: error?.message ?? "Xero API request failed",
-          details: { operation: operationName, httpStatus: error?.response?.status },
-          severity: "error",
-        });
-      }
-      throw error;
     }
+    throw new Error(`Xero ${operationName} did not return a response`);
   } finally {
     release();
     if (tenantTails.get(auth.tenantId) === queuedTail) tenantTails.delete(auth.tenantId);

@@ -1668,6 +1668,7 @@ export async function uploadXeroBillAttachment(opts: {
         },
         maxRedirects: 5,
       }),
+      { retryTransientGatewayFailures: true },
     );
 
     console.log(`[Xero] Attachment uploaded to bill ${opts.xeroInvoiceId}: ${safeName}`);

@@ -352,6 +352,11 @@
 - [x] Trace the reported Xero bill creation error to the affected invoice and identify why its bill line has no account code or ID
 - [x] Add and validate a safe account-code fallback for affected bill line items without altering valid configured codes
 
+## Xero Attachment Upload Timeout (Session 19)
+- [x] Inspect the reported Xero 504 attachment-upload failure and verify the affected bill and attachment state before any retry
+- [x] Add and validate duplicate-safe attachment recovery behavior if the timeout leaves the PDF absent in Xero
+- [ ] Publish the retry safeguard and reattach the original PNI-757069 PDF to its existing Xero bill without creating a new bill
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values
