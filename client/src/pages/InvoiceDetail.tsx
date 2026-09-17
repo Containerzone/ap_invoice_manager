@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/StatusBadge";
 import { SupplierCombobox } from "@/components/SupplierCombobox";
 import { formatCurrency, formatRelativeTime, parseContainerNumbers } from "@/lib/invoiceUtils";
+import { calculateInvoiceLineTotals } from "@shared/invoiceLineTotals";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
@@ -397,6 +398,7 @@ export default function InvoiceDetail() {
     quantity: string;
     unitPrice: string;
     amount: string;
+    taxRate: string;
     poNumber: string;
     poNumberEdited: boolean;
     custRef: string;
@@ -434,6 +436,7 @@ export default function InvoiceDetail() {
           quantity: li.quantity ?? "",
           unitPrice: li.unitPrice ?? "",
           amount: li.amount ?? "",
+          taxRate: li.taxRate ?? "",
           poNumber: (li as any).poNumber ?? "",
           // Preserve the existing edited flag so re-opening edit mode doesn't reset it
           poNumberEdited: (li as any).poNumberEdited ?? false,
@@ -794,6 +797,14 @@ export default function InvoiceDetail() {
 
   const { invoice, lineItems, notes, emails, supplier } = data;
   const containers = parseContainerNumbers(invoice.extractedContainerNumbers);
+  // The line footer is deliberately calculated from the visible line items,
+  // not from the separately extracted invoice-header figures. Line amounts
+  // are GST-exclusive; each saved tax rate is applied to calculate GST.
+  const displayedLineItemTotals = calculateInvoiceLineTotals(
+    editMode ? editLineItems : lineItems
+  );
+  const hasLineItemPoReferences = lineItems.some((li) => (li as any).poNumber || (li as any).custRef);
+  const lineFooterLabelColSpan = editMode || hasLineItemPoReferences ? 4 : 3;
 
   // ── Strict workflow order: Verify → Approve → Push ──────────────────────────
   // Step 1: Verify — allowed from extracted state onward (not after resolved/duplicate)
@@ -1665,7 +1676,7 @@ export default function InvoiceDetail() {
                       <tr className="border-b text-muted-foreground">
                         <th className="text-left pb-2.5 font-medium pr-3">Description</th>
                         {/* Show PO Ref column when any line item has a poNumber/custRef, OR when in edit mode (so user can set PO numbers) */}
-                        {(editMode || lineItems.some((li) => (li as any).poNumber || (li as any).custRef)) && (
+                        {(editMode || hasLineItemPoReferences) && (
                           <th className="text-left pb-2.5 font-medium w-28">PO Ref</th>
                         )}
                         <th className="text-right pb-2.5 font-medium w-16">Qty</th>
@@ -1715,7 +1726,7 @@ export default function InvoiceDetail() {
                         : lineItems.map((li) => (
                             <tr key={li.id} className="text-foreground hover:bg-muted/30 transition-colors">
                               <td className="py-2.5 pr-3 leading-relaxed">{li.description ?? "—"}</td>
-                              {lineItems.some((l) => (l as any).poNumber || (l as any).custRef) && (
+                              {hasLineItemPoReferences && (
                                 <td className="py-2.5 pr-3 text-xs font-mono text-primary">
                                   {(li as any).poNumber
                                     ? <span title={(li as any).custRef ?? ""}>{(li as any).poNumber}</span>
@@ -1731,24 +1742,38 @@ export default function InvoiceDetail() {
                           ))
                       }
                     </tbody>
-                    {(invoice.extractedSubtotal || invoice.extractedTax || invoice.extractedTotal) && (
-                      <tfoot>
-                        <tr className="border-t border-border/60">
-                          <td colSpan={3} className="pt-2.5 text-right text-xs text-muted-foreground font-medium pr-3">Subtotal</td>
-                          <td className="pt-2.5 text-right tabular-nums text-xs">{formatCurrency(invoice.extractedSubtotal)}</td>
-                        </tr>
-                        {invoice.extractedTax && (
-                          <tr>
-                            <td colSpan={3} className="pt-1 text-right text-xs text-muted-foreground pr-3">GST</td>
-                            <td className="pt-1 text-right tabular-nums text-xs">{formatCurrency(invoice.extractedTax)}</td>
-                          </tr>
-                        )}
+                    <tfoot>
+                      <tr className="border-t border-border/60">
+                        <td colSpan={lineFooterLabelColSpan} className="pt-2.5 text-right text-xs text-muted-foreground font-medium pr-3">
+                          Subtotal <span className="font-normal">(from lines)</span>
+                        </td>
+                        <td className="pt-2.5 text-right tabular-nums text-xs">{formatCurrency(displayedLineItemTotals.subtotal)}</td>
+                        {editMode && <td />}
+                      </tr>
+                      <tr>
+                        <td colSpan={lineFooterLabelColSpan} className="pt-1 text-right text-xs text-muted-foreground pr-3">GST <span className="font-normal">(from lines)</span></td>
+                        <td className="pt-1 text-right tabular-nums text-xs">{formatCurrency(displayedLineItemTotals.tax)}</td>
+                        {editMode && <td />}
+                      </tr>
+                      <tr>
+                        <td colSpan={lineFooterLabelColSpan} className="pt-1.5 text-right text-xs font-semibold pr-3">Total <span className="font-normal text-muted-foreground">(from lines)</span></td>
+                        <td className="pt-1.5 text-right tabular-nums text-xs font-semibold">{formatCurrency(displayedLineItemTotals.total)}</td>
+                        {editMode && <td />}
+                      </tr>
+                      {(displayedLineItemTotals.defaultTaxRateLineCount > 0 || displayedLineItemTotals.invalidAmountLineCount > 0) && (
                         <tr>
-                          <td colSpan={3} className="pt-1.5 text-right text-xs font-semibold pr-3">Total</td>
-                          <td className="pt-1.5 text-right tabular-nums text-xs font-semibold">{formatCurrency(invoice.extractedTotal)}</td>
+                          <td colSpan={lineFooterLabelColSpan + 1 + (editMode ? 1 : 0)} className="pt-2 text-right text-[11px] text-muted-foreground">
+                            {displayedLineItemTotals.defaultTaxRateLineCount > 0 && (
+                              <span>{displayedLineItemTotals.defaultTaxRateLineCount} line{displayedLineItemTotals.defaultTaxRateLineCount === 1 ? "" : "s"} use the 10% GST default because no tax rate was extracted.</span>
+                            )}
+                            {displayedLineItemTotals.defaultTaxRateLineCount > 0 && displayedLineItemTotals.invalidAmountLineCount > 0 && " "}
+                            {displayedLineItemTotals.invalidAmountLineCount > 0 && (
+                              <span>{displayedLineItemTotals.invalidAmountLineCount} line{displayedLineItemTotals.invalidAmountLineCount === 1 ? " has" : "s have"} no valid amount and {displayedLineItemTotals.invalidAmountLineCount === 1 ? "is" : "are"} excluded.</span>
+                            )}
+                          </td>
                         </tr>
-                      </tfoot>
-                    )}
+                      )}
+                    </tfoot>
                   </table>
                 </div>
               )}

@@ -361,6 +361,11 @@
 - [ ] Ensure a single-PO verification compares the complete GST-inclusive invoice total, including ancillary lines without a repeated PO number
 - [ ] Correct and revalidate invoice 3030 / PO AD702882 without creating or modifying a Xero bill or purchase order
 
+## Calculated Invoice Line Totals (Session 19)
+- [x] Replace header-derived Invoice Lines subtotal, GST and total with values calculated from the displayed GST-exclusive line items and tax rates
+- [x] Disclose the 10% GST fallback for historic lines without an extracted tax rate and exclude invalid line amounts rather than silently using header values
+- [x] Add regression coverage for standard, mixed-rate, zero-rated, missing-rate and invalid-amount line totals
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values
