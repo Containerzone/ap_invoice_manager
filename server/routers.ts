@@ -180,6 +180,11 @@ async function refreshXeroPoResults(
     };
 
     const COMPARABLE = new Set(["DRAFT", "SUBMITTED", "AUTHORISED"]);
+    // A single PO is the purchase authority for the entire invoice. An
+    // untagged ancillary line (for example, a container-chain charge) must not
+    // disappear from the comparison simply because its source line omitted the
+    // PO text. Per-PO grouping remains authoritative for multi-PO invoices.
+    const isSinglePoInvoice = allPoNumbers.length === 1;
 
     // ── Fix #3: Throttle Xero API calls — max 3 concurrent, 200ms between batches
     const BATCH_SIZE = 3;
@@ -191,7 +196,9 @@ async function refreshXeroPoResults(
       const batchResults = await Promise.all(
         batch.map(async (poNum) => {
           const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
-          const groupedTotal = getGroupedTotal(poNum);
+          const groupedTotal = isSinglePoInvoice
+            ? parseFloat(invoice.extractedTotal?.toString() ?? "0")
+            : getGroupedTotal(poNum);
           const safeTotal = groupedTotal ?? 0; // for NOT_FOUND diff display only
 
           if (!po) {
@@ -227,7 +234,9 @@ async function refreshXeroPoResults(
             };
           }
           if (groupedTotal === null) {
-            // No line items tagged with this PO — cannot compare, show as unknown
+            // A multi-PO invoice has no line items tagged with this PO, so it
+            // cannot be safely allocated or compared. Single-PO invoices use
+            // the complete invoice total above.
             return {
               poNumber: poNum, found: true, status: po.status,
               poTotal: po.total, poSubtotal: po.subTotal, poTax: po.totalTax,
@@ -237,7 +246,7 @@ async function refreshXeroPoResults(
               contact: po.contact, currencyCode: po.currencyCode, lineItems: po.lineItems,
             };
           }
-          const rawDiff = groupedTotal - po.total;
+          const rawDiff = Math.round((groupedTotal - po.total) * 100) / 100;
           const absDiff = Math.abs(rawDiff);
           return {
             poNumber: poNum, found: true, status: po.status,
@@ -867,7 +876,10 @@ export const appRouter = router({
         }
 
         /**
-         * For a given PO number, sum the amounts of invoice line items associated with that PO.
+         * For a given PO number on a multi-PO invoice, sum the amounts of
+         * invoice line items associated with that PO. A single PO is compared
+         * to the complete GST-inclusive invoice total below, including any
+         * ancillary line that does not repeat the PO reference.
          * Checks (in priority order):
          * 1. li.poNumber field (structured, most reliable — e.g. from Cust Ref column)
          * 2. li.custRef field (raw ref text, e.g. "CBHU4279322 P702739")
@@ -923,10 +935,13 @@ export const appRouter = router({
             _batchResults = await Promise.all(_batch.map(async (poNum) => {
             const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
 
-            // Determine the comparison amount for this PO.
-            // Returns null when no line items are tagged with this PO — do NOT fall back to
-            // invoice total (that would compare the wrong amount for multi-PO invoices).
-            const groupedTotal = getGroupedLineItemTotal(poNum);
+            // One PO authorises the entire invoice, so compare its total with
+            // the complete invoice amount. For multiple POs, line allocation
+            // is authoritative and an unallocated line must not be assigned to
+            // an arbitrary PO.
+            const groupedTotal = allPoNumbers.length === 1
+              ? extractedTotal
+              : getGroupedLineItemTotal(poNum);
             const safeTotal = groupedTotal ?? 0; // used only for NOT_FOUND diff display
 
             if (!po) {
@@ -992,7 +1007,7 @@ export const appRouter = router({
               };
             }
             // Use grouped line-item total for this PO (multi-PO) or invoice total (single PO)
-            const rawDiff = groupedTotal - po.total; // positive = billed more than PO, negative = billed less
+            const rawDiff = Math.round((groupedTotal - po.total) * 100) / 100; // positive = billed more than PO, negative = billed less
             const absDiff = Math.abs(rawDiff);
             return {
               poNumber: poNum,

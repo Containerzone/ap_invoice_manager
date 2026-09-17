@@ -357,6 +357,10 @@
 - [x] Add and validate duplicate-safe attachment recovery behavior if the timeout leaves the PDF absent in Xero
 - [x] Publish the retry safeguard and reattach the original PNI-757069 PDF to its existing Xero bill without creating a new bill
 
+## Single-PO Invoice Variance Correction (Session 19)
+- [ ] Ensure a single-PO verification compares the complete GST-inclusive invoice total, including ancillary lines without a repeated PO number
+- [ ] Correct and revalidate invoice 3030 / PO AD702882 without creating or modifying a Xero bill or purchase order
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values

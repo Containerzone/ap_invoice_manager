@@ -578,6 +578,62 @@ describe("invoices.verifyWithXero", () => {
     );
   });
 
+  it("compares a single PO with the complete invoice when an ancillary line has no PO number", async () => {
+    const { getInvoiceById, updateInvoice, getLineItemsByInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 3030,
+      extractedPoNumber: "AD702882",
+      extractedPoNumbers: ["AD702882"],
+      extractedTotal: "781.00",
+      extractedInvoiceNumber: "3030",
+      extractedRawData: null,
+    } as any);
+    // The PO-tagged delivery is $528 incl. GST, but the same invoice also has
+    // a $253 incl. GST ancillary charge without the PO reference. With one PO,
+    // both charges belong in the comparison: $781.00 vs $741.13 = $39.87 over.
+    vi.mocked(getLineItemsByInvoice).mockResolvedValueOnce([
+      { id: 1, invoiceId: 3030, poNumber: "AD702882", description: "Delivery", amount: "480.00", taxRate: null } as any,
+      { id: 2, invoiceId: 3030, poNumber: null, description: "Container chain", amount: "230.00", taxRate: null } as any,
+    ]);
+    vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
+      purchaseOrderId: "po-3030",
+      purchaseOrderNumber: "AD702882",
+      reference: "",
+      contact: { contactId: "c1", name: "Supplier Co" },
+      date: "2024-01-15",
+      deliveryDate: "",
+      subTotal: 673.75,
+      totalTax: 67.38,
+      total: 741.13,
+      status: "DRAFT",
+      currencyCode: "AUD",
+      lineItems: [],
+    });
+
+    const caller = appRouter.createCaller(makeAdminCtx());
+    const result = await caller.invoices.verifyWithXero({ invoiceId: 3030 });
+
+    expect(result.discrepancy).toBe(true);
+    expect(result.underBudget).toBe(false);
+    expect(result.poResults[0]).toMatchObject({
+      invoiceLineItemTotal: 781,
+      rawDiff: 39.87,
+      diff: 39.87,
+      overBilled: true,
+      underBilled: false,
+    });
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      3030,
+      expect.objectContaining({
+        status: "flagged",
+        hasDiscrepancy: true,
+        discrepancyAmount: "39.87",
+        totalNetDiff: "39.87",
+      })
+    );
+  });
+
   it("handles multiple PO numbers — groups line items by PO and compares each PO's total", async () => {
     const { getInvoiceById, updateInvoice, getLineItemsByInvoice } = await import("./db");
     const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
