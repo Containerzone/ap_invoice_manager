@@ -366,6 +366,11 @@
 - [x] Disclose the 10% GST fallback for historic lines without an extracted tax rate and exclude invalid line amounts rather than silently using header values
 - [x] Add regression coverage for standard, mixed-rate, zero-rated, missing-rate and invalid-amount line totals
 
+## Suffixed Purchase-Order Recognition (Session 19)
+- [x] Diagnose why invoice 14131 displayed BD702871-2 but verified only BD702871
+- [x] Support numeric PO suffixes such as -2 across extraction, email ingestion, verification and approval allocation while preserving distinct PO identities
+- [x] Confirm by read-only lookup that BD702871 and BD702871-2 are separate Xero draft POs, and add regression coverage for two-PO allocation
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values

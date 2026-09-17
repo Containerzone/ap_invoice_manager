@@ -108,6 +108,17 @@ describe("applyPoNumberRegex", () => {
       expect(applyPoNumberRegex(data)).toBe(`${prefix}123456`);
     }
   });
+
+  it("accepts a numeric -2 suffix as part of a distinct PO number", () => {
+    const data = makeData({
+      lineItems: [
+        { description: "First transport movement BD702871", quantity: 1, unitPrice: 500, amount: 500, taxRate: 10 },
+        { description: "Second transport movement BD702871-2", quantity: 1, unitPrice: 500, amount: 500, taxRate: 10 },
+      ],
+    });
+
+    expect(extractAllPoNumbers(data)).toEqual(["BD702871", "BD702871-2"]);
+  });
 });
 
 import { extractAllPoNumbers } from "./extractionService";
@@ -143,7 +154,7 @@ describe("extractAllPoNumbers — single-letter prefix support", () => {
 
 describe("Multi-PO line-item grouping helper", () => {
   // Replicates the getGroupedLineItemTotal logic from routers.ts
-  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
 
   function getGroupedLineItemTotal(
     poNum: string,

@@ -691,6 +691,57 @@ describe("invoices.verifyWithXero", () => {
     );
   });
 
+  it("keeps a -2 PO suffix as a distinct second PO and allocates its lines separately", async () => {
+    const { getInvoiceById, updateInvoice, getLineItemsByInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 14131,
+      extractedPoNumber: "BD702871",
+      extractedPoNumbers: ["BD702871", "BD702871-2"],
+      extractedTotal: "1100.00",
+      extractedInvoiceNumber: "14131",
+      extractedRawData: null,
+    } as any);
+    vi.mocked(getLineItemsByInvoice).mockResolvedValueOnce([
+      { id: 1, invoiceId: 14131, poNumber: "BD702871", description: "Fuel surcharge", amount: "60.00", taxRate: "10" } as any,
+      { id: 2, invoiceId: 14131, poNumber: "BD702871", description: "Container collection", amount: "400.00", taxRate: "10" } as any,
+      { id: 3, invoiceId: 14131, poNumber: "BD702871", description: "Tolls", amount: "40.00", taxRate: "10" } as any,
+      { id: 4, invoiceId: 14131, poNumber: "BD702871-2", description: "Fuel surcharge", amount: "60.00", taxRate: "10" } as any,
+      { id: 5, invoiceId: 14131, poNumber: "BD702871-2", description: "Container collection", amount: "400.00", taxRate: "10" } as any,
+      { id: 6, invoiceId: 14131, poNumber: "BD702871-2", description: "Tolls", amount: "40.00", taxRate: "10" } as any,
+    ]);
+    const xeroPo = (number: string) => ({
+      purchaseOrderId: `po-${number}`,
+      purchaseOrderNumber: number,
+      reference: "",
+      contact: { contactId: "c1", name: "Supplier" },
+      date: "2024-01-15",
+      deliveryDate: "",
+      subTotal: 500,
+      totalTax: 50,
+      total: 550,
+      status: "AUTHORISED",
+      currencyCode: "AUD",
+      lineItems: [],
+    });
+    vi.mocked(findXeroPurchaseOrderByNumber)
+      .mockResolvedValueOnce(xeroPo("BD702871"))
+      .mockResolvedValueOnce(xeroPo("BD702871-2"));
+
+    const result = await appRouter.createCaller(makeAdminCtx()).invoices.verifyWithXero({ invoiceId: 14131 });
+
+    expect(result.matched).toBe(true);
+    expect(result.discrepancy).toBe(false);
+    expect(result.poResults).toHaveLength(2);
+    expect(result.poResults.find((r: any) => r.poNumber === "BD702871")?.invoiceLineItemTotal).toBe(550);
+    expect(result.poResults.find((r: any) => r.poNumber === "BD702871-2")?.invoiceLineItemTotal).toBe(550);
+    expect(vi.mocked(findXeroPurchaseOrderByNumber)).toHaveBeenCalledWith("BD702871-2", expect.any(String), expect.any(String));
+    expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
+      14131,
+      expect.objectContaining({ status: "verified", xeroTotal: "1100" })
+    );
+  });
+
   it("flags invoice when one of multiple POs is not found", async () => {
     const { getInvoiceById, updateInvoice } = await import("./db");
     const { findXeroPurchaseOrderByNumber } = await import("./xeroService");

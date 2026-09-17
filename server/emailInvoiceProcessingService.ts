@@ -19,7 +19,7 @@ import { storagePut } from "./storage";
 import type { GraphFileAttachment, GraphMessage } from "./microsoftGraphService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
-const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
+const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
 
 export function selectInboundInvoiceOwner<T extends { id: number }>(configuredOwner?: T, activeAdmin?: T): T | undefined {
   return configuredOwner ?? activeAdmin;
@@ -28,7 +28,7 @@ export function selectInboundInvoiceOwner<T extends { id: number }>(configuredOw
 function invoicePoNumbers(extracted: Awaited<ReturnType<typeof extractInvoiceData>>): string[] {
   const matches = new Set(extractAllPoNumbers(extracted as any));
   for (const item of extracted.lineItems) {
-    if (item.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(item.poNumber)) matches.add(item.poNumber);
+    if (item.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(item.poNumber)) matches.add(item.poNumber);
     for (const text of [item.custRef, item.description]) {
       text?.match(PO_PATTERN)?.forEach((value) => matches.add(value));
     }

@@ -76,16 +76,17 @@ async function fetchPdfAsBase64(fileKey: string): Promise<string> {
 /**
  * Post-process extracted data to apply PO number regex pattern matching.
  * PO numbers follow the pattern: 1-2 uppercase letters (commonly AD, BD, DD, ED, A, B, D, E)
- * followed by exactly 6 digits. E.g. AD123456, BD001234, A123456.
+ * followed by 4-6 digits and, where present, a distinct numeric suffix such as -2.
+ * E.g. AD123456, BD001234, A123456, BD702871-2.
  * Searches the poNumber field, all line item descriptions, and a combined text blob.
  */
 export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string): string | null {
-  // Pattern: 1-2 uppercase letters + exactly 6 digits, as a whole word/token
-  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
+  // Pattern: 1-2 uppercase letters + 4-6 digits + optional numeric suffix, as a whole token
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
 
   // Priority 1: if LLM already found a poNumber, validate it matches pattern
   if (data.poNumber) {
-    const match = data.poNumber.match(/^[A-Z]{1,2}\d{4,6}$/);
+    const match = data.poNumber.match(/^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/);
     if (match) return data.poNumber;
     // LLM found something but it doesn't match — still search below
   }
@@ -123,18 +124,18 @@ export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string)
  */
 export function extractAllPoNumbers(data: ExtractedInvoiceData | null | undefined, rawText?: string): string[] {
   if (!data) return [];
-  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6})\b/g;
+  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
   const found = new Set<string>();
 
   // From LLM-identified top-level poNumber
-  if (data.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(data.poNumber)) {
+  if (data.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(data.poNumber)) {
     found.add(data.poNumber);
   }
 
   // From all line items — check description, poNumber field, and custRef
   for (const li of (data.lineItems ?? [])) {
     // Per-line-item poNumber (structured field — most reliable)
-    if (li.poNumber && /^[A-Z]{1,2}\d{4,6}$/.test(li.poNumber)) {
+    if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) {
       found.add(li.poNumber);
     }
     // Per-line-item custRef (may contain container + PO, e.g. "CBHU4279322 P702739")
@@ -239,7 +240,7 @@ const EXTRACTION_PROMPT = `Extract all data from this invoice PDF and return it 
       "unitPrice": number|null,
       "amount": number|null (the line item amount/total EXCLUDING GST — always the net/excl amount before tax; do NOT include GST in this value),
       "taxRate": number|null (e.g. 10 for 10% GST),
-      "poNumber": "PO number for THIS specific line item — 1-2 uppercase letters + 6 digits (e.g. P702739, SL123456). Look in the Cust Ref column, reference column, or any column adjacent to this line. Extract ONLY the PO number token, not the full ref. null if not found.",
+      "poNumber": "PO number for THIS specific line item — 1-2 uppercase letters + 4-6 digits, optionally with a numeric suffix such as -2 (e.g. P702739, SL123456, BD702871-2). Look in the Cust Ref column, reference column, or any column adjacent to this line. Extract the complete PO token including any suffix, not the full ref. null if not found.",
       "custRef": "The full raw customer reference string for this line item (e.g. 'CBHU4279322 P702739'). This is the entire Cust Ref / Customer Reference field value for this line. null if not found."
     }
   ],
