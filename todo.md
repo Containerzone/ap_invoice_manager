@@ -326,7 +326,7 @@
 - [x] Reuse the existing Microsoft renewal schedule during dedicated mailbox activation instead of creating a duplicate schedule
 - [x] Recover safely when Microsoft Graph reports the persisted inbox subscription is missing during renewal, then restore and validate the replacement subscription
 - [ ] Ensure automatic Graph subscription recovery uses the public application callback origin, then replace and validate the live event-delivery subscription
-- [ ] Add and validate a conservative scheduled reconciliation of recent dedicated-inbox PDFs when Graph webhook delivery is missed
+- [x] Add and validate a conservative scheduled reconciliation of recent dedicated-inbox PDFs when Graph webhook delivery is missed
 
 ## Staff Invoice Deletion (Session 19)
 - [x] Allow staff users to open the existing invoice deletion confirmation and perform the same protected deletion operation
@@ -355,7 +355,7 @@
 ## Xero Attachment Upload Timeout (Session 19)
 - [x] Inspect the reported Xero 504 attachment-upload failure and verify the affected bill and attachment state before any retry
 - [x] Add and validate duplicate-safe attachment recovery behavior if the timeout leaves the PDF absent in Xero
-- [ ] Publish the retry safeguard and reattach the original PNI-757069 PDF to its existing Xero bill without creating a new bill
+- [x] Publish the retry safeguard and reattach the original PNI-757069 PDF to its existing Xero bill without creating a new bill
 
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
