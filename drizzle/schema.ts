@@ -121,6 +121,9 @@ export const invoices = mysqlTable("invoices", {
 
   // Multi-PO numbers (up to 15, stored as JSON array)
   extractedPoNumbers: json("extractedPoNumbers"), // string[]
+  // True when the PO number list was manually saved, including an intentional
+  // empty list. This prevents raw OCR references from being reintroduced.
+  poNumbersManuallyEdited: boolean("poNumbersManuallyEdited").default(false).notNull(),
 
   // Original PO amounts stored on first verification (for variance reports)
   // { [poNumber]: amount } — immutable after first verify

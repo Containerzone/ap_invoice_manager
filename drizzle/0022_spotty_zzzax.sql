@@ -1,0 +1,1 @@
+ALTER TABLE `invoices` ADD `poNumbersManuallyEdited` boolean DEFAULT false NOT NULL;

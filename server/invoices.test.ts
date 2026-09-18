@@ -747,6 +747,39 @@ describe("invoices.verifyWithXero", () => {
     );
   });
 
+  it("does not verify a D job ID from raw custRef when a structured AD PO is present", async () => {
+    const { getInvoiceById, getLineItemsByInvoice } = await import("./db");
+    const { findXeroPurchaseOrderByNumber } = await import("./xeroService");
+    vi.mocked(findXeroPurchaseOrderByNumber).mockClear();
+    vi.mocked(getInvoiceById).mockResolvedValueOnce({
+      id: 18330003,
+      extractedPoNumber: "AD702840",
+      extractedPoNumbers: ["AD702840"],
+      poNumbersManuallyEdited: false,
+      extractedTotal: "1254.44",
+      extractedInvoiceNumber: "VF36984",
+      extractedRawData: null,
+    } as any);
+    vi.mocked(getLineItemsByInvoice).mockResolvedValueOnce([
+      { id: 1, invoiceId: 18330003, poNumber: "AD702840", custRef: "D702840/#AD702840", description: "40ft Sideloader", amount: "1140.40", taxRate: "10" } as any,
+    ]);
+    vi.mocked(findXeroPurchaseOrderByNumber).mockResolvedValueOnce({
+      purchaseOrderId: "po-ad702840", purchaseOrderNumber: "AD702840", reference: "",
+      contact: { contactId: "c1", name: "Supplier" }, date: "", deliveryDate: "",
+      subTotal: 1494.72, totalTax: 149.47, total: 1644.19,
+      status: "DRAFT", currencyCode: "AUD", lineItems: [],
+    });
+
+    const result = await appRouter.createCaller(makeAdminCtx()).invoices.verifyWithXero({ invoiceId: 18330003 });
+
+    expect(result.poResults).toHaveLength(1);
+    expect(result.poResults[0].poNumber).toBe("AD702840");
+    expect(vi.mocked(findXeroPurchaseOrderByNumber)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(findXeroPurchaseOrderByNumber)).not.toHaveBeenCalledWith(
+      "D702840", expect.anything(), expect.anything(), expect.anything(),
+    );
+  });
+
   it("flags invoice when one of multiple POs is not found", async () => {
     const { getInvoiceById, updateInvoice } = await import("./db");
     const { findXeroPurchaseOrderByNumber } = await import("./xeroService");

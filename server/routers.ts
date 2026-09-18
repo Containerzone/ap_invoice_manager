@@ -49,7 +49,7 @@ import {
   updateWorkflowMonitoringSettings,
 } from "./db";
 import { storagePut, storageGetSignedUrl } from "./storage";
-import { extractInvoiceData, extractAllPoNumbers } from "./extractionService";
+import { extractInvoiceData } from "./extractionService";
 import {
   getXeroAuthUrl,
   exchangeXeroCode,
@@ -75,6 +75,7 @@ import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
 import { selectMicrosoftRenewalTaskUid } from "./microsoftGraphSchedule";
 import { getWorkflowAlertRecipientCount } from "./workflowAlertService";
+import { resolveInvoicePoNumbers, resolveExtractedPoNumbers, resolvePoNumbersFromLine } from "./poNumberResolution";
 import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray } from "drizzle-orm";
@@ -116,38 +117,12 @@ async function refreshXeroPoResults(
     // on the invoice. extractedPoNumbers (LLM header scan) can misread letters
     // (e.g. DD→BD), so we never use it as the primary PO list source.
     const lineItems = await getLineItemsByInvoice(invoiceId);
-    const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
-    const poFromLineItems = new Set<string>();
-    for (const li of lineItems) {
-      // Rule: poNumberEdited=true means the user manually corrected this PO number.
-      // Always use the edited value and skip custRef/description scan for this line.
-      if ((li as any).poNumberEdited && li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) {
-        poFromLineItems.add(li.poNumber);
-        continue; // do not also scan custRef/description — edited value is authoritative
-      }
-      if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) {
-        poFromLineItems.add(li.poNumber);
-      } else if ((li as any).custRef) {
-        const m = ((li as any).custRef as string).match(PO_PATTERN);
-        if (m) m.forEach((p: string) => poFromLineItems.add(p));
-      } else if (li.description) {
-        const m = li.description.match(PO_PATTERN);
-        if (m) m.forEach((p: string) => poFromLineItems.add(p));
-      }
-    }
-    // Fall back to extractedPoNumbers/extractedPoNumber only when invoice has no line items at all
-    const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
-    const primaryPo = invoice.extractedPoNumber;
-    let allPoNumbers: string[];
-    if (poFromLineItems.size > 0) {
-      allPoNumbers = Array.from(poFromLineItems);
-    } else if (extractedPoNumbersJson && extractedPoNumbersJson.length > 0) {
-      allPoNumbers = Array.from(new Set(extractedPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)));
-    } else if (primaryPo) {
-      allPoNumbers = [primaryPo];
-    } else {
-      allPoNumbers = [];
-    }
+    const allPoNumbers = resolveInvoicePoNumbers({
+      poNumbersManuallyEdited: invoice.poNumbersManuallyEdited,
+      extractedPoNumbers: Array.isArray(invoice.extractedPoNumbers) ? invoice.extractedPoNumbers as string[] : null,
+      extractedPoNumber: invoice.extractedPoNumber,
+      lineItems,
+    });
 
     if (allPoNumbers.length === 0) return;
 
@@ -155,19 +130,7 @@ async function refreshXeroPoResults(
     // If no line item is tagged with a PO, return null — do not use the full
     // invoice total as a substitute (that would compare the wrong amount).
     const getGroupedTotal = (poNum: string): number | null => {
-      const tagged = lineItems.filter((li) => {
-        // If user edited this line's PO number, only match by the edited poNumber field
-        if ((li as any).poNumberEdited) {
-          return !!(li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase());
-        }
-        if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
-        if ((li as any).custRef) {
-          const custRefMatches = ((li as any).custRef as string).match(/\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g) ?? [];
-          if (custRefMatches.map((m: string) => m.toUpperCase()).includes(poNum.toUpperCase())) return true;
-        }
-        const descMatches = (li.description?.match(/\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g) ?? []).map((m: string) => m.toUpperCase());
-        return descMatches.includes(poNum.toUpperCase());
-      });
+      const tagged = lineItems.filter((li) => resolvePoNumbersFromLine(li).includes(poNum));
       if (tagged.length === 0) return null; // No fallback to invoice total
       // Use GST-inclusive total — amount in DB is excl. GST, taxRate defaults to 10%
       const total = tagged.reduce((sum, li) => {
@@ -601,8 +564,10 @@ export const appRouter = router({
           supplierCreated = true;
         }
 
-        // Collect all PO numbers found across the invoice text (from LLM-extracted data)
-        const allPoNumbersFromExtraction = extractAllPoNumbers(extracted as any);
+        // Resolve structured line values before raw text. This prevents a job/deal
+        // ID such as D702840 from being treated as a second PO when the source
+        // reference explicitly supplies #AD702840.
+        const resolvedExtractedPoNumbers = resolveExtractedPoNumbers(extracted);
 
         // Update invoice with extracted data
         await updateInvoice(input.invoiceId, {
@@ -623,6 +588,7 @@ export const appRouter = router({
           extractedCurrency: extracted.currency,
           extractedRawData: extracted as any,
           supplierId: matchedSupplier?.id ?? undefined,
+          poNumbersManuallyEdited: false,
         });
 
         // Save line items
@@ -643,44 +609,14 @@ export const appRouter = router({
           );
         }
 
-        // After saving line items, scan ALL sources for PO numbers:
-        // 1. Per-line-item poNumber field (most reliable — structured from LLM)
-        // 2. Per-line-item custRef field (e.g. "CBHU4279322 P702739")
-        // 3. Description text scan
-        // 4. Notes and invoice number fields
-        const PO_SCAN_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
-        const poFromLineItems = new Set<string>();
-        for (const li of extracted.lineItems) {
-          // Structured per-line PO number (highest priority)
-          if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) {
-            poFromLineItems.add(li.poNumber);
-          }
-          // custRef scan (e.g. "CBHU4279322 P702739" — extract the PO token)
-          if (li.custRef) {
-            const custRefMatches = li.custRef.match(PO_SCAN_PATTERN);
-            if (custRefMatches) custRefMatches.forEach((m) => poFromLineItems.add(m));
-          }
-          // Description text scan
-          if (li.description) {
-            const descMatches = li.description.match(PO_SCAN_PATTERN);
-            if (descMatches) descMatches.forEach((m) => poFromLineItems.add(m));
-          }
-        }
-        // Also scan notes and invoice number fields
-        const scanText = [extracted.invoiceNumber, extracted.notes].filter(Boolean).join(" ");
-        if (scanText) {
-          const matches = scanText.match(PO_SCAN_PATTERN);
-          if (matches) matches.forEach((m) => poFromLineItems.add(m));
-        }
-        // Merge with LLM-found PO numbers (from top-level poNumber field)
-        const allPoNumbers = Array.from(new Set([...allPoNumbersFromExtraction, ...Array.from(poFromLineItems)]));
+        const allPoNumbers = resolvedExtractedPoNumbers;
 
         // Save the full list of PO numbers to the DB
         if (allPoNumbers.length > 0) {
           await updateInvoice(input.invoiceId, {
             extractedPoNumbers: allPoNumbers,
-            // Also set the primary PO to the first found if not already set
-            extractedPoNumber: extracted.poNumber ?? allPoNumbers[0] ?? undefined,
+            // Use the same source-prioritised result for the visible primary PO.
+            extractedPoNumber: allPoNumbers[0] ?? extracted.poNumber ?? undefined,
           });
         }
 
@@ -787,6 +723,7 @@ export const appRouter = router({
             ? JSON.stringify(extractedContainerNumbers)
             : undefined,
           extractedPoNumbers: hasPoNumberListUpdate ? extractedPoNumbers : undefined,
+          poNumbersManuallyEdited: hasPoNumberListUpdate ? true : undefined,
         } as any);
         return { success: true };
       }),
@@ -807,64 +744,20 @@ export const appRouter = router({
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Xero not configured" });
         }
 
-        // PO pattern: 1-2 uppercase letters + 4-6 digits and optional numeric suffix
-        // Known supplier prefixes: P (Pacific National), SL (Straitlink), AZ (Aurizon), TR (Tasmanian Railways)
-        // Plus any other 1-2 letter prefix (AD, BD, DD, ED, A, B, D, E, etc.)
-        const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
-
         const extractedTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
 
         // Fetch invoice line items FIRST — they are the definitive source for PO numbers
         const invoiceLineItems = await getLineItemsByInvoice(input.invoiceId);
 
-        // Scan DB line items for PO numbers — check all fields (most reliable source)
-        const poFromDbLineItems = new Set<string>();
-        for (const li of invoiceLineItems) {
-          // Rule: poNumberEdited=true means the user manually corrected this PO number.
-          // Always use the edited value and skip custRef/description scan for this line.
-          if ((li as any).poNumberEdited) {
-            if ((li as any).poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test((li as any).poNumber)) {
-              poFromDbLineItems.add((li as any).poNumber);
-            }
-            continue; // edited value is authoritative — do not also scan custRef/description
-          }
-          // Priority 1: structured per-line poNumber field (e.g. from Cust Ref column)
-          if ((li as any).poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test((li as any).poNumber)) {
-            poFromDbLineItems.add((li as any).poNumber);
-          }
-          // Priority 2: custRef field scan (e.g. "CBHU4279322 P702739")
-          if ((li as any).custRef) {
-            const custRefMatches = ((li as any).custRef as string).match(PO_PATTERN);
-            if (custRefMatches) custRefMatches.forEach((m) => poFromDbLineItems.add(m));
-          }
-          // Priority 3: description text scan
-          const desc = li.description ?? "";
-          const descMatches = desc.match(PO_PATTERN);
-          if (descMatches) descMatches.forEach((m) => poFromDbLineItems.add(m));
-        }
-
-        // ── Fix #1: PO list from line items (source of truth) ──────────────────────
-        // Line items are always correct — they come from what is physically printed on the invoice.
-        // extractedPoNumbers (LLM header scan) can misread letters (e.g. DD→BD).
-        // We use line items as the definitive source; fall back to extractedPoNumbers only when
-        // the invoice has no line items at all.
-        const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
-        const primaryPo = invoice.extractedPoNumber;
-        let allPoNumbers: string[];
-        if (poFromDbLineItems.size > 0) {
-          // Line items found — use them as the authoritative PO list
-          allPoNumbers = Array.from(poFromDbLineItems);
-        } else if (extractedPoNumbersJson && extractedPoNumbersJson.length > 0) {
-          // No line items — fall back to extractedPoNumbers (LLM-extracted or manually set)
-          allPoNumbers = Array.from(new Set(extractedPoNumbersJson.map(p => p.trim()).filter(Boolean)));
-        } else if (primaryPo) {
-          // Single PO from primary field
-          allPoNumbers = [primaryPo];
-        } else {
-          // Last resort: scan raw data
-          const rawData = invoice.extractedRawData as any;
-          allPoNumbers = extractAllPoNumbers(rawData ?? {});
-        }
+        // A manually saved header list, including an intentionally empty list,
+        // overrides every raw OCR reference. Otherwise use each line's
+        // structured PO (or explicit #PO tag) before scanning free text.
+        const allPoNumbers = resolveInvoicePoNumbers({
+          poNumbersManuallyEdited: invoice.poNumbersManuallyEdited,
+          extractedPoNumbers: Array.isArray(invoice.extractedPoNumbers) ? invoice.extractedPoNumbers as string[] : null,
+          extractedPoNumber: invoice.extractedPoNumber,
+          lineItems: invoiceLineItems,
+        });
 
         console.log(`[verifyWithXero] Invoice ${input.invoiceId}: found ${allPoNumbers.length} PO(s): ${allPoNumbers.join(", ")} | DB line items: ${invoiceLineItems.length}`);
 
@@ -888,23 +781,7 @@ export const appRouter = router({
          */
         function getGroupedLineItemTotal(poNum: string): number | null {
           if (invoiceLineItems.length === 0) return null;
-          const matched = invoiceLineItems.filter((li) => {
-            // If user edited this line's PO number, only match by the edited poNumber field
-            if ((li as any).poNumberEdited) {
-              return !!(li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase());
-            }
-            // Priority 1: structured per-line poNumber field
-            if (li.poNumber && li.poNumber === poNum) return true;
-            // Priority 2: custRef text scan (e.g. "CBHU4279322 P702739")
-            if (li.custRef) {
-              const custRefMatches = li.custRef.match(PO_PATTERN);
-              if (custRefMatches && custRefMatches.includes(poNum)) return true;
-            }
-            // Priority 3: description text scan
-            const desc = li.description ?? "";
-            const descMatches = desc.match(PO_PATTERN);
-            return descMatches ? descMatches.includes(poNum) : false;
-          });
+          const matched = invoiceLineItems.filter((li) => resolvePoNumbersFromLine(li).includes(poNum));
           if (matched.length === 0) return null;
           // Use GST-inclusive amount: amount * (1 + taxRate/100)
           // Default to 10% GST (Australian standard) when taxRate is null/undefined
@@ -1195,24 +1072,12 @@ export const appRouter = router({
         // Within threshold — check for PO conflicts before approving
         // Build PO list from line items (source of truth), fall back to extractedPoNumbers
         const staffLineItemsPre = await getLineItemsByInvoice(input.invoiceId);
-        const staffPoPatternPre = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
-        const staffPoFromLineItemsPre = new Set<string>();
-        for (const li of staffLineItemsPre) {
-          if ((li as any).poNumberEdited) {
-            if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) staffPoFromLineItemsPre.add(li.poNumber);
-            continue; // edited value is authoritative
-          }
-          if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) staffPoFromLineItemsPre.add(li.poNumber);
-          else if (li.custRef) { const m = li.custRef.match(staffPoPatternPre); if (m) m.forEach((p) => staffPoFromLineItemsPre.add(p)); }
-          else if (li.description) { const m = li.description.match(staffPoPatternPre); if (m) m.forEach((p) => staffPoFromLineItemsPre.add(p)); }
-        }
-        const staffPoNumbersJsonPre = (invoice as any).extractedPoNumbers as string[] | null;
-        const staffPrimaryPoPre = invoice.extractedPoNumber;
-        const staffPoNumbersPre: string[] = staffPoFromLineItemsPre.size > 0
-          ? Array.from(staffPoFromLineItemsPre)
-          : staffPoNumbersJsonPre && staffPoNumbersJsonPre.length > 0
-            ? Array.from(new Set(staffPoNumbersJsonPre.map((p: string) => p.trim()).filter(Boolean)))
-            : staffPrimaryPoPre ? [staffPrimaryPoPre] : [];
+        const staffPoNumbersPre = resolveInvoicePoNumbers({
+          poNumbersManuallyEdited: invoice.poNumbersManuallyEdited,
+          extractedPoNumbers: Array.isArray(invoice.extractedPoNumbers) ? invoice.extractedPoNumbers as string[] : null,
+          extractedPoNumber: invoice.extractedPoNumber,
+          lineItems: staffLineItemsPre,
+        });
 
         if (staffPoNumbersPre.length > 0) {
           const conflicts = await findInvoicesMatchingPoNumbers(staffPoNumbersPre, input.invoiceId);
@@ -1248,46 +1113,16 @@ export const appRouter = router({
         const staffClientId = process.env.XERO_CLIENT_ID;
         const staffClientSecret = process.env.XERO_CLIENT_SECRET;
 
-        // Build PO list from line items (source of truth), fall back to extractedPoNumbers
-        const staffPoPatternXero = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
-        const staffPoFromLineItemsXero = new Set<string>();
-        for (const li of staffLineItemsPre) {
-          if ((li as any).poNumberEdited) {
-            if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) staffPoFromLineItemsXero.add(li.poNumber);
-            continue; // edited value is authoritative
-          }
-          if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) staffPoFromLineItemsXero.add(li.poNumber);
-          else if (li.custRef) { const m = li.custRef.match(staffPoPatternXero); if (m) m.forEach((p) => staffPoFromLineItemsXero.add(p)); }
-          else if (li.description) { const m = li.description.match(staffPoPatternXero); if (m) m.forEach((p) => staffPoFromLineItemsXero.add(p)); }
-        }
-        const staffPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
-        const staffPrimaryPo = invoice.extractedPoNumber;
-        const staffPoNumbers: string[] = staffPoFromLineItemsXero.size > 0
-          ? Array.from(staffPoFromLineItemsXero)
-          : staffPoNumbersJson && staffPoNumbersJson.length > 0
-            ? Array.from(new Set(staffPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)))
-            : staffPrimaryPo ? [staffPrimaryPo] : [];
+        const staffPoNumbers = staffPoNumbersPre;
 
         if (staffClientId && staffClientSecret && staffPoNumbers.length > 0) {
           const staffSupplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
           const staffSupplierName = staffSupplier?.name ?? invoice.extractedSupplierName ?? undefined;
           const staffLineItems = staffLineItemsPre; // already fetched above
-          const PO_REGEX_STAFF = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
           console.log(`[StaffApproval] Updating ${staffPoNumbers.length} PO(s) in Xero:`, staffPoNumbers);
           for (const poNum of staffPoNumbers) {
             // Filter line items to only those belonging to this PO
-            const poLineItems = staffLineItems.filter((li) => {
-              if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
-              if (li.custRef) {
-                const matches = (li.custRef.match(/\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g) ?? []).map(m => m.toUpperCase());
-                if (matches.includes(poNum.toUpperCase())) return true;
-              }
-              if (li.description) {
-                const matches = (li.description.match(/\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g) ?? []).map(m => m.toUpperCase());
-                if (matches.includes(poNum.toUpperCase())) return true;
-              }
-              return false;
-            });
+            const poLineItems = staffLineItems.filter((li) => resolvePoNumbersFromLine(li).includes(poNum));
             // Fall back to all line items only when there is a single PO (no ambiguity)
             const itemsForPo = poLineItems.length > 0
               ? poLineItems
@@ -1368,24 +1203,12 @@ export const appRouter = router({
         // ── 1. Resolve PO numbers from line items (source of truth) ────────────────
         // Build from line items first; fall back to extractedPoNumbers only when no line items exist
         const adminLineItemsForPo = await getLineItemsByInvoice(input.invoiceId);
-        const adminPoPattern = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
-        const adminPoFromLineItems = new Set<string>();
-        for (const li of adminLineItemsForPo) {
-          if ((li as any).poNumberEdited) {
-            if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) adminPoFromLineItems.add(li.poNumber);
-            continue; // edited value is authoritative
-          }
-          if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) adminPoFromLineItems.add(li.poNumber);
-          else if (li.custRef) { const m = li.custRef.match(adminPoPattern); if (m) m.forEach((p) => adminPoFromLineItems.add(p)); }
-          else if (li.description) { const m = li.description.match(adminPoPattern); if (m) m.forEach((p) => adminPoFromLineItems.add(p)); }
-        }
-        const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
-        const primaryPo = invoice.extractedPoNumber;
-        const allPoNumbers: string[] = adminPoFromLineItems.size > 0
-          ? Array.from(adminPoFromLineItems)
-          : extractedPoNumbersJson && extractedPoNumbersJson.length > 0
-            ? Array.from(new Set(extractedPoNumbersJson.map((p: string) => p.trim()).filter(Boolean)))
-            : primaryPo ? [primaryPo] : [];
+        const allPoNumbers = resolveInvoicePoNumbers({
+          poNumbersManuallyEdited: invoice.poNumbersManuallyEdited,
+          extractedPoNumbers: Array.isArray(invoice.extractedPoNumbers) ? invoice.extractedPoNumbers as string[] : null,
+          extractedPoNumber: invoice.extractedPoNumber,
+          lineItems: adminLineItemsForPo,
+        });
 
         // ── 1b. Check for PO conflicts before marking approved ─────────────────
         if (allPoNumbers.length > 0) {
@@ -1423,18 +1246,7 @@ export const appRouter = router({
 
           for (const poNum of allPoNumbers) {
             // Filter line items to only those belonging to this PO
-            const poLineItems = lineItems.filter((li) => {
-              if (li.poNumber && li.poNumber.trim().toUpperCase() === poNum.toUpperCase()) return true;
-              if (li.custRef) {
-                const matches = (li.custRef.match(/\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g) ?? []).map(m => m.toUpperCase());
-                if (matches.includes(poNum.toUpperCase())) return true;
-              }
-              if (li.description) {
-                const matches = (li.description.match(/\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g) ?? []).map(m => m.toUpperCase());
-                if (matches.includes(poNum.toUpperCase())) return true;
-              }
-              return false;
-            });
+            const poLineItems = lineItems.filter((li) => resolvePoNumbersFromLine(li).includes(poNum));
             // Fall back to all line items only when there is a single PO (no ambiguity)
             const itemsForPo = poLineItems.length > 0
               ? poLineItems
@@ -1785,9 +1597,14 @@ export const appRouter = router({
         // Normal path: must be approved before resolving/pushing
         // Exception: Admin can push no-PO invoices under $500 (GST-inclusive) directly
         const approvedStatuses = ["approved", "resolved"];
-        const extractedPoNumbersJson = (invoice as any).extractedPoNumbers as string[] | null;
-        const primaryPo = invoice.extractedPoNumber;
-        const hasPoNumbers = (extractedPoNumbersJson && extractedPoNumbersJson.length > 0) || !!primaryPo;
+        const invoiceLineItems = await getLineItemsByInvoice(input.invoiceId);
+        const allPoNumbers = resolveInvoicePoNumbers({
+          poNumbersManuallyEdited: invoice.poNumbersManuallyEdited,
+          extractedPoNumbers: Array.isArray(invoice.extractedPoNumbers) ? invoice.extractedPoNumbers as string[] : null,
+          extractedPoNumber: invoice.extractedPoNumber,
+          lineItems: invoiceLineItems,
+        });
+        const hasPoNumbers = allPoNumbers.length > 0;
         const invoiceTotal = parseFloat(invoice.extractedTotal?.toString() ?? "0");
         const isAdminNoPo = ctx.user.role === "admin" && !hasPoNumbers && invoiceTotal < 500;
 
@@ -1801,23 +1618,18 @@ export const appRouter = router({
         let xeroResult: { invoiceId: string; invoiceNumber: string } | null = null;
         let xeroStatus: "DRAFT" | "SUBMITTED" | "AUTHORISED" = "SUBMITTED";
         // Collect all PO numbers up front (used for reference field and marking as Billed)
-        // Manual PO list takes priority — do not merge raw data scan
-        const rawData = invoice.extractedRawData as any;
-        const allPoNumbers: string[] = extractedPoNumbersJson && extractedPoNumbersJson.length > 0
-          ? Array.from(new Set(extractedPoNumbersJson.map(p => p.trim()).filter(Boolean)))
-          : primaryPo
-            ? [primaryPo]
-            : Array.from(new Set(extractAllPoNumbers(rawData ?? {}))).filter(Boolean);
+        // `allPoNumbers` was resolved from the authoritative header or line source
+        // above. A manually empty header must not be repopulated from raw OCR text.
 
         const clientId = process.env.XERO_CLIENT_ID;
         const clientSecret = process.env.XERO_CLIENT_SECRET;
 
         if (input.pushToXero) {
-          console.log(`[Resolve] pushToXero=true, clientId=${clientId ? clientId.slice(0,8)+"..." : "MISSING"}, clientSecret=${clientSecret ? "set" : "MISSING"}`);
+          console.log(`[Resolve] Starting Xero bill resolution for invoice ${input.invoiceId}.`);
 
           if (clientId && clientSecret) {
             const supplier = invoice.supplierId ? await getSupplierById(invoice.supplierId) : null;
-            const lineItems = await getLineItemsByInvoice(input.invoiceId);
+            const lineItems = invoiceLineItems;
 
             // Determine the Xero bill status based on invoice approval state and paid detection:
             // Rule 3: verified or under_budget → AUTHORISED (= AWAITING PAYMENT in Xero UI)

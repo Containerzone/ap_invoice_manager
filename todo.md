@@ -376,6 +376,11 @@
 - [x] Make explicit Verify with Xero actions bypass the PO cache, refresh the stored comparison fields and preserve cached reads for non-verification workflows
 - [x] Confirm by read-only fresh Xero fetch that DD702871 now has quantity 2 and totals $877.50 ex GST, $87.75 GST and $965.25 inclusive
 
+## Removed and Misidentified PO Safeguards (Session 19)
+- [x] Diagnose FV36984's extra D702840 Xero lookup as a raw job/deal ID reintroduced beside the structured #AD702840 PO reference
+- [x] Make structured line POs and a manually saved PO list (including an empty list) authoritative across extraction, verification, approval and Xero resolution
+- [x] Prioritise explicit #PO references over preceding job/deal identifiers in customer-reference text and add regression coverage
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values

@@ -14,27 +14,18 @@ import {
   updateEmailInvoiceSubmission,
   updateInvoice,
 } from "./db";
-import { extractAllPoNumbers, extractInvoiceData } from "./extractionService";
+import { extractInvoiceData } from "./extractionService";
+import { resolveExtractedPoNumbers } from "./poNumberResolution";
 import { storagePut } from "./storage";
 import type { GraphFileAttachment, GraphMessage } from "./microsoftGraphService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
-
-const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
 
 export function selectInboundInvoiceOwner<T extends { id: number }>(configuredOwner?: T, activeAdmin?: T): T | undefined {
   return configuredOwner ?? activeAdmin;
 }
 
 function invoicePoNumbers(extracted: Awaited<ReturnType<typeof extractInvoiceData>>): string[] {
-  const matches = new Set(extractAllPoNumbers(extracted as any));
-  for (const item of extracted.lineItems) {
-    if (item.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(item.poNumber)) matches.add(item.poNumber);
-    for (const text of [item.custRef, item.description]) {
-      text?.match(PO_PATTERN)?.forEach((value) => matches.add(value));
-    }
-  }
-  [extracted.invoiceNumber, extracted.notes].filter(Boolean).join(" ").match(PO_PATTERN)?.forEach((value) => matches.add(value));
-  return Array.from(matches);
+  return resolveExtractedPoNumbers(extracted);
 }
 
 async function extractEmailInvoice(invoiceId: number, uploaderId: number) {
@@ -59,7 +50,7 @@ async function extractEmailInvoice(invoiceId: number, uploaderId: number) {
   await updateInvoice(invoiceId, {
     status: "extracted",
     extractedInvoiceNumber: extracted.invoiceNumber ?? undefined,
-    extractedPoNumber: extracted.poNumber ?? poNumbers[0] ?? undefined,
+    extractedPoNumber: poNumbers[0] ?? extracted.poNumber ?? undefined,
     extractedPoNumbers: poNumbers.length ? poNumbers : undefined,
     extractedContainerNumbers: extracted.containerNumbers.length ? JSON.stringify(extracted.containerNumbers) : undefined,
     extractedSupplierName: extracted.supplierName ?? undefined,
@@ -73,6 +64,7 @@ async function extractEmailInvoice(invoiceId: number, uploaderId: number) {
     extractedCurrency: extracted.currency,
     extractedRawData: extracted as any,
     supplierId: supplier?.id,
+    poNumbersManuallyEdited: false,
   });
   if (extracted.lineItems.length) {
     await deleteLineItemsByInvoice(invoiceId);
