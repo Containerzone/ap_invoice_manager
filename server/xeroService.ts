@@ -438,7 +438,8 @@ export async function checkXeroBillDuplicate(
 export async function findXeroPurchaseOrderByNumber(
   poNumber: string,
   clientId: string,
-  clientSecret: string
+  clientSecret: string,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<XeroPurchaseOrder | null> {
   const auth = await getValidAccessToken(clientId, clientSecret);
   if (!auth) return null;
@@ -459,6 +460,7 @@ export async function findXeroPurchaseOrderByNumber(
           },
         }
       ),
+      { forceRefresh: options.forceRefresh },
     );
 
     const poList = responseData?.PurchaseOrders ?? [];

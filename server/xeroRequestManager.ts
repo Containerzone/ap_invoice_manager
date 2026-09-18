@@ -170,11 +170,18 @@ export async function runCachedXeroGet<T>(
   cacheKey: string,
   ttlMs: number,
   operation: () => Promise<AxiosResponse<T>>,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<T> {
-  const cached = await getXeroApiCache<T>(auth.tenantId, cacheKey);
-  if (cached !== null) return cached;
+  // PO verification is an explicit freshness check. It must not report a new
+  // verification timestamp while rendering an earlier cached Xero snapshot.
+  if (!options.forceRefresh) {
+    const cached = await getXeroApiCache<T>(auth.tenantId, cacheKey);
+    if (cached !== null) return cached;
+  }
 
-  const inFlightKey = `${auth.tenantId}:${cacheKey}`;
+  // Fresh requests deduplicate with other fresh requests, but never join an
+  // ordinary read that might be returning an older cached snapshot.
+  const inFlightKey = `${auth.tenantId}:${cacheKey}${options.forceRefresh ? ":fresh" : ""}`;
   const existing = inFlightReads.get(inFlightKey) as Promise<T> | undefined;
   if (existing) return existing;
 

@@ -735,7 +735,12 @@ describe("invoices.verifyWithXero", () => {
     expect(result.poResults).toHaveLength(2);
     expect(result.poResults.find((r: any) => r.poNumber === "BD702871")?.invoiceLineItemTotal).toBe(550);
     expect(result.poResults.find((r: any) => r.poNumber === "BD702871-2")?.invoiceLineItemTotal).toBe(550);
-    expect(vi.mocked(findXeroPurchaseOrderByNumber)).toHaveBeenCalledWith("BD702871-2", expect.any(String), expect.any(String));
+    expect(vi.mocked(findXeroPurchaseOrderByNumber)).toHaveBeenCalledWith(
+      "BD702871-2",
+      expect.any(String),
+      expect.any(String),
+      { forceRefresh: true },
+    );
     expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(
       14131,
       expect.objectContaining({ status: "verified", xeroTotal: "1100" })

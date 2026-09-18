@@ -807,7 +807,7 @@ export const appRouter = router({
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Xero not configured" });
         }
 
-        // PO pattern: 1-2 uppercase letters + exactly 6 digits
+        // PO pattern: 1-2 uppercase letters + 4-6 digits and optional numeric suffix
         // Known supplier prefixes: P (Pacific National), SL (Straitlink), AZ (Aurizon), TR (Tasmanian Railways)
         // Plus any other 1-2 letter prefix (AD, BD, DD, ED, A, B, D, E, etc.)
         const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
@@ -933,7 +933,15 @@ export const appRouter = router({
           let _batchResults: any[];
           try {
             _batchResults = await Promise.all(_batch.map(async (poNum) => {
-            const po = await findXeroPurchaseOrderByNumber(poNum, clientId, clientSecret);
+            // Verification is an explicit freshness action. Always query Xero
+            // rather than reusing an earlier cached PO snapshot, then persist
+            // that current result to the invoice's comparison fields.
+            const po = await findXeroPurchaseOrderByNumber(
+              poNum,
+              clientId,
+              clientSecret,
+              { forceRefresh: true },
+            );
 
             // One PO authorises the entire invoice, so compare its total with
             // the complete invoice amount. For multiple POs, line allocation

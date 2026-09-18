@@ -371,6 +371,11 @@
 - [x] Support numeric PO suffixes such as -2 across extraction, email ingestion, verification and approval allocation while preserving distinct PO identities
 - [x] Confirm by read-only lookup that BD702871 and BD702871-2 are separate Xero draft POs, and add regression coverage for two-PO allocation
 
+## Fresh Xero Re-verification (Session 19)
+- [x] Diagnose why a re-verification of invoice 260540 / PO DD702871 displayed a stale one-line quantity despite the updated Xero PO
+- [x] Make explicit Verify with Xero actions bypass the PO cache, refresh the stored comparison fields and preserve cached reads for non-verification workflows
+- [x] Confirm by read-only fresh Xero fetch that DD702871 now has quantity 2 and totals $877.50 ex GST, $87.75 GST and $965.25 inclusive
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values

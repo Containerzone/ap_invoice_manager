@@ -113,6 +113,32 @@ describe("central Xero request manager", () => {
     expect(setXeroApiCache).toHaveBeenCalledTimes(1);
   });
 
+  it("bypasses an existing cache entry when an explicit verification requires fresh Xero data", async () => {
+    vi.mocked(getXeroToken).mockResolvedValue({ tenantId: "tenant-fresh", rateLimitPausedUntil: null } as any);
+    vi.mocked(getXeroApiCache).mockResolvedValue({ PurchaseOrders: [{ Quantity: 1 }] } as any);
+    const operation = vi.fn().mockResolvedValue({
+      data: { PurchaseOrders: [{ Quantity: 2 }] },
+      headers: {},
+    });
+
+    await expect(runCachedXeroGet(
+      { token: "token", tenantId: "tenant-fresh" },
+      "purchase-order:DD702871",
+      60_000,
+      operation,
+      { forceRefresh: true },
+    )).resolves.toEqual({ PurchaseOrders: [{ Quantity: 2 }] });
+
+    expect(getXeroApiCache).not.toHaveBeenCalled();
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(setXeroApiCache).toHaveBeenCalledWith(
+      "tenant-fresh",
+      "purchase-order:DD702871",
+      { PurchaseOrders: [{ Quantity: 2 }] },
+      60_000,
+    );
+  });
+
   it("does not create an operational alert for an expected missing purchase-order lookup", async () => {
     vi.mocked(getXeroToken).mockResolvedValue({ tenantId: "tenant-not-found", rateLimitPausedUntil: null } as any);
     const operation = vi.fn().mockRejectedValue({ response: { status: 404 }, message: "Request failed with status code 404" });
