@@ -1,7 +1,7 @@
 export type ReportColumnId = "invoice" | "supplier" | "invoiceAmount" | "poTotal" | "variance" | "approval";
 
-export type ReportColumnDefinition = {
-  id: ReportColumnId;
+export type ReportColumnDefinition<T extends string = ReportColumnId> = {
+  id: T;
   label: string;
   minWidth: string;
   align?: "left" | "right";
@@ -17,6 +17,31 @@ export const REPORT_COLUMNS: ReportColumnDefinition[] = [
 ];
 
 export const DEFAULT_REPORT_COLUMN_ORDER = REPORT_COLUMNS.map((column) => column.id);
+
+export type BillReconciliationColumnId =
+  | "invoice"
+  | "supplier"
+  | "invoiceAmount"
+  | "xeroBill"
+  | "billStatus"
+  | "xeroAmount"
+  | "difference"
+  | "reconciliationStatus"
+  | "lastReconciled";
+
+export const BILL_RECONCILIATION_COLUMNS: ReportColumnDefinition<BillReconciliationColumnId>[] = [
+  { id: "invoice", label: "Invoice", minWidth: "minmax(10rem, 1.15fr)" },
+  { id: "supplier", label: "Supplier", minWidth: "minmax(11rem, 1fr)" },
+  { id: "invoiceAmount", label: "Invoice Total", minWidth: "8rem", align: "right" },
+  { id: "xeroBill", label: "Xero Bill", minWidth: "9rem" },
+  { id: "billStatus", label: "Bill Status", minWidth: "8rem" },
+  { id: "xeroAmount", label: "Xero Bill Total", minWidth: "8.75rem", align: "right" },
+  { id: "difference", label: "Difference", minWidth: "8rem", align: "right" },
+  { id: "reconciliationStatus", label: "Reconciliation", minWidth: "10rem" },
+  { id: "lastReconciled", label: "Last Reconciled", minWidth: "9rem" },
+];
+
+export const DEFAULT_BILL_RECONCILIATION_COLUMN_ORDER = BILL_RECONCILIATION_COLUMNS.map((column) => column.id);
 
 export type ReportFilterRow = {
   supplierName: string | null;
@@ -52,14 +77,22 @@ export function filterReportRows<T extends ReportFilterRow>(rows: T[], filters: 
 }
 
 export function normalizeReportColumnOrder(value: unknown): ReportColumnId[] {
-  if (!Array.isArray(value)) return [...DEFAULT_REPORT_COLUMN_ORDER];
-  const allowed = new Set<ReportColumnId>(DEFAULT_REPORT_COLUMN_ORDER);
-  const unique = value.filter((entry): entry is ReportColumnId => typeof entry === "string" && allowed.has(entry as ReportColumnId));
-  const remaining = DEFAULT_REPORT_COLUMN_ORDER.filter((id) => !unique.includes(id));
+  return normalizeColumnOrder(value, DEFAULT_REPORT_COLUMN_ORDER);
+}
+
+export function normalizeBillReconciliationColumnOrder(value: unknown): BillReconciliationColumnId[] {
+  return normalizeColumnOrder(value, DEFAULT_BILL_RECONCILIATION_COLUMN_ORDER);
+}
+
+export function normalizeColumnOrder<T extends string>(value: unknown, defaults: T[]): T[] {
+  if (!Array.isArray(value)) return [...defaults];
+  const allowed = new Set<T>(defaults);
+  const unique = value.filter((entry): entry is T => typeof entry === "string" && allowed.has(entry as T));
+  const remaining = defaults.filter((id) => !unique.includes(id));
   return [...unique, ...remaining];
 }
 
-export function moveReportColumn(order: ReportColumnId[], source: ReportColumnId, destination: ReportColumnId): ReportColumnId[] {
+export function moveReportColumn<T extends string>(order: T[], source: T, destination: T): T[] {
   if (source === destination) return order;
   const next = order.filter((id) => id !== source);
   const destinationIndex = next.indexOf(destination);

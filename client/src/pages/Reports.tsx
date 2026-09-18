@@ -25,6 +25,7 @@ import {
   type ReportFilters,
   reportDateRangeForPreset,
 } from "@/lib/reportCustomisation";
+import BillReconciliationReport from "@/pages/BillReconciliationReport";
 
 interface PoBreakdown {
   poNumber: string;
@@ -105,6 +106,7 @@ function displayInvoiceDate(value: string | null): string | null {
 export default function Reports() {
   const [, setLocation] = useLocation();
   const { data, isLoading, error } = trpc.reports.poVariance.useQuery();
+  const [reportTab, setReportTab] = useState<"variance" | "bills">("variance");
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [filters, setFilters] = useState<ReportFilters>(EMPTY_FILTERS);
   const [columnOrder, setColumnOrder] = useState<ReportColumnId[]>(storedColumnOrder);
@@ -196,14 +198,24 @@ export default function Reports() {
     }
   };
 
+  if (reportTab === "bills") {
+    return <BillReconciliationReport onSelectVariance={() => setReportTab("variance")} />;
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">PO Variance Report</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Reports</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Approved invoices — net over/under position vs Xero Purchase Orders</p>
         </div>
-        <Badge variant="outline" className="w-fit gap-1.5 text-xs font-normal"><SlidersHorizontal className="h-3.5 w-3.5" /> Your layout is saved on this device</Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-fit rounded-lg border bg-muted/40 p-1" role="tablist" aria-label="Report type">
+            <Button variant="secondary" size="sm" role="tab" aria-selected className="h-8 shadow-sm">PO Variance</Button>
+            <Button variant="ghost" size="sm" role="tab" aria-selected={false} onClick={() => setReportTab("bills")} className="h-8">Xero Bill Reconciliation</Button>
+          </div>
+          <Badge variant="outline" className="w-fit gap-1.5 text-xs font-normal"><SlidersHorizontal className="h-3.5 w-3.5" /> Your layout is saved on this device</Badge>
+        </div>
       </div>
 
       <Card>

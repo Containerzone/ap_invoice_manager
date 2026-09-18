@@ -796,6 +796,49 @@ export async function getPoVarianceReport(): Promise<PoVarianceRow[]> {
   );
 }
 
+export interface XeroBillReconciliationRow {
+  invoiceId: number;
+  invoiceNumber: string | null;
+  supplierName: string | null;
+  invoiceDate: string | null;
+  status: string | null;
+  extractedTotal: string | null;
+  extractedCurrency: string | null;
+  xeroFinalBillId: string | null;
+  xeroFinalBillNumber: string | null;
+  xeroBillReconciliationSnapshot: unknown;
+}
+
+/**
+ * Returns invoice records eligible for the bill reconciliation workbench.
+ * It includes approved-but-not-pushed work so the report can explicitly show
+ * "Not pushed", and any locally linked Xero bill even if its local status has
+ * subsequently changed. Archived invoices remain outside the active report.
+ */
+export async function getXeroBillReconciliationReport(): Promise<XeroBillReconciliationRow[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({
+      invoiceId: invoices.id,
+      invoiceNumber: invoices.extractedInvoiceNumber,
+      supplierName: invoices.extractedSupplierName,
+      invoiceDate: invoices.extractedInvoiceDate,
+      status: invoices.status,
+      extractedTotal: invoices.extractedTotal,
+      extractedCurrency: invoices.extractedCurrency,
+      xeroFinalBillId: invoices.xeroFinalBillId,
+      xeroFinalBillNumber: invoices.xeroFinalBillNumber,
+      xeroBillReconciliationSnapshot: invoices.xeroBillReconciliationSnapshot,
+    })
+    .from(invoices)
+    .where(isNull(invoices.archivedAt));
+
+  return rows.filter((row) =>
+    Boolean(row.xeroFinalBillId) || ["approved", "resolved"].includes(row.status ?? "")
+  );
+}
+
 /**
  * Finds an existing invoice with the same supplier name AND invoice number.
  * Used to detect duplicate uploads. Excludes the given invoiceId (so a re-extract

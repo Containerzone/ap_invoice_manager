@@ -36,6 +36,7 @@ import {
   deleteXeroToken,
   logEmailReply,
   getPoVarianceReport,
+  getXeroBillReconciliationReport,
   findDuplicateInvoice,
   findInvoicesMatchingPoNumbers,
   getMicrosoftGraphState,
@@ -55,6 +56,7 @@ import {
   exchangeXeroCode,
   getXeroTenants,
   findXeroBillByInvoiceNumber,
+  getXeroBillById,
   findXeroPurchaseOrderByNumber,
   createXeroDraftBill,
   findOrCreateXeroContact,
@@ -76,6 +78,7 @@ import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
 import { selectMicrosoftRenewalTaskUid } from "./microsoftGraphSchedule";
 import { getWorkflowAlertRecipientCount } from "./workflowAlertService";
 import { resolveInvoicePoNumbers, resolveExtractedPoNumbers, resolvePoNumbersFromLine } from "./poNumberResolution";
+import { getBillReconciliationState, parseBillReconciliationSnapshot, type BillReconciliationSnapshot } from "../shared/billReconciliation";
 import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray } from "drizzle-orm";
@@ -2193,6 +2196,101 @@ export const appRouter = router({
         };
       });
     }),
+    billReconciliation: protectedProcedure.query(async () => {
+      const rows = await getXeroBillReconciliationReport();
+      return rows.map((row) => {
+        const snapshot = parseBillReconciliationSnapshot(row.xeroBillReconciliationSnapshot);
+        const invoiceTotal = row.extractedTotal == null ? null : parseFloat(row.extractedTotal.toString());
+        const state = getBillReconciliationState({
+          invoiceTotal: Number.isFinite(invoiceTotal) ? invoiceTotal : null,
+          xeroFinalBillId: row.xeroFinalBillId,
+          snapshot,
+        });
+        return {
+          invoiceId: row.invoiceId,
+          invoiceNumber: row.invoiceNumber,
+          supplierName: row.supplierName,
+          invoiceDate: row.invoiceDate,
+          localStatus: row.status,
+          invoiceTotal: Number.isFinite(invoiceTotal) ? invoiceTotal : null,
+          currencyCode: row.extractedCurrency ?? (snapshot?.outcome === "found" ? snapshot.currencyCode : "AUD"),
+          xeroBillId: row.xeroFinalBillId,
+          xeroBillNumber: snapshot?.outcome === "found" ? snapshot.billNumber : row.xeroFinalBillNumber,
+          xeroBillStatus: snapshot?.outcome === "found" ? snapshot.billStatus : null,
+          xeroBillContact: snapshot?.outcome === "found" ? snapshot.contactName : null,
+          xeroBillSubtotal: snapshot?.outcome === "found" ? snapshot.subTotal : null,
+          xeroBillTax: snapshot?.outcome === "found" ? snapshot.totalTax : null,
+          xeroBillTotal: snapshot?.outcome === "found" ? snapshot.total : null,
+          difference: state.difference,
+          reconciliationStatus: state.status,
+          lastReconciledAt: snapshot?.checkedAt ?? null,
+          refreshError: snapshot?.outcome === "failed" || snapshot?.outcome === "not_found" ? snapshot.error ?? null : null,
+        };
+      });
+    }),
+    refreshBillReconciliation: protectedProcedure
+      .input(z.object({
+        // Limit each explicit user action to a small, paced read-only batch.
+        // Additional filtered rows can be refreshed in the next action.
+        invoiceIds: z.array(z.number().int().positive()).min(1).max(25),
+      }))
+      .mutation(async ({ input }) => {
+        const clientId = process.env.XERO_CLIENT_ID;
+        const clientSecret = process.env.XERO_CLIENT_SECRET;
+        if (!clientId || !clientSecret) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Xero credentials are not configured." });
+        }
+
+        const requestedIds = new Set(input.invoiceIds);
+        const candidates = (await getXeroBillReconciliationReport())
+          .filter((row) => requestedIds.has(row.invoiceId) && Boolean(row.xeroFinalBillId));
+
+        let refreshed = 0;
+        let unavailable = 0;
+        let failed = 0;
+        const processedIds = new Set<number>();
+
+        // Sequential calls intentionally delegate pacing to the central Xero
+        // request manager. The operation only GETs the exact linked ACCPAY bill
+        // and writes a local report snapshot; it never changes a Xero record.
+        for (const row of candidates) {
+          processedIds.add(row.invoiceId);
+          const checkedAt = new Date().toISOString();
+          try {
+            const bill = await getXeroBillById(row.xeroFinalBillId!, clientId, clientSecret, { forceRefresh: true });
+            const snapshot: BillReconciliationSnapshot = bill
+              ? {
+                  outcome: "found",
+                  checkedAt,
+                  billId: bill.invoiceId,
+                  billNumber: bill.invoiceNumber,
+                  billStatus: bill.status,
+                  contactName: bill.contact?.name ?? null,
+                  currencyCode: bill.currencyCode,
+                  subTotal: bill.subTotal,
+                  totalTax: bill.totalTax,
+                  total: bill.total,
+                }
+              : { outcome: "not_found", checkedAt, error: "The linked Xero ACCPAY bill was not available." };
+            await updateInvoice(row.invoiceId, { xeroBillReconciliationSnapshot: snapshot } as any);
+            if (bill) refreshed += 1;
+            else unavailable += 1;
+          } catch (error: any) {
+            const message = typeof error?.message === "string" ? error.message.slice(0, 500) : "Xero bill refresh failed.";
+            const snapshot: BillReconciliationSnapshot = { outcome: "failed", checkedAt, error: message };
+            await updateInvoice(row.invoiceId, { xeroBillReconciliationSnapshot: snapshot } as any);
+            failed += 1;
+          }
+        }
+
+        return {
+          requested: requestedIds.size,
+          refreshed,
+          unavailable,
+          failed,
+          skipped: requestedIds.size - processedIds.size,
+        };
+      }),
   }),
 
   // ─── PO Requests (Vtiger → Xero) ─────────────────────────────────────────────

@@ -15,9 +15,15 @@ const tenantTails = new Map<string, Promise<void>>();
 const tenantLastRequestAt = new Map<string, number>();
 const inFlightReads = new Map<string, Promise<unknown>>();
 
-/** A 404 for a PO verification lookup is an ordinary business result, not an operational outage. */
-function isExpectedPurchaseOrderNotFound(operationName: string, error: any): boolean {
-  return error?.response?.status === 404 && operationName.startsWith("GET purchase-order:");
+/**
+ * A 404 while verifying a PO or refreshing a locally linked bill is a normal
+ * business result (missing/voided record), not an operational outage.
+ */
+function isExpectedXeroNotFound(operationName: string, error: any): boolean {
+  return error?.response?.status === 404 && (
+    operationName.startsWith("GET purchase-order:") ||
+    operationName.startsWith("GET invoice-id:")
+  );
 }
 
 function isTransientGatewayFailure(error: any): boolean {
@@ -145,7 +151,7 @@ export async function runXeroRequest<T>(
           await wait(1_000);
           continue;
         }
-        if (!isExpectedPurchaseOrderNotFound(operationName, error)) {
+        if (!isExpectedXeroNotFound(operationName, error)) {
           reportWorkflowFailureSafely({
             workflowType: "xero-api",
             recordKey: `xero:${auth.tenantId}:${operationName}`,

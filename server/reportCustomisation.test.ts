@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_BILL_RECONCILIATION_COLUMN_ORDER,
   DEFAULT_REPORT_COLUMN_ORDER,
   filterReportRows,
   moveReportColumn,
+  normalizeBillReconciliationColumnOrder,
   normalizeReportColumnOrder,
   reportDateKey,
   reportDateRangeForPreset,
@@ -40,6 +42,12 @@ describe("report customization helpers", () => {
   it("reorders a column without losing other columns", () => {
     expect(moveReportColumn(DEFAULT_REPORT_COLUMN_ORDER, "variance", "invoice"))
       .toEqual(["variance", "invoice", "supplier", "invoiceAmount", "poTotal", "approval"]);
+  });
+
+  it("normalizes the independent bill reconciliation column layout", () => {
+    expect(normalizeBillReconciliationColumnOrder(["difference", "xeroBill", "unknown"]))
+      .toEqual(["difference", "xeroBill", "invoice", "supplier", "invoiceAmount", "billStatus", "xeroAmount", "reconciliationStatus", "lastReconciled"]);
+    expect(normalizeBillReconciliationColumnOrder(undefined)).toEqual(DEFAULT_BILL_RECONCILIATION_COLUMN_ORDER);
   });
 
   it("creates an inclusive last-30-days range", () => {

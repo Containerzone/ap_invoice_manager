@@ -149,6 +149,9 @@ export const invoices = mysqlTable("invoices", {
   xeroFinalBillId: varchar("xeroFinalBillId", { length: 64 }),
   xeroFinalBillNumber: varchar("xeroFinalBillNumber", { length: 100 }),
   pdfAttachedToXero: boolean("pdfAttachedToXero").default(false),
+  // Read-only snapshot of the exact linked ACCPAY bill used by the Reports
+  // reconciliation tab. Updated only by an explicit reconciliation refresh.
+  xeroBillReconciliationSnapshot: json("xeroBillReconciliationSnapshot"),
 
   // Archive (paid invoices)
   archivedAt: timestamp("archivedAt"),

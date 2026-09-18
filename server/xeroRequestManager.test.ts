@@ -152,6 +152,19 @@ describe("central Xero request manager", () => {
     expect(mockReportWorkflowFailureSafely).not.toHaveBeenCalled();
   });
 
+  it("does not create an operational alert when a locally linked Xero bill is unavailable", async () => {
+    vi.mocked(getXeroToken).mockResolvedValue({ tenantId: "tenant-linked-bill-not-found", rateLimitPausedUntil: null } as any);
+    const operation = vi.fn().mockRejectedValue({ response: { status: 404 }, message: "Request failed with status code 404" });
+
+    await expect(runXeroRequest(
+      { token: "token", tenantId: "tenant-linked-bill-not-found" },
+      "GET invoice-id:bill-guid",
+      operation,
+    )).rejects.toEqual(expect.objectContaining({ response: { status: 404 } }));
+
+    expect(mockReportWorkflowFailureSafely).not.toHaveBeenCalled();
+  });
+
   it("still creates an operational alert for an unexpected Xero request failure", async () => {
     vi.mocked(getXeroToken).mockResolvedValue({ tenantId: "tenant-server-error", rateLimitPausedUntil: null } as any);
     const operation = vi.fn().mockRejectedValue({ response: { status: 500 }, message: "Request failed with status code 500" });

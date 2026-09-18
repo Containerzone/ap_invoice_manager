@@ -387,6 +387,12 @@
 - [x] Add persistent column visibility and order preferences with drag-and-drop and keyboard-accessible rearrangement controls
 - [x] Add coverage for filters, legacy date handling, quick ranges and saved column-layout normalization
 
+## Xero Bill Reconciliation Report (Session 19)
+- [x] Add a separate report tab comparing GST-inclusive supplier invoice totals against the exact linked Xero ACCPAY bill total
+- [x] Add supplier, issue-date and reconciliation-status filters, result-aware KPIs, drill-down detail and independent saved column layouts
+- [x] Add a paced Refresh from Xero action that reads only linked bill IDs, writes timestamped local snapshots and never creates or changes Xero records
+- [x] Persist reconciliation snapshots, suppress alerts for expected linked-bill 404s, and add regression coverage for exact-ID refresh and unlinked invoice exclusion
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values

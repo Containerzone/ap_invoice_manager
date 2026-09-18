@@ -362,6 +362,59 @@ export async function findXeroBillByInvoiceNumber(
 }
 
 /**
+ * Retrieves exactly one linked Xero supplier bill by its immutable InvoiceID.
+ * Unlike a number search this cannot select a similarly numbered ACCREC
+ * customer invoice or a different supplier's bill. It is read-only and used
+ * solely by the reconciliation workbench.
+ */
+export async function getXeroBillById(
+  invoiceId: string,
+  clientId: string,
+  clientSecret: string,
+  options: { forceRefresh?: boolean } = {},
+): Promise<XeroBill | null> {
+  const auth = await getValidAccessToken(clientId, clientSecret);
+  const safeInvoiceId = invoiceId.trim();
+  if (!safeInvoiceId) return null;
+
+  try {
+    const data = await runCachedXeroGet<any>(
+      auth,
+      `invoice-id:${safeInvoiceId}`,
+      XERO_CACHE_TTL.invoiceSearch,
+      () => axios.get(`${XERO_API_BASE}/Invoices/${encodeURIComponent(safeInvoiceId)}`, {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "Xero-tenant-id": auth.tenantId,
+          Accept: "application/json",
+        },
+      }),
+      { forceRefresh: options.forceRefresh },
+    );
+    const invoice = data?.Invoices?.[0];
+    // ACCREC or any wrong ID must never be presented as a reconciled AP bill.
+    if (!invoice || invoice.Type !== "ACCPAY") return null;
+    return {
+      invoiceId: invoice.InvoiceID,
+      invoiceNumber: invoice.InvoiceNumber,
+      reference: invoice.Reference ?? "",
+      contact: { contactId: invoice.Contact?.ContactID, name: invoice.Contact?.Name },
+      date: invoice.DateString ?? invoice.Date,
+      dueDate: invoice.DueDateString ?? invoice.DueDate,
+      subTotal: parseFloat(invoice.SubTotal ?? "0"),
+      totalTax: parseFloat(invoice.TotalTax ?? "0"),
+      total: parseFloat(invoice.Total ?? "0"),
+      status: invoice.Status,
+      currencyCode: invoice.CurrencyCode ?? "AUD",
+    };
+  } catch (error: any) {
+    if (error?.response?.status === 404) return null;
+    console.error("[Xero] Get linked bill by ID failed:", error?.response?.data ?? error?.message);
+    throw error;
+  }
+}
+
+/**
  * Check if a bill already exists in Xero for the given invoice number,
  * with fuzzy supplier name matching to catch manual records with name variations.
  * Returns the matching bill with a flag indicating if the supplier name matched.

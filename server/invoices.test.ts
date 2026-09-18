@@ -34,6 +34,8 @@ vi.mock("./db", () => ({
   getDashboardMetrics: vi.fn().mockResolvedValue({
     total: 0, flagged: 0, openQueries: 0, resolvedThisMonth: 0,
   }),
+  getPoVarianceReport: vi.fn().mockResolvedValue([]),
+  getXeroBillReconciliationReport: vi.fn().mockResolvedValue([]),
   getXeroToken: vi.fn().mockResolvedValue(null),
   upsertXeroToken: vi.fn().mockResolvedValue(undefined),
   deleteXeroToken: vi.fn().mockResolvedValue(undefined),
@@ -72,6 +74,7 @@ vi.mock("./xeroService", () => ({
   }),
   getXeroTenants: vi.fn().mockResolvedValue([{ tenantId: "t1", tenantName: "Test Org" }]),
   findXeroBillByInvoiceNumber: vi.fn().mockResolvedValue(null),
+  getXeroBillById: vi.fn().mockResolvedValue(null),
   findXeroPurchaseOrderByNumber: vi.fn().mockResolvedValue(null),
   createXeroDraftBill: vi.fn().mockResolvedValue({ invoiceId: "x1", invoiceNumber: "BILL-001" }),
   findOrCreateXeroContact: vi.fn().mockResolvedValue("contact-id"),
@@ -927,5 +930,106 @@ describe("invoices.verifyWithXero — BILLED PO flagging", () => {
       99,
       expect.objectContaining({ status: "verified" })
     );
+  });
+});
+
+describe("reports.billReconciliation", () => {
+  const linkedRow = {
+    invoiceId: 507,
+    invoiceNumber: "INV-507",
+    supplierName: "Test Supplier",
+    invoiceDate: "2026-09-18",
+    status: "resolved",
+    extractedTotal: "110.00",
+    extractedCurrency: "AUD",
+    xeroFinalBillId: "bill-guid-507",
+    xeroFinalBillNumber: "BILL-507",
+    xeroBillReconciliationSnapshot: null,
+  };
+
+  it("shows an explicitly linked bill as needing a refresh until a local snapshot exists", async () => {
+    const { getXeroBillReconciliationReport } = await import("./db");
+    vi.mocked(getXeroBillReconciliationReport).mockResolvedValueOnce([linkedRow] as any);
+
+    const result = await appRouter.createCaller(makeUserCtx()).reports.billReconciliation();
+
+    expect(result).toEqual([expect.objectContaining({
+      invoiceId: 507,
+      xeroBillId: "bill-guid-507",
+      reconciliationStatus: "needs_refresh",
+      difference: null,
+    })]);
+  });
+
+  it("refreshes only the exact linked bill ID and writes a local read-only snapshot", async () => {
+    const { getXeroBillReconciliationReport, updateInvoice } = await import("./db");
+    const { getXeroBillById } = await import("./xeroService");
+    const originalId = process.env.XERO_CLIENT_ID;
+    const originalSecret = process.env.XERO_CLIENT_SECRET;
+    process.env.XERO_CLIENT_ID = "test-client";
+    process.env.XERO_CLIENT_SECRET = "test-secret";
+    vi.mocked(getXeroBillReconciliationReport).mockResolvedValueOnce([linkedRow] as any);
+    vi.mocked(getXeroBillById).mockResolvedValueOnce({
+      invoiceId: "bill-guid-507",
+      invoiceNumber: "BILL-507",
+      reference: "INV-507",
+      contact: { contactId: "contact-1", name: "Test Supplier" },
+      date: "2026-09-18",
+      dueDate: "2026-10-18",
+      subTotal: 100,
+      totalTax: 10,
+      total: 110,
+      status: "AUTHORISED",
+      currencyCode: "AUD",
+    } as any);
+    vi.mocked(updateInvoice).mockClear();
+
+    try {
+      await expect(appRouter.createCaller(makeUserCtx()).reports.refreshBillReconciliation({ invoiceIds: [507] }))
+        .resolves.toEqual({ requested: 1, refreshed: 1, unavailable: 0, failed: 0, skipped: 0 });
+
+      expect(vi.mocked(getXeroBillById)).toHaveBeenCalledWith(
+        "bill-guid-507",
+        "test-client",
+        "test-secret",
+        { forceRefresh: true },
+      );
+      expect(vi.mocked(updateInvoice)).toHaveBeenCalledWith(507, expect.objectContaining({
+        xeroBillReconciliationSnapshot: expect.objectContaining({
+          outcome: "found",
+          billId: "bill-guid-507",
+          total: 110,
+        }),
+      }));
+    } finally {
+      if (originalId === undefined) delete process.env.XERO_CLIENT_ID;
+      else process.env.XERO_CLIENT_ID = originalId;
+      if (originalSecret === undefined) delete process.env.XERO_CLIENT_SECRET;
+      else process.env.XERO_CLIENT_SECRET = originalSecret;
+    }
+  });
+
+  it("skips an unlinked invoice without making any Xero request", async () => {
+    const { getXeroBillReconciliationReport, updateInvoice } = await import("./db");
+    const { getXeroBillById } = await import("./xeroService");
+    const originalId = process.env.XERO_CLIENT_ID;
+    const originalSecret = process.env.XERO_CLIENT_SECRET;
+    process.env.XERO_CLIENT_ID = "test-client";
+    process.env.XERO_CLIENT_SECRET = "test-secret";
+    vi.mocked(getXeroBillReconciliationReport).mockResolvedValueOnce([{ ...linkedRow, invoiceId: 508, xeroFinalBillId: null }] as any);
+    vi.mocked(getXeroBillById).mockClear();
+    vi.mocked(updateInvoice).mockClear();
+
+    try {
+      await expect(appRouter.createCaller(makeUserCtx()).reports.refreshBillReconciliation({ invoiceIds: [508] }))
+        .resolves.toEqual({ requested: 1, refreshed: 0, unavailable: 0, failed: 0, skipped: 1 });
+      expect(vi.mocked(getXeroBillById)).not.toHaveBeenCalled();
+      expect(vi.mocked(updateInvoice)).not.toHaveBeenCalled();
+    } finally {
+      if (originalId === undefined) delete process.env.XERO_CLIENT_ID;
+      else process.env.XERO_CLIENT_ID = originalId;
+      if (originalSecret === undefined) delete process.env.XERO_CLIENT_SECRET;
+      else process.env.XERO_CLIENT_SECRET = originalSecret;
+    }
   });
 });
