@@ -381,6 +381,12 @@
 - [x] Make structured line POs and a manually saved PO list (including an empty list) authoritative across extraction, verification, approval and Xero resolution
 - [x] Prioritise explicit #PO references over preceding job/deal identifiers in customer-reference text and add regression coverage
 
+## Customizable PO Variance Reports (Session 19)
+- [x] Add supplier and inclusive invoice-issue-date range filtering, with month, 30-day and 90-day quick ranges
+- [x] Recalculate report KPI cards and result counts from the currently filtered population
+- [x] Add persistent column visibility and order preferences with drag-and-drop and keyboard-accessible rearrangement controls
+- [x] Add coverage for filters, legacy date handling, quick ranges and saved column-layout normalization
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values
