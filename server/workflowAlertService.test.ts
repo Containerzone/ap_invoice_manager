@@ -64,7 +64,7 @@ describe("workflow failure reporting", () => {
 
     expect(mockSendOperationalAlertEmail).toHaveBeenCalledWith(expect.objectContaining({
       recipients: getWorkflowAlertRecipients(),
-      subject: "AP workflow failure: PO creation failed for D702837",
+      subject: "Supplier Invoice Manager workflow failure: PO creation failed for D702837",
     }));
     expect(mockUpdateWorkflowFailureAlertAttempt).toHaveBeenCalledWith(77, undefined);
   });

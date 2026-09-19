@@ -9,6 +9,7 @@ import {
   Settings as SettingsIcon, Unlink, Zap, Mail, Shield, AlertTriangle
 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { APP_NAME } from "@shared/branding";
 
 export default function Settings() {
   const { user } = useAuth();
@@ -288,7 +289,7 @@ export default function Settings() {
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
               <p className="text-xs text-muted-foreground">Application</p>
-              <p className="font-medium text-foreground">AP Invoice Manager</p>
+              <p className="font-medium text-foreground">{APP_NAME}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Organisation</p>

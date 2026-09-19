@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { createEmailLog, createConversationNote, updateEmailLogStatus } from "./db";
+import { ORGANIZATION_APP_NAME, WORKFLOW_MONITOR_NAME } from "../shared/branding";
 
 export interface SendEmailOptions {
   invoiceId: number;
@@ -42,7 +43,7 @@ export async function sendDisputeEmail(opts: SendEmailOptions): Promise<{ succes
     });
 
     await transporter.sendMail({
-      from: `"ContainerZone AP" <${opts.fromAddress ?? FROM_ADDRESS}>`,
+      from: `"ContainerZone Supplier Invoices" <${opts.fromAddress ?? FROM_ADDRESS}>`,
       to: opts.to,
       cc: opts.cc,
       subject: opts.subject,
@@ -138,8 +139,8 @@ export interface SendInviteEmailOptions {
 export async function sendInviteEmail(opts: SendInviteEmailOptions): Promise<{ success: boolean; error?: string }> {
   const roleLabel = opts.role === "admin" ? "Administrator" : "Staff";
   const displayName = opts.name ? ` ${opts.name}` : "";
-  const subject = `You have been invited to ContainerZone AP Invoice Manager`;
-  const body = `Hello${displayName},\n\nYou have been invited to join the ContainerZone AP Invoice Manager as a ${roleLabel}.\n\nPlease click the link below to sign in and activate your account:\n\n${opts.appUrl}\n\nIf you did not expect this invitation, you can safely ignore this email.\n\nKind regards,\nContainerZone Administration\nadmin@containerzone.com.au`;
+  const subject = `You have been invited to ${ORGANIZATION_APP_NAME}`;
+  const body = `Hello${displayName},\n\nYou have been invited to join the ${ORGANIZATION_APP_NAME} as a ${roleLabel}.\n\nPlease click the link below to sign in and activate your account:\n\n${opts.appUrl}\n\nIf you did not expect this invitation, you can safely ignore this email.\n\nKind regards,\nContainerZone Administration\nadmin@containerzone.com.au`;
 
   try {
     const transporter = nodemailer.createTransport({
@@ -149,7 +150,7 @@ export async function sendInviteEmail(opts: SendInviteEmailOptions): Promise<{ s
       auth: { user: opts.smtpUser, pass: opts.smtpPass },
     });
     await transporter.sendMail({
-      from: `"ContainerZone AP" <${opts.fromAddress ?? FROM_ADDRESS}>`,
+      from: `"ContainerZone Supplier Invoices" <${opts.fromAddress ?? FROM_ADDRESS}>`,
       to: opts.to,
       subject,
       html: body.replace(/\n/g, "<br>"),
@@ -179,7 +180,7 @@ export async function sendOperationalAlertEmail(opts: {
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     });
     await transporter.sendMail({
-      from: `"ContainerZone AP Monitor" <${process.env.SMTP_USER ?? FROM_ADDRESS}>`,
+      from: `"${WORKFLOW_MONITOR_NAME}" <${process.env.SMTP_USER ?? FROM_ADDRESS}>`,
       to: opts.recipients.join(", "),
       subject: opts.subject,
       html: opts.body.replace(/\n/g, "<br>"),

@@ -29,6 +29,7 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { APP_NAME } from "@shared/branding";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard",   path: "/",            adminOnly: false },
@@ -184,7 +185,7 @@ function DashboardLayoutContent({
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-sidebar-foreground truncate leading-none">ContainerZone</p>
-                    <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5">AP Invoice Manager</p>
+                    <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5">{APP_NAME}</p>
                   </div>
                 </div>
               ) : null}

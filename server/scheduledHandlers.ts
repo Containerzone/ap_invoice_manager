@@ -17,6 +17,7 @@ import {
 import { reconcileRecentMicrosoftInvoiceMessages } from "./microsoftGraphWebhook";
 import { getWorkflowAlertRecipients, reportWorkflowFailureSafely } from "./workflowAlertService";
 import { sendOperationalAlertEmail } from "./emailService";
+import { APP_NAME, ORGANIZATION_APP_NAME } from "../shared/branding";
 
 /**
  * Heartbeat handler: /api/scheduled/archive-cleanup
@@ -149,11 +150,11 @@ export async function workflowFailureReconciliationHandler(req: Request, res: Re
       ? `\n\n${failures.length - listedFailures.length} further open failure(s) are available in the Operational Failures page.`
       : "";
     const body = failures.length
-      ? `ContainerZone AP Invoice Manager daily operational reconciliation\n\nThere are ${failures.length} open workflow failure(s):\n\n${listedFailures.join("\n\n")}${remaining}\n\nReview and resolve these records in the Operational Failures page.`
-      : "ContainerZone AP Invoice Manager daily operational reconciliation\n\nNo open workflow failures were recorded. All monitored workflows are currently clear.";
+      ? `${ORGANIZATION_APP_NAME} daily operational reconciliation\n\nThere are ${failures.length} open workflow failure(s):\n\n${listedFailures.join("\n\n")}${remaining}\n\nReview and resolve these records in the Operational Failures page.`
+      : `${ORGANIZATION_APP_NAME} daily operational reconciliation\n\nNo open workflow failures were recorded. All monitored workflows are currently clear.`;
     const delivery = await sendOperationalAlertEmail({
       recipients: getWorkflowAlertRecipients(),
-      subject: `AP daily reconciliation — ${failures.length} open workflow failure${failures.length === 1 ? "" : "s"}`,
+      subject: `${APP_NAME} daily reconciliation — ${failures.length} open workflow failure${failures.length === 1 ? "" : "s"}`,
       body,
     });
     if (!delivery.success) throw new Error(delivery.error ?? "Daily reconciliation email could not be delivered");

@@ -58,7 +58,7 @@ describe("workflowFailureReconciliationHandler", () => {
 
     expect(mockSendAlert).toHaveBeenCalledWith(expect.objectContaining({
       recipients: ["alerts@example.com"],
-      subject: "AP daily reconciliation — 1 open workflow failure",
+      subject: "Supplier Invoice Manager daily reconciliation — 1 open workflow failure",
     }));
     expect(mockUpdateSettings).toHaveBeenCalledWith(expect.objectContaining({ lastDailySummaryAt: expect.any(Date) }));
     expect(response.json).toHaveBeenCalledWith({ ok: true, openFailureCount: 1 });

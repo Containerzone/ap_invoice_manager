@@ -5,6 +5,7 @@ import {
   updateWorkflowFailureAlertAttempt,
 } from "./db";
 import { sendOperationalAlertEmail } from "./emailService";
+import { APP_NAME, ORGANIZATION_APP_NAME } from "../shared/branding";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -40,7 +41,7 @@ export async function reportWorkflowFailure(input: WorkflowFailureInput): Promis
 
   const recipients = getWorkflowAlertRecipients();
   const body = [
-    "ContainerZone AP Invoice Manager has recorded an operational workflow failure.",
+    `${ORGANIZATION_APP_NAME} has recorded an operational workflow failure.`,
     "",
     `Workflow: ${failure.workflowType}`,
     `Record: ${failure.recordKey}`,
@@ -48,11 +49,11 @@ export async function reportWorkflowFailure(input: WorkflowFailureInput): Promis
     `Error: ${failure.errorMessage}`,
     formatDetails((failure.details ?? undefined) as Record<string, unknown> | undefined),
     "",
-    "Open the Operational Failures page in the AP Invoice Manager to review and resolve this alert.",
+    `Open the Operational Failures page in ${APP_NAME} to review and resolve this alert.`,
   ].filter(Boolean).join("\n");
   const delivery = await sendOperationalAlertEmail({
     recipients,
-    subject: `AP workflow failure: ${failure.title}`,
+    subject: `${APP_NAME} workflow failure: ${failure.title}`,
     body,
   });
   await updateWorkflowFailureAlertAttempt(failure.id, delivery.success ? undefined : delivery.error);

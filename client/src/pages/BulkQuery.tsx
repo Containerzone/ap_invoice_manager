@@ -147,7 +147,7 @@ export default function BulkQuery() {
       `We would appreciate your prompt response to resolve these matters.\n\n` +
       `Please do not hesitate to contact us if you require any further information.\n\n` +
       `Kind regards,\n` +
-      `Container Zone Accounts Payable\n` +
+      `ContainerZone Supplier Invoices\n` +
       `admin@containerzone.com.au`
     );
 

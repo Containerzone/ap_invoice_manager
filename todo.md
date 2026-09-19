@@ -398,6 +398,11 @@
 - [x] Add a full-height magnified reading dialog that keeps the current zoom level and retains the existing separate-document Open action
 - [x] Add regression coverage for controlled PDF viewer URLs and zoom-level boundaries
 
+## Supplier Invoice Manager Branding (Session 19)
+- [x] Rename the deployed browser title and all in-app product labels from AP Invoice Manager to Supplier Invoice Manager
+- [x] Update invitations, operational-alert display labels and query default signatures while retaining all existing email addresses, domain names and integrations
+- [x] Add automated coverage confirming the deployed product-title configuration and shared branding labels
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values

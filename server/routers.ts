@@ -1554,7 +1554,7 @@ export const appRouter = router({
             : null,
           containerNumbers,
           poNumber: invoice.extractedPoNumber,
-          senderName: ctx.user.name ?? "Accounts Payable",
+          senderName: ctx.user.name ?? "ContainerZone Supplier Invoices",
           queryPoints,
         });
       }),
@@ -2330,7 +2330,7 @@ export const appRouter = router({
         name: "workflow-failure-daily-reconciliation",
         cron: "0 0 21 * * *",
         path: "/api/scheduled/workflow-failure-reconciliation",
-        description: "Sends the daily ContainerZone AP operational failure reconciliation summary.",
+        description: "Sends the daily ContainerZone Supplier Invoice operational failure reconciliation summary.",
       }, decodeURIComponent(sessionToken));
       await updateWorkflowMonitoringSettings({ dailySummaryCronTaskUid: job.taskUid });
       return { enabled: true, alreadyEnabled: false, nextExecutionAt: job.nextExecutionAt ?? null };
