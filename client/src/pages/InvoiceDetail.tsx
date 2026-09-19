@@ -14,6 +14,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { SupplierCombobox } from "@/components/SupplierCombobox";
 import { formatCurrency, formatRelativeTime, parseContainerNumbers } from "@/lib/invoiceUtils";
 import { calculateInvoiceLineTotals } from "@shared/invoiceLineTotals";
+import { getPdfPreviewUrl, nextPdfZoom, type PdfPreviewZoom } from "@/lib/pdfPreview";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
@@ -22,7 +23,7 @@ import {
   Building2, Calendar, Hash, DollarSign, Container,
   Loader2, Plus, Trash2, Phone, MapPin, User, UserPlus,
   ChevronLeft, ChevronRight, List, Pencil, X, Save,
-  ShieldAlert, ShieldCheck, Paperclip,
+  ShieldAlert, ShieldCheck, Paperclip, ZoomIn, ZoomOut, Maximize2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getResolveConfirmationBlockers } from "@/lib/resolveConfirmations";
@@ -370,6 +371,14 @@ export default function InvoiceDetail() {
   const [emailBody, setEmailBody] = useState("");
   const [resolutionNotes, setResolutionNotes] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pdfZoom, setPdfZoom] = useState<PdfPreviewZoom>(100);
+  const [pdfMagnifierOpen, setPdfMagnifierOpen] = useState(false);
+
+  // Prevent a magnified setting from carrying over when navigating between invoices.
+  useEffect(() => {
+    setPdfZoom(100);
+    setPdfMagnifierOpen(false);
+  }, [invoiceId]);
 
   // ── Edit mode state ───────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
@@ -796,6 +805,7 @@ export default function InvoiceDetail() {
   }
 
   const { invoice, lineItems, notes, emails, supplier } = data;
+  const pdfPreviewUrl = getPdfPreviewUrl(invoice.fileUrl, pdfZoom);
   const containers = parseContainerNumbers(invoice.extractedContainerNumbers);
   // The line footer is deliberately calculated from the visible line items,
   // not from the separately extracted invoice-header figures. Line amounts
@@ -1874,21 +1884,60 @@ export default function InvoiceDetail() {
                   <FileText className="h-4 w-4 text-muted-foreground" />
                   Invoice PDF
                 </CardTitle>
-                <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => window.open(invoice.fileUrl, "_blank")}>
-                  <ExternalLink className="h-3 w-3" />
-                  Open
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  <div className="hidden sm:flex items-center rounded-md border bg-muted/30 p-0.5" role="group" aria-label="Invoice preview zoom">
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setPdfZoom((current) => nextPdfZoom(current, -1))} disabled={pdfZoom === 100} title="Zoom out preview" aria-label="Zoom out invoice preview"><ZoomOut className="h-3 w-3" /></Button>
+                    <Button variant="ghost" size="sm" className="h-6 min-w-11 px-1 text-[10px] tabular-nums" onClick={() => setPdfZoom(100)} title="Reset to 100%">{pdfZoom}%</Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setPdfZoom((current) => nextPdfZoom(current, 1))} disabled={pdfZoom === 200} title="Zoom in preview" aria-label="Zoom in invoice preview"><ZoomIn className="h-3 w-3" /></Button>
+                  </div>
+                  <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => setPdfMagnifierOpen(true)} title="Open large magnified invoice preview" aria-label="Magnify invoice preview">
+                    <ZoomIn className="h-3 w-3" />
+                    <span className="hidden sm:inline">Magnify</span>
+                  </Button>
+                  <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => window.open(invoice.fileUrl, "_blank")} aria-label="Open invoice PDF in a new tab">
+                    <ExternalLink className="h-3 w-3" />
+                    <span className="hidden sm:inline">Open</span>
+                  </Button>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">{invoice.originalFileName}</p>
             </CardHeader>
             <CardContent className="p-0 pb-4 px-4">
               <div className="rounded-lg overflow-hidden border bg-muted/20" style={{ height: "560px" }}>
-                <iframe src={`${invoice.fileUrl}#toolbar=0&navpanes=0&scrollbar=1`} className="w-full h-full" title="Invoice PDF Preview" style={{ border: "none" }} />
+                <iframe key={`inline-${pdfZoom}`} src={pdfPreviewUrl} className="w-full h-full" title="Invoice PDF Preview" style={{ border: "none" }} />
               </div>
             </CardContent>
           </Card>
         </div>
       </div>
+
+      {/* Larger reading surface for invoices whose supplier text is too small in the side preview. */}
+      <Dialog open={pdfMagnifierOpen} onOpenChange={setPdfMagnifierOpen}>
+        <DialogContent className="flex h-[92vh] max-w-6xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="border-b px-5 py-4 pr-12">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 text-left">
+                <DialogTitle className="flex items-center gap-2 text-base"><ZoomIn className="h-4 w-4" /> Magnified invoice preview</DialogTitle>
+                <p className="mt-1 truncate text-xs text-muted-foreground">{invoice.originalFileName}</p>
+              </div>
+              <div className="flex items-center rounded-md border bg-muted/30 p-0.5" role="group" aria-label="Magnified invoice zoom">
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setPdfZoom((current) => nextPdfZoom(current, -1))} disabled={pdfZoom === 100} title="Zoom out" aria-label="Zoom out magnified invoice"><ZoomOut className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="sm" className="h-8 min-w-14 px-2 text-xs tabular-nums" onClick={() => setPdfZoom(100)} title="Reset to 100%">{pdfZoom}%</Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setPdfZoom((current) => nextPdfZoom(current, 1))} disabled={pdfZoom === 200} title="Zoom in" aria-label="Zoom in magnified invoice"><ZoomIn className="h-3.5 w-3.5" /></Button>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 bg-muted/40 p-3 sm:p-4">
+            <div className="h-full overflow-hidden rounded-lg border bg-background shadow-sm">
+              <iframe key={`magnified-${pdfZoom}`} src={pdfPreviewUrl} className="h-full w-full" title="Magnified Invoice PDF Preview" style={{ border: "none" }} />
+            </div>
+          </div>
+          <div className="flex items-center justify-between border-t px-5 py-3 text-xs text-muted-foreground">
+            <span>Use the zoom buttons to change document scale; scroll within the document to read each page.</span>
+            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => window.open(invoice.fileUrl, "_blank")}><Maximize2 className="h-3.5 w-3.5" /> Open separately</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Activity & Notes ── */}
       <Card className="border shadow-sm">

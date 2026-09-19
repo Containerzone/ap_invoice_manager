@@ -393,6 +393,11 @@
 - [x] Add a paced Refresh from Xero action that reads only linked bill IDs, writes timestamped local snapshots and never creates or changes Xero records
 - [x] Persist reconciliation snapshots, suppress alerts for expected linked-bill 404s, and add regression coverage for exact-ID refresh and unlinked invoice exclusion
 
+## Invoice PDF Magnifier (Session 19)
+- [x] Add controlled 100%–200% zoom steps to the invoice-side PDF preview with reset and accessible controls
+- [x] Add a full-height magnified reading dialog that keeps the current zoom level and retains the existing separate-document Open action
+- [x] Add regression coverage for controlled PDF viewer URLs and zoom-level boundaries
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values
