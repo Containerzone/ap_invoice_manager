@@ -21,6 +21,25 @@ export function resolveXeroBillAccountCode(accountCode?: string | null): string 
 }
 
 /**
+ * A gateway timeout can mean Xero accepted an idempotent bill-create request
+ * but failed to return its response. Never submit a second POST in that case:
+ * make one fresh read-only lookup instead and use the exact existing bill when
+ * it is visible. All other failures remain unchanged and actionable.
+ */
+export async function recoverExistingBillAfterTransientCreateFailure<T>(
+  error: any,
+  findExisting: () => Promise<T | null>,
+): Promise<T | null> {
+  if (![502, 503, 504].includes(error?.response?.status)) return null;
+  try {
+    return await findExisting();
+  } catch (recoveryError: any) {
+    console.warn("[Xero] Could not confirm the outcome of a transient bill-create failure:", recoveryError?.message ?? recoveryError);
+    return null;
+  }
+}
+
+/**
  * Xero can return UpdatedDateUTC either as an ISO timestamp or its legacy
  * /Date(UnixMilliseconds+offset)/ representation. Never allow an unparseable
  * source value to abort PO verification merely while preparing a display date.
@@ -286,7 +305,8 @@ function supplierNamesMatch(a: string, b: string): boolean {
 async function findExistingXeroBill(
   invoiceNumber: string,
   auth: { token: string; tenantId: string },
-  supplierName?: string
+  supplierName?: string,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<any | null> {
   const headers = {
     Authorization: `Bearer ${auth.token}`,
@@ -327,6 +347,7 @@ async function findExistingXeroBill(
       headers,
       params: { InvoiceNumbers: invoiceNumber },
     }),
+    { forceRefresh: options.forceRefresh },
   );
   return data?.Invoices?.find((invoice: any) => isMatch(invoice)) ?? null;
 }
@@ -1289,23 +1310,38 @@ export async function convertPOsToBill(
     }
 
     const billRequest = { Invoices: [payload] };
-    const response = await runXeroRequest(
-      auth,
-      "create bill from purchase orders",
-      () => axios.post(
-        `${XERO_API_BASE}/Invoices`,
-        billRequest,
-        {
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Xero-tenant-id": auth.tenantId,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            "Idempotency-Key": createXeroIdempotencyKey("po-bill", billRequest),
-          },
-        }
-      ),
-    );
+    let response;
+    try {
+      response = await runXeroRequest(
+        auth,
+        "create bill from purchase orders",
+        () => axios.post(
+          `${XERO_API_BASE}/Invoices`,
+          billRequest,
+          {
+            headers: {
+              Authorization: `Bearer ${auth.token}`,
+              "Xero-tenant-id": auth.tenantId,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              "Idempotency-Key": createXeroIdempotencyKey("po-bill", billRequest),
+            },
+          }
+        ),
+      );
+    } catch (createError: any) {
+      const recovered = await recoverExistingBillAfterTransientCreateFailure(createError, async () => {
+        // The pre-flight null result may be cached. Remove it before the
+        // post-timeout read so the lookup reflects Xero's actual outcome.
+        await invalidateXeroCache(auth, `invoice-number:${data.invoiceNumber.trim().toUpperCase()}`);
+        return findExistingXeroBill(data.invoiceNumber, auth, data.supplierName, { forceRefresh: true });
+      });
+      if (recovered) {
+        console.warn(`[Xero] Bill creation response timed out, but confirmed existing bill ${recovered.InvoiceNumber} for ${data.invoiceNumber}; not submitting another create request.`);
+        return { invoiceId: recovered.InvoiceID, invoiceNumber: recovered.InvoiceNumber };
+      }
+      throw createError;
+    }
     const created = response.data?.Invoices?.[0];
     if (!created) throw new Error("Xero returned no invoice in response");
     // Check for Xero-level validation errors even on HTTP 200

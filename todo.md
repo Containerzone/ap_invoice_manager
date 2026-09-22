@@ -357,6 +357,11 @@
 - [x] Add and validate duplicate-safe attachment recovery behavior if the timeout leaves the PDF absent in Xero
 - [x] Publish the retry safeguard and reattach the original PNI-757069 PDF to its existing Xero bill without creating a new bill
 
+## Xero Bill-Creation Gateway Timeout (Session 19)
+- [x] Investigate the 22 September create-bill 504 and confirm the affected Reef Group bill 00061043 exists once in Xero with the exact local total
+- [x] Add a future-safe unknown-outcome recovery path: after a 502/503/504, perform one fresh read-only exact invoice/supplier lookup and adopt the bill only when it exists; never issue a second create request
+- [ ] Publish the duplicate-safe bill-creation timeout recovery
+
 ## Single-PO Invoice Variance Correction (Session 19)
 - [ ] Ensure a single-PO verification compares the complete GST-inclusive invoice total, including ancillary lines without a repeated PO number
 - [ ] Correct and revalidate invoice 3030 / PO AD702882 without creating or modifying a Xero bill or purchase order
