@@ -403,6 +403,11 @@
 - [x] Update invitations, operational-alert display labels and query default signatures while retaining all existing email addresses, domain names and integrations
 - [x] Add automated coverage confirming the deployed product-title configuration and shared branding labels
 
+## Microsoft Graph Renewal Resilience (Session 19)
+- [x] Diagnose the 22 September renewal alert as transient database-read failures; confirm subsequent renewals succeeded and the active subscription remains valid
+- [x] Add and test one bounded retry for the state-read only, without retrying Graph writes or subscription changes
+- [ ] Publish the renewal-read retry safeguard and retain the existing 12-hour renewal schedule
+
 ## Invoice Date Formatting Error (Session 19)
 - [x] Trace the “Invalid time value” toast on invoice 00013060 and identify the failing date parser or formatter
 - [x] Add and validate safe display handling for DD-MM-YY invoice dates and unparseable legacy date values

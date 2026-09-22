@@ -18,6 +18,7 @@ import { reconcileRecentMicrosoftInvoiceMessages } from "./microsoftGraphWebhook
 import { getWorkflowAlertRecipients, reportWorkflowFailureSafely } from "./workflowAlertService";
 import { sendOperationalAlertEmail } from "./emailService";
 import { APP_NAME, ORGANIZATION_APP_NAME } from "../shared/branding";
+import { retryReadOnce } from "./transientReadRetry";
 
 /**
  * Heartbeat handler: /api/scheduled/archive-cleanup
@@ -59,7 +60,9 @@ export async function microsoftSubscriptionRenewalHandler(req: Request, res: Res
     const user = await sdk.authenticateRequest(req);
     if (!user.isCron || !user.taskUid) return res.status(403).json({ error: "cron-only" });
     const config = getMicrosoftGraphConfig();
-    const state = await getMicrosoftGraphState(config.mailbox);
+    // A brief DB connection interruption must not turn into a failed Graph
+    // renewal. Only this read is retried; subscription updates remain single-shot.
+    const state = await retryReadOnce(() => getMicrosoftGraphState(config.mailbox));
     if (state?.scheduleCronTaskUid && state.scheduleCronTaskUid !== user.taskUid) {
       return res.status(403).json({ error: "unexpected-renewal-task" });
     }

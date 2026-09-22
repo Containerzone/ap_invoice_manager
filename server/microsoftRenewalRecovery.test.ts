@@ -66,4 +66,26 @@ describe("Microsoft Graph subscription renewal recovery", () => {
     expect(response.json).toHaveBeenCalledWith({ ok: true, recreated: true, subscriptionExpiresAt: "2026-09-16T00:00:00.000Z" });
     expect(mockReportFailure).not.toHaveBeenCalled();
   });
+
+  it("recovers a transient state-read failure before renewing the subscription", async () => {
+    const state = {
+      mailbox: "invoices@containerzone.com.au",
+      subscriptionId: "active-subscription-id",
+      scheduleCronTaskUid: "renewal-task",
+      notificationUrl: "https://apinvmanager-dm3caxom.manus.space/api/microsoft/notifications",
+    };
+    mockGetMicrosoftGraphState
+      .mockRejectedValueOnce(new Error("transient database query failure"))
+      .mockResolvedValueOnce(state);
+    mockRenewSubscription.mockResolvedValue({ id: "active-subscription-id", expirationDateTime: "2026-09-24T00:00:00.000Z" });
+    const response = { status: vi.fn(), json: vi.fn() };
+    response.status.mockReturnValue(response);
+
+    await microsoftSubscriptionRenewalHandler({} as any, response as any);
+
+    expect(mockGetMicrosoftGraphState).toHaveBeenCalledTimes(2);
+    expect(mockRenewSubscription).toHaveBeenCalledWith("active-subscription-id");
+    expect(mockReportFailure).not.toHaveBeenCalled();
+    expect(response.json).toHaveBeenCalledWith({ ok: true, recreated: false, subscriptionExpiresAt: "2026-09-24T00:00:00.000Z" });
+  });
 });
