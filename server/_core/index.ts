@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { registerVtigerWebhook } from "../webhookRoutes";
 import { registerMicrosoftGraphWebhook } from "../microsoftGraphWebhook";
+import { registerInvoicePdfProxy } from "../invoicePdfProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -40,6 +41,7 @@ async function startServer() {
   registerOAuthRoutes(app);
   registerVtigerWebhook(app);
   registerMicrosoftGraphWebhook(app);
+  registerInvoicePdfProxy(app);
   // tRPC API
   app.use(
     "/api/trpc",

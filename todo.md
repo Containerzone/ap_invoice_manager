@@ -403,6 +403,12 @@
 - [x] Add a full-height magnified reading dialog that keeps the current zoom level and retains the existing separate-document Open action
 - [x] Add regression coverage for controlled PDF viewer URLs and zoom-level boundaries
 
+## Invoice PDF Access Reliability (Session 19)
+- [x] Diagnose invoice 5812 as a valid internally stored PDF; confirm no embedded external link, malicious content or user-permission failure
+- [x] Identify the affected browser/network's external CDN redirect to a Philippine CICC block page as the display failure rather than the application HTTPS endpoint
+- [x] Add a same-origin, authenticated PDF streaming route that validates PDF bytes and bypasses the browser-side CDN redirect for preview and Open actions
+- [ ] Validate the secure stream in the deployed app after publication using invoice 5812
+
 ## Supplier Invoice Manager Branding (Session 19)
 - [x] Rename the deployed browser title and all in-app product labels from AP Invoice Manager to Supplier Invoice Manager
 - [x] Update invitations, operational-alert display labels and query default signatures while retaining all existing email addresses, domain names and integrations

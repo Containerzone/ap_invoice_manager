@@ -14,7 +14,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { SupplierCombobox } from "@/components/SupplierCombobox";
 import { formatCurrency, formatRelativeTime, parseContainerNumbers } from "@/lib/invoiceUtils";
 import { calculateInvoiceLineTotals } from "@shared/invoiceLineTotals";
-import { getPdfPreviewUrl, nextPdfZoom, type PdfPreviewZoom } from "@/lib/pdfPreview";
+import { getInvoicePdfUrl, getPdfPreviewUrl, nextPdfZoom, type PdfPreviewZoom } from "@/lib/pdfPreview";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
@@ -805,7 +805,8 @@ export default function InvoiceDetail() {
   }
 
   const { invoice, lineItems, notes, emails, supplier } = data;
-  const pdfPreviewUrl = getPdfPreviewUrl(invoice.fileUrl, pdfZoom);
+  const invoicePdfUrl = getInvoicePdfUrl(invoice.id);
+  const pdfPreviewUrl = getPdfPreviewUrl(invoicePdfUrl, pdfZoom);
   const containers = parseContainerNumbers(invoice.extractedContainerNumbers);
   // The line footer is deliberately calculated from the visible line items,
   // not from the separately extracted invoice-header figures. Line amounts
@@ -1894,7 +1895,7 @@ export default function InvoiceDetail() {
                     <ZoomIn className="h-3 w-3" />
                     <span className="hidden sm:inline">Magnify</span>
                   </Button>
-                  <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => window.open(invoice.fileUrl, "_blank")} aria-label="Open invoice PDF in a new tab">
+                  <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => window.open(invoicePdfUrl, "_blank")} aria-label="Open invoice PDF in a new tab">
                     <ExternalLink className="h-3 w-3" />
                     <span className="hidden sm:inline">Open</span>
                   </Button>
@@ -1934,7 +1935,7 @@ export default function InvoiceDetail() {
           </div>
           <div className="flex items-center justify-between border-t px-5 py-3 text-xs text-muted-foreground">
             <span>Use the zoom buttons to change document scale; scroll within the document to read each page.</span>
-            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => window.open(invoice.fileUrl, "_blank")}><Maximize2 className="h-3.5 w-3.5" /> Open separately</Button>
+            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => window.open(invoicePdfUrl, "_blank")}><Maximize2 className="h-3.5 w-3.5" /> Open separately</Button>
           </div>
         </DialogContent>
       </Dialog>

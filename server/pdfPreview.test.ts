@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getPdfPreviewUrl, nextPdfZoom } from "../client/src/lib/pdfPreview";
+import { getInvoicePdfUrl, getPdfPreviewUrl, nextPdfZoom } from "../client/src/lib/pdfPreview";
 
 describe("PDF preview zoom controls", () => {
+  it("uses a same-origin authenticated endpoint for invoice PDF requests", () => {
+    expect(getInvoicePdfUrl(5812)).toBe("/api/invoices/5812/pdf");
+  });
+
   it("adds a controlled PDF viewer zoom fragment", () => {
     expect(getPdfPreviewUrl("/manus-storage/invoice.pdf", 150))
       .toBe("/manus-storage/invoice.pdf#toolbar=0&navpanes=0&scrollbar=1&zoom=150");
