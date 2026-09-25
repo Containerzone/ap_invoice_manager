@@ -169,6 +169,13 @@
       "when": 1789738342962,
       "tag": "0023_whole_dormammu",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1790341173025,
+      "tag": "0024_adorable_inhumans",
+      "breakpoints": true
     }
   ]
 }

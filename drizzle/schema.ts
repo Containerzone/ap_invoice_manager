@@ -419,3 +419,262 @@ export const workflowMonitoringSettings = mysqlTable("workflow_monitoring_settin
 
 export type WorkflowMonitoringSettings = typeof workflowMonitoringSettings.$inferSelect;
 export type InsertWorkflowMonitoringSettings = typeof workflowMonitoringSettings.$inferInsert;
+
+// ─── Financial Trigger Migration — Shadow-Mode Ledger ─────────────────────────
+//
+// These tables are deliberately additive and independent from AP supplier-bill
+// processing. Phase one records proposed financial actions and validation only;
+// no row in this ledger authorises a Xero write.
+
+export const financialWorkflowRuns = mysqlTable("financial_workflow_runs", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  triggerType: mysqlEnum("triggerType", ["webhook", "scheduled", "manual", "re_evaluation"])
+    .default("manual")
+    .notNull(),
+  sourceSystem: varchar("sourceSystem", { length: 40 }).default("vtiger").notNull(),
+  sourceRecordType: varchar("sourceRecordType", { length: 80 }),
+  sourceRecordId: varchar("sourceRecordId", { length: 128 }),
+  sourceRecordNumber: varchar("sourceRecordNumber", { length: 128 }),
+  idempotencyKey: varchar("idempotencyKey", { length: 255 }).notNull(),
+  mode: mysqlEnum("mode", ["shadow", "dry_run", "live"] as const).default("shadow").notNull(),
+  status: mysqlEnum("status", ["queued", "evaluated", "held", "failed", "duplicate"] as const)
+    .default("queued")
+    .notNull(),
+  validationOutcome: mysqlEnum("validationOutcome", ["pending", "passed", "warning", "failed"] as const)
+    .default("pending")
+    .notNull(),
+  safeRequestSummary: json("safeRequestSummary"),
+  sourceSnapshot: json("sourceSnapshot"),
+  validationResults: json("validationResults"),
+  resultReferences: json("resultReferences"),
+  errorMessage: text("errorMessage"),
+  receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+  evaluatedAt: timestamp("evaluatedAt"),
+  completedAt: timestamp("completedAt"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  workflowIdempotencyUnique: uniqueIndex("financial_workflow_runs_idempotency_unique")
+    .on(table.workflowType, table.idempotencyKey),
+}));
+
+export type FinancialWorkflowRun = typeof financialWorkflowRuns.$inferSelect;
+export type InsertFinancialWorkflowRun = typeof financialWorkflowRuns.$inferInsert;
+
+export const financialDocumentIntents = mysqlTable("financial_document_intents", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowRunId: int("workflowRunId").notNull(),
+  documentFamily: mysqlEnum("documentFamily", ["purchase_order", "customer_invoice"] as const).notNull(),
+  documentType: varchar("documentType", { length: 80 }).notNull(),
+  proposedAction: mysqlEnum("proposedAction", ["create_draft", "update_draft", "validate_only", "hold"] as const)
+    .default("create_draft")
+    .notNull(),
+  proposedDocumentNumber: varchar("proposedDocumentNumber", { length: 128 }),
+  reference: varchar("reference", { length: 255 }),
+  partyName: varchar("partyName", { length: 255 }),
+  partySourceId: varchar("partySourceId", { length: 128 }),
+  accountCode: varchar("accountCode", { length: 32 }),
+  gstTreatment: varchar("gstTreatment", { length: 64 }),
+  currency: varchar("currency", { length: 10 }).default("AUD").notNull(),
+  subtotal: decimal("subtotal", { precision: 15, scale: 2 }).default("0.00").notNull(),
+  taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }).default("0.00").notNull(),
+  total: decimal("total", { precision: 15, scale: 2 }).default("0.00").notNull(),
+  issueDate: timestamp("issueDate"),
+  dueDate: timestamp("dueDate"),
+  lineItems: json("lineItems").notNull(),
+  sourceWorkflow: varchar("sourceWorkflow", { length: 80 }).notNull(),
+  sourceRecordId: varchar("sourceRecordId", { length: 128 }),
+  validationStatus: mysqlEnum("validationStatus", ["proposed", "valid", "warning", "held", "invalid"] as const)
+    .default("proposed")
+    .notNull(),
+  validationSummary: json("validationSummary"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FinancialDocumentIntent = typeof financialDocumentIntents.$inferSelect;
+export type InsertFinancialDocumentIntent = typeof financialDocumentIntents.$inferInsert;
+
+/** Imported or later-confirmed Xero document snapshots. Shadow mode only reads them. */
+export const financialDocuments = mysqlTable("financial_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  intentId: int("intentId"),
+  workflowRunId: int("workflowRunId"),
+  sourceWorkflow: varchar("sourceWorkflow", { length: 80 }),
+  documentFamily: mysqlEnum("documentFamily", ["purchase_order", "customer_invoice"] as const).notNull(),
+  documentType: varchar("documentType", { length: 80 }).notNull(),
+  xeroDocumentId: varchar("xeroDocumentId", { length: 128 }),
+  documentNumber: varchar("documentNumber", { length: 128 }).notNull(),
+  reference: varchar("reference", { length: 255 }),
+  partyName: varchar("partyName", { length: 255 }),
+  status: varchar("status", { length: 64 }),
+  currency: varchar("currency", { length: 10 }).default("AUD").notNull(),
+  subtotal: decimal("subtotal", { precision: 15, scale: 2 }),
+  taxAmount: decimal("taxAmount", { precision: 15, scale: 2 }),
+  total: decimal("total", { precision: 15, scale: 2 }),
+  issueDate: timestamp("issueDate"),
+  dueDate: timestamp("dueDate"),
+  lineSnapshot: json("lineSnapshot"),
+  xeroReadAt: timestamp("xeroReadAt"),
+  refreshedAt: timestamp("refreshedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  documentXeroUnique: uniqueIndex("financial_documents_xero_document_unique")
+    .on(table.documentFamily, table.xeroDocumentId),
+}));
+
+export type FinancialDocument = typeof financialDocuments.$inferSelect;
+export type InsertFinancialDocument = typeof financialDocuments.$inferInsert;
+
+export const storageBillingEvents = mysqlTable("storage_billing_events", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: varchar("dealId", { length: 128 }),
+  containerControlId: varchar("containerControlId", { length: 128 }),
+  containerNumber: varchar("containerNumber", { length: 128 }),
+  containerType: varchar("containerType", { length: 80 }),
+  storageStage: varchar("storageStage", { length: 80 }),
+  origin: varchar("origin", { length: 255 }),
+  destination: varchar("destination", { length: 255 }),
+  dateIn: timestamp("dateIn"),
+  dateOut: timestamp("dateOut"),
+  billedThroughDate: timestamp("billedThroughDate"),
+  nextBillingDate: timestamp("nextBillingDate"),
+  customerInvoiceDocumentId: int("customerInvoiceDocumentId"),
+  jdPurchaseOrderDocumentId: int("jdPurchaseOrderDocumentId"),
+  gdPurchaseOrderDocumentId: int("gdPurchaseOrderDocumentId"),
+  finalisationStatus: mysqlEnum("finalisationStatus", ["open", "pending", "finalised", "held"] as const)
+    .default("open")
+    .notNull(),
+  sourceSnapshot: json("sourceSnapshot"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type StorageBillingEvent = typeof storageBillingEvents.$inferSelect;
+export type InsertStorageBillingEvent = typeof storageBillingEvents.$inferInsert;
+
+export const recurringHireRuns = mysqlTable("recurring_hire_runs", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowRunId: int("workflowRunId"),
+  containerControlId: varchar("containerControlId", { length: 128 }).notNull(),
+  containerControlNumber: varchar("containerControlNumber", { length: 128 }),
+  billingPeriodStart: timestamp("billingPeriodStart").notNull(),
+  billingPeriodEnd: timestamp("billingPeriodEnd").notNull(),
+  reservationKey: varchar("reservationKey", { length: 255 }).notNull(),
+  proposedPoNumber: varchar("proposedPoNumber", { length: 128 }),
+  status: mysqlEnum("status", ["reserved", "evaluated", "held", "confirmed"] as const).default("reserved").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  recurringHireReservationUnique: uniqueIndex("recurring_hire_runs_reservation_unique").on(table.reservationKey),
+}));
+
+export type RecurringHireRun = typeof recurringHireRuns.$inferSelect;
+export type InsertRecurringHireRun = typeof recurringHireRuns.$inferInsert;
+
+export const extraHireRuns = mysqlTable("extra_hire_runs", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowRunId: int("workflowRunId"),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  sourceHireEndDate: varchar("sourceHireEndDate", { length: 32 }).notNull(),
+  reservationKey: varchar("reservationKey", { length: 255 }).notNull(),
+  proposedInvoiceNumber: varchar("proposedInvoiceNumber", { length: 128 }),
+  status: mysqlEnum("status", ["reserved", "evaluated", "held", "confirmed"] as const).default("reserved").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  extraHireReservationUnique: uniqueIndex("extra_hire_runs_reservation_unique").on(table.reservationKey),
+}));
+
+export type ExtraHireRun = typeof extraHireRuns.$inferSelect;
+export type InsertExtraHireRun = typeof extraHireRuns.$inferInsert;
+
+export const warrantyDocuments = mysqlTable("warranty_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowRunId: int("workflowRunId"),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  warrantyCode: varchar("warrantyCode", { length: 64 }),
+  warrantyDescription: varchar("warrantyDescription", { length: 255 }),
+  customerInvoiceDocumentId: int("customerInvoiceDocumentId"),
+  avisoPurchaseOrderDocumentId: int("avisoPurchaseOrderDocumentId"),
+  reconciliationStatus: mysqlEnum("reconciliationStatus", ["proposed", "matched", "held", "exception"] as const)
+    .default("proposed")
+    .notNull(),
+  sourceSnapshot: json("sourceSnapshot"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WarrantyDocument = typeof warrantyDocuments.$inferSelect;
+export type InsertWarrantyDocument = typeof warrantyDocuments.$inferInsert;
+
+export const financialWorkflowExceptions = mysqlTable("financial_workflow_exceptions", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowRunId: int("workflowRunId"),
+  documentIntentId: int("documentIntentId"),
+  exceptionCode: varchar("exceptionCode", { length: 100 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  details: text("details").notNull(),
+  severity: mysqlEnum("severity", ["warning", "error"] as const).default("error").notNull(),
+  status: mysqlEnum("status", ["open", "resolved", "ignored"] as const).default("open").notNull(),
+  sourceContext: json("sourceContext"),
+  assignedTo: int("assignedTo"),
+  resolvedBy: int("resolvedBy"),
+  resolvedAt: timestamp("resolvedAt"),
+  resolutionNotes: text("resolutionNotes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FinancialWorkflowException = typeof financialWorkflowExceptions.$inferSelect;
+export type InsertFinancialWorkflowException = typeof financialWorkflowExceptions.$inferInsert;
+
+export const financialWorkflowExceptionComments = mysqlTable("financial_workflow_exception_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  exceptionId: int("exceptionId").notNull(),
+  authorId: int("authorId").notNull(),
+  comment: text("comment").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FinancialWorkflowExceptionComment = typeof financialWorkflowExceptionComments.$inferSelect;
+export type InsertFinancialWorkflowExceptionComment = typeof financialWorkflowExceptionComments.$inferInsert;
+
+/** Configuration records only; they never register, enable or invoke a task. */
+export const workflowSchedules = mysqlTable("workflow_schedules", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  cronExpression: varchar("cronExpression", { length: 128 }),
+  taskUid: varchar("taskUid", { length: 65 }),
+  enabled: boolean("enabled").default(false).notNull(),
+  lastRunAt: timestamp("lastRunAt"),
+  nextRunAt: timestamp("nextRunAt"),
+  lastOutcome: varchar("lastOutcome", { length: 80 }),
+  auditData: json("auditData"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  financialWorkflowScheduleUnique: uniqueIndex("workflow_schedules_workflow_unique").on(table.workflowType),
+}));
+
+export type WorkflowSchedule = typeof workflowSchedules.$inferSelect;
+export type InsertWorkflowSchedule = typeof workflowSchedules.$inferInsert;
+
+/** Admin-editable, non-secret financial mappings and shadow validation rules. */
+export const financialWorkflowConfig = mysqlTable("financial_workflow_config", {
+  id: int("id").autoincrement().primaryKey(),
+  configKey: varchar("configKey", { length: 128 }).notNull(),
+  configValue: json("configValue").notNull(),
+  description: varchar("description", { length: 500 }),
+  updatedBy: int("updatedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  financialWorkflowConfigKeyUnique: uniqueIndex("financial_workflow_config_key_unique").on(table.configKey),
+}));
+
+export type FinancialWorkflowConfig = typeof financialWorkflowConfig.$inferSelect;
+export type InsertFinancialWorkflowConfig = typeof financialWorkflowConfig.$inferInsert;

@@ -79,6 +79,25 @@ import { selectMicrosoftRenewalTaskUid } from "./microsoftGraphSchedule";
 import { getWorkflowAlertRecipientCount } from "./workflowAlertService";
 import { resolveInvoicePoNumbers, resolveExtractedPoNumbers, resolvePoNumbersFromLine } from "./poNumberResolution";
 import { getBillReconciliationState, parseBillReconciliationSnapshot, type BillReconciliationSnapshot } from "../shared/billReconciliation";
+import { FINANCIAL_WORKFLOW_TYPES, type FinancialWorkflowType } from "./financialWorkflowEngine";
+import { evaluateAndPersistFinancialWorkflow, FINANCIAL_SHADOW_MODE } from "./financialWorkflowService";
+import {
+  addFinancialExceptionComment,
+  assignFinancialWorkflowException,
+  getFinancialDocumentIntents,
+  getFinancialDocuments,
+  getFinancialExceptionComments,
+  getFinancialOperationsDashboard,
+  getFinancialWorkflowConfig,
+  getFinancialWorkflowExceptions,
+  getFinancialWorkflowRunDetail,
+  getFinancialWorkflowRuns,
+  getFinancialWorkflowSchedules,
+  resolveFinancialWorkflowException,
+  upsertFinancialWorkflowConfig,
+  upsertFinancialWorkflowSchedule,
+} from "./financialWorkflowDb";
+import { getVtigerFinancialConnectionStatus, retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
 import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray } from "drizzle-orm";
@@ -258,6 +277,110 @@ async function refreshXeroPoResults(
 
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
+  // ─── Financial trigger migration — phase-one shadow mode ───────────────────
+  // This router persists calculations and audit data only. It deliberately has
+  // no Xero write operation and cannot enable a financial target schedule.
+  financialOperations: router({
+    dashboard: protectedProcedure.query(() => getFinancialOperationsDashboard()),
+    runs: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
+      .query(({ input }) => getFinancialWorkflowRuns(input?.limit ?? 100)),
+    runDetail: protectedProcedure.input(z.object({ runId: z.number().int().positive() }))
+      .query(({ input }) => getFinancialWorkflowRunDetail(input.runId)),
+    documentIntents: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(500).optional() }).optional())
+      .query(({ input }) => getFinancialDocumentIntents(input?.limit ?? 200)),
+    confirmedDocuments: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(500).optional() }).optional())
+      .query(({ input }) => getFinancialDocuments(input?.limit ?? 200)),
+    exceptions: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(500).optional() }).optional())
+      .query(({ input }) => getFinancialWorkflowExceptions(input?.limit ?? 200)),
+    exceptionComments: protectedProcedure.input(z.object({ exceptionId: z.number().int().positive() }))
+      .query(({ input }) => getFinancialExceptionComments(input.exceptionId)),
+    schedules: protectedProcedure.query(() => getFinancialWorkflowSchedules()),
+    config: adminProcedure.query(() => getFinancialWorkflowConfig()),
+    vtigerReadStatus: adminProcedure.query(() => getVtigerFinancialConnectionStatus()),
+    dryRun: adminProcedure.input(z.object({
+      workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
+      sourceRecordId: z.string().trim().max(128).optional(),
+      sourceRecordNumber: z.string().trim().max(128).optional(),
+      sourceRecordType: z.string().trim().max(80).optional(),
+      sourceData: z.record(z.string(), z.unknown()),
+      existingDocumentNumbers: z.array(z.string().trim().max(128)).max(200).optional(),
+      reEvaluationKey: z.string().trim().max(128).optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const result = await evaluateAndPersistFinancialWorkflow({
+        workflowType: input.workflowType as FinancialWorkflowType,
+        triggerType: input.reEvaluationKey ? "re_evaluation" : "manual",
+        sourceRecordId: input.sourceRecordId,
+        sourceRecordNumber: input.sourceRecordNumber,
+        sourceRecordType: input.sourceRecordType,
+        idempotencySalt: input.reEvaluationKey,
+        sourceData: input.sourceData,
+        existingDocumentNumbers: input.existingDocumentNumbers,
+      }, ctx.user.id);
+      return {
+        mode: "shadow" as const,
+        xeroWritePermitted: false,
+        financialShadowMode: FINANCIAL_SHADOW_MODE,
+        ...result,
+      };
+    }),
+    refreshCurrentVtigerRecord: adminProcedure.input(z.object({
+      workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
+      vtigerRecordId: z.string().trim().regex(/^\d+x\d+$/i, "Use the VTiger moduleId x recordId format, for example 4x12345."),
+      sourceRecordNumber: z.string().trim().max(128).optional(),
+      sourceRecordType: z.string().trim().max(80).optional(),
+      existingDocumentNumbers: z.array(z.string().trim().max(128)).max(200).optional(),
+    })).mutation(async ({ input, ctx }) => {
+      // This user-initiated read uses only current source data. It never changes
+      // VTiger, existing webhook URLs, schedules or any Xero document.
+      const sourceData = await retrieveCurrentVtigerFinancialRecord(input.vtigerRecordId);
+      const result = await evaluateAndPersistFinancialWorkflow({
+        workflowType: input.workflowType as FinancialWorkflowType,
+        triggerType: "re_evaluation",
+        sourceRecordId: input.vtigerRecordId,
+        sourceRecordNumber: input.sourceRecordNumber,
+        sourceRecordType: input.sourceRecordType ?? "VTiger record",
+        idempotencySalt: `current:${input.vtigerRecordId}:${String(sourceData.modifiedtime ?? sourceData.updated_at ?? Date.now())}`,
+        sourceData,
+        existingDocumentNumbers: input.existingDocumentNumbers,
+      }, ctx.user.id);
+      return { mode: "shadow" as const, xeroWritePermitted: false, ...result };
+    }),
+    addExceptionComment: adminProcedure.input(z.object({
+      exceptionId: z.number().int().positive(),
+      comment: z.string().trim().min(1).max(10_000),
+    })).mutation(({ input, ctx }) => addFinancialExceptionComment(input.exceptionId, ctx.user.id, input.comment)),
+    assignException: adminProcedure.input(z.object({
+      exceptionId: z.number().int().positive(),
+      assignedTo: z.number().int().positive().nullable(),
+    })).mutation(({ input }) => assignFinancialWorkflowException(input.exceptionId, input.assignedTo)),
+    resolveException: adminProcedure.input(z.object({
+      exceptionId: z.number().int().positive(),
+      resolutionNotes: z.string().trim().max(10_000).optional(),
+    })).mutation(({ input, ctx }) => resolveFinancialWorkflowException(input.exceptionId, ctx.user.id, input.resolutionNotes)),
+    saveDisabledSchedule: adminProcedure.input(z.object({
+      workflowType: z.enum(["recurring_for_hire", "recurring_storage"]),
+      cronExpression: z.string().trim().max(128).nullable().optional(),
+      taskUid: z.string().trim().max(65).nullable().optional(),
+      // The API accepts only false. Any attempt to enable is rejected by Zod.
+      enabled: z.literal(false).optional(),
+    })).mutation(async ({ input }) => {
+      await upsertFinancialWorkflowSchedule({
+        workflowType: input.workflowType,
+        cronExpression: input.cronExpression ?? null,
+        taskUid: input.taskUid ?? null,
+        enabled: false,
+        auditData: { shadowOnly: true, targetScheduleRegistered: false },
+      });
+      return { enabled: false, mode: "shadow" as const };
+    }),
+    saveConfig: adminProcedure.input(z.object({
+      configKey: z.string().trim().min(1).max(128).regex(/^[a-z0-9_.-]+$/i),
+      configValue: z.unknown(),
+      description: z.string().trim().max(500).nullable().optional(),
+    })).mutation(({ input, ctx }) =>
+      upsertFinancialWorkflowConfig(input.configKey, input.configValue, input.description ?? null, ctx.user.id)),
+  }),
+
   system: systemRouter,
 
   microsoft: router({

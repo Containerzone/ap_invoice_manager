@@ -22,6 +22,7 @@ import BulkQuery from "./pages/BulkQuery";
 import Reports from "./pages/Reports";
 import PoRequests from "./pages/PoRequests";
 import OperationalFailures from "./pages/OperationalFailures";
+import FinancialOperations from "./pages/FinancialOperations";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -83,6 +84,7 @@ function AppRoutes() {
               </Route>
               <Route path="/reports" component={Reports} />
               <Route path="/po-requests" component={PoRequests} />
+              <Route path="/financial-operations" component={FinancialOperations} />
               <Route path="/operational-failures">
                 <AdminGuard><OperationalFailures /></AdminGuard>
               </Route>

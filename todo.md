@@ -433,3 +433,11 @@
 
 ## Xero Usage Since Reset (Session 19)
 - [x] Calculate the number of Xero API calls used since the current daily allowance reset
+
+## Financial Trigger Migration — Phase One Shadow Mode (Session 20)
+- [x] Add and apply additive ledger migration `0024_adorable_inhumans.sql` for workflow runs, document intents/documents, storage/hire/warranty state, exceptions/comments, schedule metadata and non-secret configuration.
+- [x] Implement all ten approved financial workflow families as deterministic shadow evaluators with fixed account codes, GST treatment, Draft-only controls, references, reservations and validation exceptions. No evaluator contains a Xero write path.
+- [x] Add AP-only authenticated shadow-event endpoint and admin dry-run/current-VTiger-record re-evaluation APIs; all return explicit no-write metadata, while live modes and schedule enablement are rejected.
+- [x] Add Financial Operations navigation and workbench for dashboards, PO/customer-invoice proposals, run history, review queue, disabled schedule state and admin-only non-secret mappings.
+- [x] Add focused coverage for all workflow calculations/references/GST/idempotency plus authenticated endpoint and permission/disabled-schedule guardrails. Full suite passes after integration.
+- [ ] Future controlled cutover only: configure production financial webhook secret and confirm AP-owned VTiger/Xero credentials, then shadow-validate each family with real current VTiger records before requesting document-specific live approval.
