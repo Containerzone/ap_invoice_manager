@@ -3,6 +3,8 @@ import {
   extraHireRuns,
   financialDocumentIntents,
   financialDocuments,
+  financialCandidateDiscoveries,
+  financialIntegrationAudits,
   financialShadowTests,
   financialWorkflowConfig,
   financialWorkflowConfigAudits,
@@ -14,6 +16,8 @@ import {
   warrantyDocuments,
   workflowSchedules,
   type FinancialWorkflowConfig,
+  type FinancialCandidateDiscovery,
+  type FinancialIntegrationAudit,
   type FinancialShadowTest,
   type FinancialWorkflowException,
   type FinancialWorkflowRun,
@@ -369,6 +373,10 @@ export type CreateFinancialShadowTest = {
   exceptionIds?: number[];
   initiatedBy?: number | null;
   testedAt?: Date | null;
+  reviewStatus?: "pending" | "confirmed" | "rejected";
+  reviewedBy?: number | null;
+  reviewedAt?: Date | null;
+  reviewerComment?: string | null;
 };
 
 /** Saves an evidence-only shadow test. The related run remains shadow-only. */
@@ -394,6 +402,10 @@ export async function createFinancialShadowTest(data: CreateFinancialShadowTest)
     exceptionIds: data.exceptionIds as any,
     initiatedBy: data.initiatedBy ?? null,
     testedAt: data.testedAt ?? new Date(),
+    reviewStatus: data.reviewStatus ?? "pending",
+    reviewedBy: data.reviewedBy ?? null,
+    reviewedAt: data.reviewedAt ?? null,
+    reviewerComment: data.reviewerComment ?? null,
   });
   return Number((result[0] as any).insertId);
 }
@@ -403,6 +415,94 @@ export async function getFinancialShadowTests(limit = 250): Promise<FinancialSha
   if (!db) return [];
   return db.select().from(financialShadowTests)
     .orderBy(desc(financialShadowTests.testedAt), desc(financialShadowTests.createdAt))
+    .limit(limit);
+}
+
+export async function getFinancialShadowTestById(id: number): Promise<FinancialShadowTest | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(financialShadowTests).where(eq(financialShadowTests.id, id)).limit(1))[0];
+}
+
+export async function reviewFinancialShadowTest(input: {
+  testId: number;
+  reviewStatus: "confirmed" | "rejected";
+  reviewerComment: string;
+  reviewedBy: number;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(financialShadowTests).set({
+    reviewStatus: input.reviewStatus,
+    reviewerComment: input.reviewerComment.trim(),
+    reviewedBy: input.reviewedBy,
+    reviewedAt: new Date(),
+    updatedAt: new Date(),
+    status: input.reviewStatus === "confirmed" ? "passed" : "failed",
+    differenceExplanation: input.reviewStatus === "confirmed"
+      ? "Confirmed by AP administrator after reviewing live-source, rule and read-only Xero evidence."
+      : "Rejected by AP administrator after reviewing shadow evidence.",
+  }).where(eq(financialShadowTests.id, input.testId));
+}
+
+export async function createFinancialCandidateDiscovery(input: {
+  sourceCategory: "deal" | "container_control";
+  businessNumber: string;
+  workflowType: string;
+  outcome: "found" | "not_found" | "ambiguous" | "blocked";
+  candidateRecordIds: string[];
+  sourceRefreshedAt?: Date | null;
+  message: string;
+  initiatedBy: number;
+}): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const result = await db.insert(financialCandidateDiscoveries).values({
+    ...input,
+    candidateRecordIds: input.candidateRecordIds as any,
+    sourceRefreshedAt: input.sourceRefreshedAt ?? null,
+  });
+  return Number((result[0] as any).insertId);
+}
+
+export async function getFinancialCandidateDiscoveries(limit = 100): Promise<FinancialCandidateDiscovery[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialCandidateDiscoveries)
+    .orderBy(desc(financialCandidateDiscoveries.createdAt))
+    .limit(limit);
+}
+
+export async function createFinancialIntegrationAudit(input: {
+  integration: "xero" | "vtiger";
+  action: string;
+  outcome: "passed" | "blocked" | "failed";
+  tenantName?: string | null;
+  tenantId?: string | null;
+  details?: unknown;
+  actorId?: number | null;
+  checkedAt?: Date;
+}): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const result = await db.insert(financialIntegrationAudits).values({
+    integration: input.integration,
+    action: input.action.slice(0, 80),
+    outcome: input.outcome,
+    tenantName: input.tenantName ?? null,
+    tenantId: input.tenantId ?? null,
+    details: (input.details ?? {}) as any,
+    actorId: input.actorId ?? null,
+    checkedAt: input.checkedAt ?? new Date(),
+  });
+  return Number((result[0] as any).insertId);
+}
+
+export async function getFinancialIntegrationAudits(limit = 100): Promise<FinancialIntegrationAudit[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialIntegrationAudits)
+    .orderBy(desc(financialIntegrationAudits.checkedAt), desc(financialIntegrationAudits.id))
     .limit(limit);
 }
 

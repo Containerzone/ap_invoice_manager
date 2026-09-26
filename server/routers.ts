@@ -80,6 +80,7 @@ import { getWorkflowAlertRecipientCount } from "./workflowAlertService";
 import { resolveInvoicePoNumbers, resolveExtractedPoNumbers, resolvePoNumbersFromLine } from "./poNumberResolution";
 import { getBillReconciliationState, parseBillReconciliationSnapshot, type BillReconciliationSnapshot } from "../shared/billReconciliation";
 import { FINANCIAL_WORKFLOW_TYPES, type FinancialWorkflowType } from "./financialWorkflowEngine";
+import type { FinancialAutomationRules } from "./financialAutomationRules";
 import { evaluateAndPersistFinancialWorkflow, FINANCIAL_SHADOW_MODE } from "./financialWorkflowService";
 import {
   addFinancialExceptionComment,
@@ -95,20 +96,29 @@ import {
   getFinancialWorkflowRuns,
   getFinancialWorkflowSchedules,
   createFinancialShadowTest,
+  createFinancialCandidateDiscovery,
+  createFinancialIntegrationAudit,
+  getFinancialCandidateDiscoveries,
+  getFinancialIntegrationAudits,
+  getFinancialShadowTestById,
   getFinancialShadowTests,
+  reviewFinancialShadowTest,
   resolveFinancialWorkflowException,
   upsertFinancialWorkflowConfig,
   upsertFinancialWorkflowSchedule,
 } from "./financialWorkflowDb";
 import { getVtigerFinancialConnectionStatus, retrieveCurrentVtigerFinancialRecord, testVtigerFinancialConnection } from "./vtigerFinancialReadService";
+import { findExactFinancialCandidate, getFinancialCandidateFinderConfig, type FinancialCandidateCategory } from "./vtigerFinancialCandidateService";
 import { getFinancialXeroConnectionStatus, preflightFinancialXeroIntents, previewHistoricalXeroReferences, testFinancialXeroConnection } from "./financialReadOnlyXeroService";
 import {
   FINANCIAL_AUTOMATION_RULE_CONFIG_KEY,
+  FINANCIAL_VTIGER_CANDIDATE_FINDER_CONFIG_KEY,
   FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY,
   resolveFinancialAutomationRules,
 } from "./financialAutomationRules";
 import {
   compareShadowExpectedResult,
+  deriveRulesBasedExpectedFacts,
   mapVtigerFinancialSource,
   sourceRecordNumberFromVtiger,
   sourceRefreshTimeFromVtiger,
@@ -314,7 +324,8 @@ type ShadowTestInput = {
   sourceRecordType?: string;
   sourceData: Record<string, unknown>;
   existingDocumentNumbers?: string[];
-  expectedResult: ShadowExpectedResult;
+  expectedResult?: ShadowExpectedResult;
+  rules?: FinancialAutomationRules;
   sourceRefreshedAt?: Date;
   createdBy: number;
   idempotencySalt: string;
@@ -336,6 +347,11 @@ async function executeFinancialShadowTest(input: ShadowTestInput) {
     idempotencySalt: input.idempotencySalt,
   }, input.createdBy);
 
+  const generatedExpected = input.rules
+    ? deriveRulesBasedExpectedFacts(result.evaluation, input.rules, input.sourceData)
+    : null;
+  const expectedResult = input.expectedResult ?? generatedExpected?.expectedResult ?? {};
+
   let preflight: Awaited<ReturnType<typeof preflightFinancialXeroIntents>> = [];
   let preflightProblem: string | null = null;
   try {
@@ -343,13 +359,13 @@ async function executeFinancialShadowTest(input: ShadowTestInput) {
   } catch (error: any) {
     preflightProblem = error?.message ?? "Xero read-only preflight could not be completed.";
   }
-  const comparison = compareShadowExpectedResult(input.expectedResult, result.evaluation, preflight);
-  const actualEvidence = { ...comparison.actual, sourceValues: input.sourceData };
+  const comparison = compareShadowExpectedResult(expectedResult, result.evaluation, preflight);
+  const actualEvidence = { ...comparison.actual, sourceValues: input.sourceData, rulesBasedExpectedFacts: generatedExpected ?? null };
   const hasDifferences = comparison.comparisons.some((entry) => entry.outcome === "different");
   const hasExistingDocument = preflight.some((entry) => entry.duplicateState === "found" || entry.duplicateState === "ambiguous");
   const hasBlockedPreflight = Boolean(preflightProblem) || preflight.some((entry) => entry.duplicateState === "blocked" || entry.duplicateState === "error");
   const evaluationHeld = result.evaluation.outcome === "failed" || result.evaluation.intents.some((intent) => intent.validationStatus === "held");
-  const status = !comparison.hasExpectedFacts
+  const initialStatus = !comparison.hasExpectedFacts
     ? "needs_data"
     : hasBlockedPreflight
       ? "blocked"
@@ -358,12 +374,17 @@ async function executeFinancialShadowTest(input: ShadowTestInput) {
         : hasDifferences
           ? "failed"
           : "passed";
+  // A clean calculation is deliberately held until an AP administrator has
+  // reviewed the live-source/rule evidence. No automatic test pass is allowed.
+  const reviewEligible = initialStatus === "passed";
+  const status = reviewEligible ? "held" : initialStatus;
   const differenceExplanation = [
     preflightProblem,
     hasExistingDocument ? "One or more proposed document numbers already exists in Xero; the candidate is held for review." : null,
     evaluationHeld ? "The shadow evaluator held or failed at least one proposed action; see its validation issues." : null,
     hasDifferences ? "One or more supplied expected fields differs from the shadow result." : null,
     !comparison.hasExpectedFacts ? "Expected result data has not yet been supplied for this real-source test." : null,
+    reviewEligible ? "All deterministic comparisons match; awaiting AP administrator confirmation before this test can pass." : null,
   ].filter(Boolean).join(" ") || null;
   const testId = await createFinancialShadowTest({
     testKey: `phase15-${Date.now()}-${randomUUID().slice(0, 8)}`,
@@ -372,8 +393,8 @@ async function executeFinancialShadowTest(input: ShadowTestInput) {
     sourceRecordType: input.sourceRecordType ?? null,
     sourceRecordId: input.sourceRecordId ?? null,
     sourceRecordNumber: input.sourceRecordNumber ?? null,
-    expectedResult: input.expectedResult,
-    actualResult: actualEvidence,
+    expectedResult,
+    actualResult: { ...actualEvidence, reviewEligible, initialStatus },
     fieldComparisons: comparison.comparisons,
     xeroPreflight: { results: preflight, error: preflightProblem, readOnly: true, xeroWriteMethodsCalled: [] },
     status,
@@ -421,6 +442,10 @@ export const appRouter = router({
     configAudits: adminProcedure.query(() => getFinancialWorkflowConfigAudits()),
     shadowTests: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(500).optional() }).optional())
       .query(({ input }) => getFinancialShadowTests(input?.limit ?? 250)),
+    candidateDiscoveries: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
+      .query(({ input }) => getFinancialCandidateDiscoveries(input?.limit ?? 100)),
+    integrationAudits: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
+      .query(({ input }) => getFinancialIntegrationAudits(input?.limit ?? 100)),
     vtigerReadStatus: adminProcedure.query(() => getVtigerFinancialConnectionStatus()),
     automationSettings: adminProcedure.query(async () => {
       const [config, schedules, xero, vtiger] = await Promise.all([
@@ -439,11 +464,43 @@ export const appRouter = router({
         webhook: getFinancialShadowWebhookStatus(),
         rules,
         sourceMapping: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY)?.configValue ?? {},
+        candidateFinder: getFinancialCandidateFinderConfig(config.find((entry) => entry.configKey === FINANCIAL_VTIGER_CANDIDATE_FINDER_CONFIG_KEY)?.configValue),
         schedules: schedules.filter((schedule) => ["recurring_for_hire", "recurring_storage"].includes(schedule.workflowType)),
       };
     }),
-    testVtigerConnection: adminProcedure.mutation(() => testVtigerFinancialConnection()),
-    testXeroConnection: adminProcedure.mutation(() => testFinancialXeroConnection()),
+    testVtigerConnection: adminProcedure.mutation(async ({ ctx }) => {
+      const result = await testVtigerFinancialConnection();
+      await createFinancialIntegrationAudit({ integration: "vtiger", action: "read_only_connection_check", outcome: result.outcome, details: { message: result.message, readOnly: true }, actorId: ctx.user.id, checkedAt: result.checkedAt });
+      return result;
+    }),
+    testXeroConnection: adminProcedure.mutation(async ({ ctx }) => {
+      const result = await testFinancialXeroConnection();
+      await createFinancialIntegrationAudit({ integration: "xero", action: "get_only_tenant_check", outcome: result.outcome, tenantName: result.organisationName, tenantId: result.tenantId, details: { expectedTenantLabel: result.expectedTenantLabel, readOnly: true }, actorId: ctx.user.id, checkedAt: result.checkedAt });
+      return result;
+    }),
+    findVtigerCandidate: adminProcedure.input(z.object({
+      sourceCategory: z.enum(["deal", "container_control"]),
+      businessNumber: z.string().trim().min(1).max(128),
+      workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
+    })).mutation(async ({ input, ctx }) => {
+      const config = await getFinancialWorkflowConfig();
+      const result = await findExactFinancialCandidate({
+        sourceCategory: input.sourceCategory as FinancialCandidateCategory,
+        businessNumber: input.businessNumber,
+        configuration: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_CANDIDATE_FINDER_CONFIG_KEY)?.configValue,
+      });
+      const discoveryId = await createFinancialCandidateDiscovery({
+        sourceCategory: input.sourceCategory,
+        businessNumber: result.businessNumber,
+        workflowType: input.workflowType,
+        outcome: result.outcome,
+        candidateRecordIds: result.candidates.map((candidate) => candidate.recordId),
+        sourceRefreshedAt: result.candidates[0]?.sourceRefreshedAt ?? null,
+        message: result.message,
+        initiatedBy: ctx.user.id,
+      });
+      return { ...result, discoveryId, xeroWritePermitted: false as const };
+    }),
     historicalImportPreview: adminProcedure.input(z.object({
       references: z.array(z.string().trim().min(1).max(128)).min(1).max(50),
     })).mutation(async ({ input }) => ({
@@ -485,6 +542,74 @@ export const appRouter = router({
         createdBy: ctx.user.id,
         idempotencySalt: `phase15:${input.vtigerRecordId}:${Date.now()}`,
       });
+    }),
+    runCandidateShadowTest: adminProcedure.input(z.object({
+      sourceCategory: z.enum(["deal", "container_control"]),
+      businessNumber: z.string().trim().min(1).max(128),
+      candidateRecordId: z.string().trim().regex(/^\d+x\d+$/i),
+      workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
+      branch: z.string().trim().min(1).max(120),
+      existingDocumentNumbers: z.array(z.string().trim().max(128)).max(200).optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const config = await getFinancialWorkflowConfig();
+      const finder = await findExactFinancialCandidate({
+        sourceCategory: input.sourceCategory as FinancialCandidateCategory,
+        businessNumber: input.businessNumber,
+        configuration: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_CANDIDATE_FINDER_CONFIG_KEY)?.configValue,
+      });
+      await createFinancialCandidateDiscovery({
+        sourceCategory: input.sourceCategory,
+        businessNumber: finder.businessNumber,
+        workflowType: input.workflowType,
+        outcome: finder.outcome,
+        candidateRecordIds: finder.candidates.map((candidate) => candidate.recordId),
+        sourceRefreshedAt: finder.candidates[0]?.sourceRefreshedAt ?? null,
+        message: `Evidence revalidation: ${finder.message}`,
+        initiatedBy: ctx.user.id,
+      });
+      if (finder.outcome !== "found" || finder.candidates[0]?.recordId !== input.candidateRecordId) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The selected VTiger candidate is no longer an exact, unique match. Run Candidate Finder again before creating evidence." });
+      }
+      const matchedCandidate = finder.candidates[0];
+      const rawSource = await retrieveCurrentVtigerFinancialRecord(input.candidateRecordId);
+      const mapping = config.find((entry) => entry.configKey === FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY)?.configValue;
+      const rules = resolveFinancialAutomationRules(config.find((entry) => entry.configKey === FINANCIAL_AUTOMATION_RULE_CONFIG_KEY)?.configValue);
+      const mapped = mapVtigerFinancialSource(rawSource, mapping as Record<string, unknown> | undefined, input.workflowType as FinancialWorkflowType);
+      const sourceData = {
+        ...mapped.sourceData,
+        _shadowRawSource: rawSource,
+        _shadowAppliedMappings: mapped.appliedMappings,
+        _candidateDiscovery: { category: input.sourceCategory, businessNumber: input.businessNumber, module: matchedCandidate.module, matchedField: matchedCandidate.matchedField },
+      };
+      const result = await executeFinancialShadowTest({
+        workflowType: input.workflowType as FinancialWorkflowType,
+        branch: input.branch,
+        sourceRecordId: input.candidateRecordId,
+        sourceRecordNumber: input.businessNumber,
+        sourceRecordType: input.sourceCategory === "deal" ? "VTiger Deal" : "VTiger Container Control",
+        sourceData,
+        existingDocumentNumbers: input.existingDocumentNumbers,
+        rules,
+        sourceRefreshedAt: sourceRefreshTimeFromVtiger(rawSource, new Date()),
+        createdBy: ctx.user.id,
+        idempotencySalt: `phase16:${input.sourceCategory}:${input.businessNumber}:${input.candidateRecordId}:${Date.now()}`,
+      });
+      return { ...result, candidate: matchedCandidate, expectedFactsSource: "active_ap_rules" as const };
+    }),
+    reviewShadowTest: adminProcedure.input(z.object({
+      testId: z.number().int().positive(),
+      reviewStatus: z.enum(["confirmed", "rejected"]),
+      reviewerComment: z.string().trim().min(6).max(10_000),
+    })).mutation(async ({ input, ctx }) => {
+      const test = await getFinancialShadowTestById(input.testId);
+      if (!test) throw new TRPCError({ code: "NOT_FOUND", message: "Shadow evidence record was not found." });
+      if (test.reviewStatus !== "pending") throw new TRPCError({ code: "CONFLICT", message: "This shadow evidence record has already been reviewed." });
+      const reviewEligible = Boolean((test.actualResult as Record<string, unknown> | null)?.reviewEligible);
+      if (input.reviewStatus === "confirmed" && !reviewEligible) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only clean, comparison-matched evidence can be confirmed. Resolve the held/blocked/different result instead." });
+      }
+      await reviewFinancialShadowTest({ ...input, reviewedBy: ctx.user.id });
+      return { success: true as const, xeroWritePermitted: false as const };
     }),
     recordBlockedShadowTest: adminProcedure.input(z.object({
       workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
@@ -2339,6 +2464,16 @@ export const appRouter = router({
           expiresAt: tokens.expiresAt,
           scope: tokens.scope,
           connectedBy: ctx.user.id,
+        });
+
+        await createFinancialIntegrationAudit({
+          integration: "xero",
+          action: "oauth_reconnect",
+          outcome: "passed",
+          tenantName: tenant.tenantName,
+          tenantId: tenant.tenantId,
+          details: { scope: tokens.scope.split(/\s+/).filter(Boolean).sort(), credentialsStored: false },
+          actorId: ctx.user.id,
         });
 
         return { success: true, tenantName: tenant.tenantName };

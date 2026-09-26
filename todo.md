@@ -451,3 +451,12 @@
 - [x] Run the AP-owned VTiger GET-only connection check; record 14 needs-data branch rows against AP-held Deal D702903 rather than invent source data. Xero validation remains safely blocked pending AP Xero re-authentication.
 - [x] Create the Phase 1.5 Shadow Validation Handoff Report and checkpoint `e623b766`.
 - [ ] Decision gate — do not start live cutover until an administrator re-authenticates AP Xero, provides named current VTiger record IDs and expected facts, and explicitly approves a document-specific Draft-only cutover.
+
+## Financial Trigger Migration — Phase 1.6 Candidate Evidence and Cutover Gates (Session 22)
+- [x] Add `0026_left_electro.sql` and persistent evidence for named VTiger candidate discovery, Xero/VTiger connection checks and administrator shadow-test review decisions.
+- [x] Add admin-only Candidate Finder for exact Deal or Container Control business-number lookups; ambiguous/no-match/blocked results cannot produce an invented or arbitrary source candidate.
+- [x] Generate granular expected facts from frozen AP rules, retain raw/actual/preflight evidence, and require a reviewer comment before only a clean, review-eligible test can pass.
+- [x] Add GET-only Xero tenant health validation that requires the ContainerZone tenant label, audit reconnect/check events, and show non-secret connection evidence in Financial Operations.
+- [x] Validate 39 test files / 231 tests plus TypeScript and production build; no financial validation/candidate source contains Xero write methods.
+- [x] Record baseline gate evidence: D702903 candidate lookup blocked by VTiger's expired/invalid read session; Xero health check blocked by the missing/expired AP token. No baseline shadow workflow test was run.
+- [ ] Required user gate: reauthenticate AP Xero in Settings → Xero Integration and verify the ContainerZone tenant via Financial Operations. AP/IT must also restore valid VTiger read-only access; then restart exact named-candidate shadow validation, one reviewed workflow family at a time.

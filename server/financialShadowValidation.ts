@@ -1,5 +1,6 @@
 import type { FinancialWorkflowEvaluation, FinancialWorkflowType } from "./financialWorkflowEngine";
 import type { FinancialXeroPreflight } from "./financialReadOnlyXeroService";
+import type { FinancialAutomationRules } from "./financialAutomationRules";
 
 export type FinancialSourceMapping = Record<string, unknown>;
 
@@ -25,6 +26,12 @@ export type ShadowFieldComparison = {
   actual: unknown;
   outcome: "match" | "different" | "not_provided";
   explanation: string;
+};
+
+export type RulesBasedExpectedFacts = {
+  /** Generated from active AP rules; an administrator still must review and confirm it. */
+  expectedResult: ShadowExpectedResult;
+  ruleFacts: Array<{ field: string; configuredRule: unknown; liveSourceValue: unknown; explanation: string }>;
 };
 
 function asText(value: unknown): string | null {
@@ -120,6 +127,51 @@ export function compareShadowExpectedResult(
   }
   const hasExpectedFacts = comparisons.length > 0;
   return { actual, comparisons, hasExpectedFacts };
+}
+
+/**
+ * Builds a reviewable expected-facts draft from the active, non-secret AP
+ * rules and the deterministic evaluation. This helper never marks a test as
+ * passed: an administrator must confirm/reject the evidence with a comment.
+ */
+export function deriveRulesBasedExpectedFacts(
+  evaluation: FinancialWorkflowEvaluation,
+  rules: FinancialAutomationRules,
+  liveSource: Record<string, unknown>,
+): RulesBasedExpectedFacts {
+  const intents = evaluation.intents;
+  const expectedResult: ShadowExpectedResult = {
+    proposedDocumentNumbers: intents.map((intent) => intent.proposedDocumentNumber ?? ""),
+    partyNames: intents.map((intent) => intent.partyName ?? ""),
+    accountCodes: intents.map((intent) => intent.accountCode ?? ""),
+    itemCodes: intents.flatMap((intent) => intent.lineItems.map((line) => line.itemCode)),
+    gstTreatments: intents.map((intent) => intent.gstTreatment),
+    issueDates: intents.map((intent) => formattedDate(intent.issueDate)),
+    dueDates: intents.map((intent) => formattedDate(intent.dueDate)),
+    totals: intents.map((intent) => intent.total),
+    lineCounts: intents.map((intent) => intent.lineItems.length),
+    assertions: Object.fromEntries(intents.flatMap((intent, intentIndex) => intent.lineItems.flatMap((line, lineIndex) => [
+      [`intents.${intentIndex}.lineItems.${lineIndex}.description`, line.description],
+      [`intents.${intentIndex}.lineItems.${lineIndex}.quantity`, line.quantity],
+      [`intents.${intentIndex}.lineItems.${lineIndex}.unitAmount`, line.unitAmount],
+      [`intents.${intentIndex}.lineItems.${lineIndex}.accountCode`, line.accountCode],
+      [`intents.${intentIndex}.lineItems.${lineIndex}.gstTreatment`, line.gstTreatment],
+    ]))),
+  };
+  const sourceValue = (...keys: string[]) => {
+    for (const key of keys) if (liveSource[key] !== undefined && liveSource[key] !== null && liveSource[key] !== "") return liveSource[key];
+    return null;
+  };
+  return {
+    expectedResult,
+    ruleFacts: [
+      { field: "GST", configuredRule: `${rules.defaults.gstRatePercent}%`, liveSourceValue: sourceValue("taxRate", "gstRate"), explanation: "GST treatment and totals use the active AP rule configuration." },
+      { field: "Recurring hire eligibility", configuredRule: rules.validation.allowedRecurringHireStatuses, liveSourceValue: sourceValue("hireStatus", "status", "containerStatus"), explanation: "Only the configured eligible hire statuses may propose recurring hire." },
+      { field: "Initial hire fallback", configuredRule: { twentyFootExGst: rules.rates.initialHire20MonthlyExGst, fortyFootExGst: rules.rates.initialHire40MonthlyExGst }, liveSourceValue: sourceValue("hireCost", "sourceCost", "monthlyHireCost"), explanation: "Fallback pricing applies only when the live source hire cost is blank." },
+      { field: "Extra hire default", configuredRule: { weeks: rules.defaults.extraHireWeeks, twentyFootWeeklyExGst: rules.rates.extraHire20WeeklyExGst, fortyFootWeeklyExGst: rules.rates.extraHire40WeeklyExGst }, liveSourceValue: sourceValue("hireEndDate", "hireDurationDays"), explanation: "Extra-hire quantity/rate comes from active AP rules and live hire dates/type." },
+      { field: "Draft status guard", configuredRule: rules.validation.mainInvoiceDraftStatus, liveSourceValue: sourceValue("mainInvoiceStatus", "invoiceStatus"), explanation: "Any non-Draft source/Xero conflict remains held for review." },
+    ],
+  };
 }
 
 function resolveMappedValue(raw: Record<string, unknown>, candidate: unknown): unknown {

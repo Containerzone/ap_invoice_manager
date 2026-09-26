@@ -719,6 +719,12 @@ export const financialShadowTests = mysqlTable("financial_shadow_tests", {
   exceptionIds: json("exceptionIds"),
   initiatedBy: int("initiatedBy"),
   testedAt: timestamp("testedAt"),
+  reviewStatus: mysqlEnum("reviewStatus", ["pending", "confirmed", "rejected"] as const)
+    .default("pending")
+    .notNull(),
+  reviewedBy: int("reviewedBy"),
+  reviewedAt: timestamp("reviewedAt"),
+  reviewerComment: text("reviewerComment"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
@@ -727,3 +733,44 @@ export const financialShadowTests = mysqlTable("financial_shadow_tests", {
 
 export type FinancialShadowTest = typeof financialShadowTests.$inferSelect;
 export type InsertFinancialShadowTest = typeof financialShadowTests.$inferInsert;
+
+/**
+ * Every exact AP-side VTiger candidate lookup is retained without storing a
+ * raw source payload. This proves a named discovery search occurred without
+ * turning the evidence ledger into a copy of the CRM database.
+ */
+export const financialCandidateDiscoveries = mysqlTable("financial_candidate_discoveries", {
+  id: int("id").autoincrement().primaryKey(),
+  sourceCategory: mysqlEnum("sourceCategory", ["deal", "container_control"] as const).notNull(),
+  businessNumber: varchar("businessNumber", { length: 128 }).notNull(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  outcome: mysqlEnum("outcome", ["found", "not_found", "ambiguous", "blocked"] as const).notNull(),
+  candidateRecordIds: json("candidateRecordIds"),
+  sourceRefreshedAt: timestamp("sourceRefreshedAt"),
+  message: text("message"),
+  initiatedBy: int("initiatedBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FinancialCandidateDiscovery = typeof financialCandidateDiscoveries.$inferSelect;
+export type InsertFinancialCandidateDiscovery = typeof financialCandidateDiscoveries.$inferInsert;
+
+/**
+ * Contains non-secret AP integration outcomes, such as a completed GET-only
+ * Xero tenant check or an OAuth reconnect. Credentials and raw responses are
+ * never stored here.
+ */
+export const financialIntegrationAudits = mysqlTable("financial_integration_audits", {
+  id: int("id").autoincrement().primaryKey(),
+  integration: mysqlEnum("integration", ["xero", "vtiger"] as const).notNull(),
+  action: varchar("action", { length: 80 }).notNull(),
+  outcome: mysqlEnum("outcome", ["passed", "blocked", "failed"] as const).notNull(),
+  tenantName: varchar("tenantName", { length: 255 }),
+  tenantId: varchar("tenantId", { length: 128 }),
+  details: json("details"),
+  actorId: int("actorId"),
+  checkedAt: timestamp("checkedAt").defaultNow().notNull(),
+});
+
+export type FinancialIntegrationAudit = typeof financialIntegrationAudits.$inferSelect;
+export type InsertFinancialIntegrationAudit = typeof financialIntegrationAudits.$inferInsert;

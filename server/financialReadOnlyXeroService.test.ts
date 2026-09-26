@@ -52,6 +52,15 @@ describe("financial read-only Xero service", () => {
     noMutationAssertions();
   });
 
+  it("holds a GET-only health check when the connected tenant is not ContainerZone", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { Organisations: [{ Name: "Different Organisation" }] } })
+      .mockResolvedValueOnce({ data: [{ tenantName: "Different Organisation" }] });
+    const result = await testFinancialXeroConnection();
+    expect(result).toMatchObject({ outcome: "failed", organisationName: "Different Organisation", expectedTenantLabel: "CONTAINERZONE" });
+    noMutationAssertions();
+  });
+
   it("preflights only GET candidate, contact and item reads and records an existing PO", async () => {
     mockGet
       .mockResolvedValueOnce({ data: { PurchaseOrders: [{ PurchaseOrderID: "po-1", PurchaseOrderNumber: "H1860", Status: "DRAFT", Contact: { Name: "Hire Supplier" } }] } })

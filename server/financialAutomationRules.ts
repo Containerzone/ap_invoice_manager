@@ -148,3 +148,4 @@ export function resolveFinancialAutomationRules(override?: unknown): FinancialAu
 /** Keys intentionally supported by the configuration screen. Secrets never appear here. */
 export const FINANCIAL_AUTOMATION_RULE_CONFIG_KEY = "financial-automation.rules";
 export const FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY = "financial-automation.vtiger-source-mapping";
+export const FINANCIAL_VTIGER_CANDIDATE_FINDER_CONFIG_KEY = "financial-automation.vtiger-candidate-finder";

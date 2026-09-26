@@ -29,13 +29,19 @@ vi.mock("./financialWorkflowDb", () => ({
   getFinancialOperationsDashboard: vi.fn().mockResolvedValue({ runsToday: 0 }),
   getFinancialWorkflowConfig: vi.fn().mockResolvedValue([]),
   getFinancialWorkflowConfigAudits: vi.fn().mockResolvedValue([]),
+  createFinancialCandidateDiscovery: vi.fn().mockResolvedValue(33),
+  createFinancialIntegrationAudit: vi.fn().mockResolvedValue(44),
   createFinancialShadowTest: vi.fn().mockResolvedValue(901),
+  getFinancialCandidateDiscoveries: vi.fn().mockResolvedValue([]),
+  getFinancialIntegrationAudits: vi.fn().mockResolvedValue([]),
+  getFinancialShadowTestById: vi.fn().mockResolvedValue({ id: 901, reviewStatus: "pending", actualResult: { reviewEligible: true } }),
   getFinancialShadowTests: vi.fn().mockResolvedValue([]),
   getFinancialWorkflowExceptions: vi.fn().mockResolvedValue([]),
   getFinancialWorkflowRunDetail: vi.fn().mockResolvedValue(undefined),
   getFinancialWorkflowRuns: vi.fn().mockResolvedValue([]),
   getFinancialWorkflowSchedules: vi.fn().mockResolvedValue([]),
   resolveFinancialWorkflowException: vi.fn().mockResolvedValue(undefined),
+  reviewFinancialShadowTest: vi.fn().mockResolvedValue(undefined),
   upsertFinancialWorkflowConfig: vi.fn().mockResolvedValue(undefined),
   upsertFinancialWorkflowSchedule: vi.fn().mockResolvedValue(undefined),
 }));
@@ -44,6 +50,15 @@ vi.mock("./vtigerFinancialReadService", () => ({
   getVtigerFinancialConnectionStatus: vi.fn().mockReturnValue({ configured: true, missing: [] }),
   testVtigerFinancialConnection: vi.fn().mockResolvedValue({ configured: true, missing: [], outcome: "passed" }),
   retrieveCurrentVtigerFinancialRecord: vi.fn().mockResolvedValue({ customerOrganisationName: "Current customer", modifiedtime: "2026-09-25 12:00:00" }),
+}));
+
+vi.mock("./vtigerFinancialCandidateService", () => ({
+  findExactFinancialCandidate: vi.fn().mockResolvedValue({
+    outcome: "found", sourceCategory: "deal", businessNumber: "D702903", message: "Exact match", candidates: [{
+      recordId: "4x702903", module: "Potentials", matchedField: "potentials_no", sourceCategory: "deal", businessNumber: "D702903", sourceRefreshedAt: new Date(), summary: { potentials_no: "D702903" },
+    }],
+  }),
+  getFinancialCandidateFinderConfig: vi.fn().mockReturnValue({ deal: [], container_control: [] }),
 }));
 
 vi.mock("./financialReadOnlyXeroService", () => ({
@@ -119,5 +134,38 @@ describe("financial operations tRPC safeguards", () => {
     expect(createFinancialShadowTest).toHaveBeenCalledWith(expect.objectContaining({
       sourceRecordNumber: "D700001", xeroPreflight: expect.objectContaining({ readOnly: true, xeroWriteMethodsCalled: [] }),
     }));
+  });
+
+  it("records an exact named candidate lookup without exposing a live writer", async () => {
+    const { appRouter } = await import("./routers");
+    const { createFinancialCandidateDiscovery } = await import("./financialWorkflowDb");
+    const result = await appRouter.createCaller(context("admin")).financialOperations.findVtigerCandidate({
+      sourceCategory: "deal", businessNumber: "D702903", workflowType: "main_customer_invoice",
+    });
+    expect(result).toMatchObject({ outcome: "found", discoveryId: 33, xeroWritePermitted: false });
+    expect(createFinancialCandidateDiscovery).toHaveBeenCalledWith(expect.objectContaining({
+      businessNumber: "D702903", candidateRecordIds: ["4x702903"], initiatedBy: 1,
+    }));
+  });
+
+  it("allows only an administrator to confirm or reject recorded shadow evidence", async () => {
+    const { appRouter } = await import("./routers");
+    const { reviewFinancialShadowTest } = await import("./financialWorkflowDb");
+    await expect(appRouter.createCaller(context("user")).financialOperations.reviewShadowTest({
+      testId: 901, reviewStatus: "confirmed", reviewerComment: "Confirmed against source and rule facts.",
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(appRouter.createCaller(context("admin")).financialOperations.reviewShadowTest({
+      testId: 901, reviewStatus: "confirmed", reviewerComment: "Confirmed against source and rule facts.",
+    })).resolves.toMatchObject({ success: true, xeroWritePermitted: false });
+    expect(reviewFinancialShadowTest).toHaveBeenCalledWith(expect.objectContaining({ testId: 901, reviewedBy: 1, reviewStatus: "confirmed" }));
+  });
+
+  it("does not allow a blocked or different test to be confirmed", async () => {
+    const { appRouter } = await import("./routers");
+    const { getFinancialShadowTestById } = await import("./financialWorkflowDb");
+    vi.mocked(getFinancialShadowTestById).mockResolvedValueOnce({ id: 902, reviewStatus: "pending", actualResult: { reviewEligible: false } } as any);
+    await expect(appRouter.createCaller(context("admin")).financialOperations.reviewShadowTest({
+      testId: 902, reviewStatus: "confirmed", reviewerComment: "Attempting to override a blocked test.",
+    })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
   });
 });

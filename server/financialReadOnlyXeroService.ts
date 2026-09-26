@@ -6,12 +6,14 @@ import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const XERO_IDENTITY_BASE = "https://api.xero.com/connections";
 const MAX_FINANCIAL_PREFLIGHTS = 25;
+const EXPECTED_AP_TENANT_LABEL = "CONTAINERZONE";
 
 export type FinancialXeroConnectionStatus = {
   configured: boolean;
   tokenState: "missing" | "expired" | "expiring_soon" | "valid";
   tenantName: string | null;
   tenantIdHint: string | null;
+  tenantId: string | null;
   scopeConfigured: boolean;
   readOnlyGuard: true;
 };
@@ -19,6 +21,7 @@ export type FinancialXeroConnectionStatus = {
 export type FinancialXeroConnectionTest = FinancialXeroConnectionStatus & {
   outcome: "passed" | "blocked" | "failed";
   organisationName: string | null;
+  expectedTenantLabel: string;
   checkedAt: Date;
   message: string;
 };
@@ -64,7 +67,7 @@ function tenantHint(tenantId: string | null | undefined): string | null {
 
 function connectionBase(token: Awaited<ReturnType<typeof getXeroToken>>): FinancialXeroConnectionStatus {
   if (!token) return {
-    configured: false, tokenState: "missing", tenantName: null, tenantIdHint: null, scopeConfigured: false, readOnlyGuard: true,
+    configured: false, tokenState: "missing", tenantName: null, tenantIdHint: null, tenantId: null, scopeConfigured: false, readOnlyGuard: true,
   };
   const millis = token.expiresAt.getTime() - Date.now();
   return {
@@ -72,6 +75,7 @@ function connectionBase(token: Awaited<ReturnType<typeof getXeroToken>>): Financ
     tokenState: millis <= 0 ? "expired" : millis < 10 * 60_000 ? "expiring_soon" : "valid",
     tenantName: token.tenantName ?? null,
     tenantIdHint: tenantHint(token.tenantId),
+    tenantId: token.tenantId ?? null,
     scopeConfigured: Boolean(token.scope?.includes("accounting.invoices")),
     readOnlyGuard: true,
   };
@@ -115,7 +119,7 @@ export async function testFinancialXeroConnection(): Promise<FinancialXeroConnec
   const base = connectionBase(token);
   const checkedAt = new Date();
   if (!token || base.tokenState === "expired") {
-    return { ...base, outcome: "blocked", organisationName: null, checkedAt, message: "AP Management has no usable Xero token for a read-only test." };
+    return { ...base, outcome: "blocked", organisationName: null, expectedTenantLabel: EXPECTED_AP_TENANT_LABEL, checkedAt, message: "AP Management has no usable Xero token for a read-only test." };
   }
   try {
     const auth = await readOnlyAuth();
@@ -128,9 +132,13 @@ export async function testFinancialXeroConnection(): Promise<FinancialXeroConnec
       }), { forceRefresh: true }),
     ]);
     const organisationName = organisation?.Organisations?.[0]?.Name ?? connections?.[0]?.tenantName ?? auth.tenantName;
-    return { ...base, outcome: "passed", organisationName: organisationName ?? null, checkedAt, message: "Read-only organisation and connection checks passed. No Xero write endpoint was called." };
+    const matchedExpectedTenant = String(organisationName ?? "").trim().toUpperCase().includes(EXPECTED_AP_TENANT_LABEL);
+    if (!matchedExpectedTenant) {
+      return { ...base, outcome: "failed", organisationName: organisationName ?? null, expectedTenantLabel: EXPECTED_AP_TENANT_LABEL, checkedAt, message: `Connected Xero organisation does not match the expected AP tenant label ${EXPECTED_AP_TENANT_LABEL}. No Xero write endpoint was called.` };
+    }
+    return { ...base, outcome: "passed", organisationName: organisationName ?? null, expectedTenantLabel: EXPECTED_AP_TENANT_LABEL, checkedAt, message: "Read-only organisation and connection checks passed for the expected AP tenant. No Xero write endpoint was called." };
   } catch (error) {
-    return { ...base, outcome: "failed", organisationName: null, checkedAt, message: safeMessage(error) };
+    return { ...base, outcome: "failed", organisationName: null, expectedTenantLabel: EXPECTED_AP_TENANT_LABEL, checkedAt, message: safeMessage(error) };
   }
 }
 
