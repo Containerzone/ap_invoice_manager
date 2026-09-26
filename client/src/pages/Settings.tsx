@@ -22,6 +22,7 @@ export default function Settings() {
   const enableMicrosoftMutation = trpc.microsoft.enableInboxProcessing.useMutation();
 
   const utils = trpc.useUtils();
+  const xeroExpired = Boolean(xeroStatus?.expiresAt && new Date(xeroStatus.expiresAt).getTime() <= Date.now());
 
   const handleXeroConnect = async () => {
     try {
@@ -93,6 +94,18 @@ export default function Settings() {
             </div>
           ) : xeroStatus?.connected ? (
             <div className="space-y-4">
+              {xeroExpired && (
+                <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4">
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-900">Xero connection needs reconnection</p>
+                    <p className="mt-0.5 text-sm text-amber-800">
+                      The saved connection is for <strong>{xeroStatus.tenantName ?? "the previous organisation"}</strong>, but its access window has expired.
+                      Select <strong>Reconnect Xero</strong>, complete consent, and wait for the confirmation screen before returning here.
+                    </p>
+                  </div>
+                </div>
+              )}
               {xeroStatus.rateLimit?.active && (
                 <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-300 rounded-xl">
                   <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
@@ -131,47 +144,47 @@ export default function Settings() {
                 </div>
               )}
               <div className={`flex items-start gap-3 p-4 rounded-xl border ${
-                xeroStatus.hasAttachmentsScope
+                xeroStatus.hasAttachmentsScope && !xeroExpired
                   ? "bg-emerald-50 border-emerald-200"
-                  : "bg-muted/40 border-border"
+                  : "bg-amber-50 border-amber-200"
               }`}>
                 <CheckCircle2 className={`h-5 w-5 shrink-0 mt-0.5 ${
-                  xeroStatus.hasAttachmentsScope ? "text-emerald-500" : "text-muted-foreground"
+                  xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-500" : "text-amber-500"
                 }`} />
                 <div>
                   <p className={`text-sm font-semibold ${
-                    xeroStatus.hasAttachmentsScope ? "text-emerald-800" : "text-foreground"
-                  }`}>Connected to Xero</p>
+                    xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-800" : "text-amber-900"
+                  }`}>{xeroExpired ? "Xero connection expired" : "Connected to Xero"}</p>
                   {xeroStatus.tenantName && (
                     <p className={`text-sm mt-0.5 ${
-                      xeroStatus.hasAttachmentsScope ? "text-emerald-700" : "text-muted-foreground"
+                    xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-700" : "text-amber-800"
                     }`}>
                       Organisation: <strong>{xeroStatus.tenantName}</strong>
                     </p>
                   )}
                   {xeroStatus.expiresAt && (
                     <p className={`text-xs mt-1 ${
-                      xeroStatus.hasAttachmentsScope ? "text-emerald-600" : "text-muted-foreground"
-                    }`}>
-                      Token expires: {new Date(xeroStatus.expiresAt).toLocaleString("en-AU")}
+                    xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-600" : "text-amber-700"
+                  }`}>
+                      Token {xeroExpired ? "expired" : "expires"}: {new Date(xeroStatus.expiresAt).toLocaleString("en-AU")}
                     </p>
                   )}
                   <p className={`text-xs mt-1 ${
-                    xeroStatus.hasAttachmentsScope ? "text-emerald-600" : "text-amber-600 font-medium"
+                    xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-600" : "text-amber-700 font-medium"
                   }`}>
-                    PDF attachments: {xeroStatus.hasAttachmentsScope ? "✓ Enabled" : "✗ Missing scope — re-authenticate required"}
+                    PDF attachments: {xeroStatus.hasAttachmentsScope && !xeroExpired ? "✓ Enabled" : "✗ Reconnect required"}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <Button
-                  variant={xeroStatus.hasAttachmentsScope ? "outline" : "default"}
+                  variant={xeroStatus.hasAttachmentsScope && !xeroExpired ? "outline" : "default"}
                   size="sm"
                   className="gap-2"
                   onClick={handleXeroConnect}
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  Re-authenticate
+                  {xeroExpired ? "Reconnect Xero" : "Re-authenticate"}
                 </Button>
                 <Button
                   variant="outline"

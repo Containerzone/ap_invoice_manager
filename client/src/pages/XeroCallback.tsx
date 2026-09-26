@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
-import { Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+type CallbackStatus = "loading" | "success" | "warning" | "error";
 
 export default function XeroCallback() {
   const [, setLocation] = useLocation();
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [status, setStatus] = useState<CallbackStatus>("loading");
   const [message, setMessage] = useState("");
 
   const callbackMutation = trpc.xero.callback.useMutation();
@@ -31,9 +33,16 @@ export default function XeroCallback() {
 
     callbackMutation
       .mutateAsync({ code, redirectUri })
-      .then(() => {
+      .then((result) => {
+        if (result.connectionHealth.outcome !== "passed") {
+          setStatus("warning");
+          setMessage(
+            `Consent was saved for ${result.tenantName}, but the immediate GET-only tenant check needs attention: ${result.connectionHealth.message}`,
+          );
+          return;
+        }
         setStatus("success");
-        setMessage("Xero connected successfully");
+        setMessage(`Connected and GET-only verified for ${result.tenantName}`);
         setTimeout(() => setLocation("/settings"), 2000);
       })
       .catch((err: any) => {
@@ -62,10 +71,22 @@ export default function XeroCallback() {
               <CheckCircle2 className="h-8 w-8 text-emerald-500" />
             </div>
             <div>
-              <p className="text-base font-semibold text-foreground">Connected!</p>
+              <p className="text-base font-semibold text-foreground">Connected and verified</p>
               <p className="text-sm text-muted-foreground mt-1">{message}</p>
               <p className="text-xs text-muted-foreground mt-1">Redirecting to settings...</p>
             </div>
+          </>
+        )}
+        {status === "warning" && (
+          <>
+            <div className="h-16 w-16 rounded-2xl bg-amber-50 flex items-center justify-center">
+              <AlertTriangle className="h-8 w-8 text-amber-500" />
+            </div>
+            <div>
+              <p className="text-base font-semibold text-foreground">Connection needs review</p>
+              <p className="text-sm text-muted-foreground mt-1">{message}</p>
+            </div>
+            <Button variant="outline" onClick={() => setLocation("/settings")}>Return to Settings</Button>
           </>
         )}
         {status === "error" && (
@@ -77,9 +98,7 @@ export default function XeroCallback() {
               <p className="text-base font-semibold text-foreground">Connection Failed</p>
               <p className="text-sm text-muted-foreground mt-1">{message}</p>
             </div>
-            <Button variant="outline" onClick={() => setLocation("/settings")}>
-              Back to Settings
-            </Button>
+            <Button variant="outline" onClick={() => setLocation("/settings")}>Back to Settings</Button>
           </>
         )}
       </div>

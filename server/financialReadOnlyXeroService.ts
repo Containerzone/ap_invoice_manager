@@ -2,11 +2,12 @@ import axios from "axios";
 import { getXeroToken } from "./db";
 import { runCachedXeroGet, XERO_CACHE_TTL, type XeroRequestAuth } from "./xeroRequestManager";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
+import { EXPECTED_AP_XERO_TENANT_LABEL } from "./xeroService";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const XERO_IDENTITY_BASE = "https://api.xero.com/connections";
 const MAX_FINANCIAL_PREFLIGHTS = 25;
-const EXPECTED_AP_TENANT_LABEL = "CONTAINERZONE";
+const EXPECTED_AP_TENANT_LABEL = EXPECTED_AP_XERO_TENANT_LABEL;
 
 export type FinancialXeroConnectionStatus = {
   configured: boolean;

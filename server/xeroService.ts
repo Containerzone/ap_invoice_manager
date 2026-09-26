@@ -10,6 +10,21 @@ import {
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const DEFAULT_BILL_ACCOUNT_CODE = "310";
+export const EXPECTED_AP_XERO_TENANT_LABEL = "CONTAINERZONE";
+
+export type XeroTenant = { tenantId: string; tenantName: string };
+
+/**
+ * AP Management is deliberately bound to the ContainerZone tenant.  OAuth may
+ * return multiple connections; never silently select the first one, because it
+ * can be a different organisation in the administrator's Xero account.
+ */
+export function selectExpectedApXeroTenant(tenants: XeroTenant[]): XeroTenant | null {
+  const matches = tenants.filter((tenant) =>
+    tenant.tenantName.trim().toUpperCase().includes(EXPECTED_AP_XERO_TENANT_LABEL),
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
 
 /**
  * Xero rejects blank AccountCode values. Historic Xero PO lines can return an

@@ -460,3 +460,10 @@
 - [x] Validate 39 test files / 231 tests plus TypeScript and production build; no financial validation/candidate source contains Xero write methods.
 - [x] Record baseline gate evidence: D702903 candidate lookup blocked by VTiger's expired/invalid read session; Xero health check blocked by the missing/expired AP token. No baseline shadow workflow test was run.
 - [ ] Required user gate: reauthenticate AP Xero in Settings → Xero Integration and verify the ContainerZone tenant via Financial Operations. AP/IT must also restore valid VTiger read-only access; then restart exact named-candidate shadow validation, one reviewed workflow family at a time.
+
+## Xero Reconnection Clarity and Tenant Guard (Session 23)
+- [x] Investigate the post-confirmation gate: the stored AP token was for `CONTAINERZONE` but had expired before the GET-only check; VTiger read access remains rejected as expired/invalid.
+- [x] Prevent silent first-tenant selection during AP OAuth completion; only one expected `CONTAINERZONE` connection is accepted and the callback immediately runs an audit-logged GET-only tenant verification.
+- [x] Make expired Xero connection state explicit in Settings and show a separate callback warning if consent succeeds but GET-only verification does not.
+- [x] Validate TypeScript, focused reconnection coverage and full regression suite (39 files / 233 tests) plus production build.
+- [ ] Required user gate: publish this checkpoint, then select **Reconnect Xero** from Settings and complete the `CONTAINERZONE` consent flow. Remain on the callback until it says **Connected and verified**. VTiger read-only access also still needs AP/IT renewal before a named candidate can progress.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatXeroUtcDate, resolveXeroBillAccountCode } from "./xeroService";
+import { formatXeroUtcDate, resolveXeroBillAccountCode, selectExpectedApXeroTenant } from "./xeroService";
 
 describe("resolveXeroBillAccountCode", () => {
   it("retains an explicitly configured Xero account code", () => {
@@ -23,5 +23,22 @@ describe("formatXeroUtcDate", () => {
     expect(formatXeroUtcDate("2026-08-31T00:00:00.000Z")).toBe("2026-08-31");
     expect(formatXeroUtcDate("not-a-date")).toBeUndefined();
     expect(formatXeroUtcDate(null)).toBeUndefined();
+  });
+});
+
+describe("selectExpectedApXeroTenant", () => {
+  it("selects the one ContainerZone tenant instead of assuming the first connection", () => {
+    expect(selectExpectedApXeroTenant([
+      { tenantId: "other", tenantName: "Other Organisation" },
+      { tenantId: "ap", tenantName: "ContainerZone" },
+    ])).toEqual({ tenantId: "ap", tenantName: "ContainerZone" });
+  });
+
+  it("blocks OAuth completion when the expected tenant is missing or ambiguous", () => {
+    expect(selectExpectedApXeroTenant([{ tenantId: "other", tenantName: "Other Organisation" }])).toBeNull();
+    expect(selectExpectedApXeroTenant([
+      { tenantId: "ap-1", tenantName: "ContainerZone" },
+      { tenantId: "ap-2", tenantName: "ContainerZone Sandbox" },
+    ])).toBeNull();
   });
 });

@@ -67,12 +67,17 @@ vi.mock("./extractionService", () => ({
 }));
 
 vi.mock("./xeroService", () => ({
+  EXPECTED_AP_XERO_TENANT_LABEL: "CONTAINERZONE",
   getXeroAuthUrl: vi.fn().mockReturnValue("https://xero.com/oauth"),
   exchangeXeroCode: vi.fn().mockResolvedValue({
     accessToken: "access", refreshToken: "refresh",
     expiresAt: new Date(), scope: "openid",
   }),
   getXeroTenants: vi.fn().mockResolvedValue([{ tenantId: "t1", tenantName: "Test Org" }]),
+  selectExpectedApXeroTenant: vi.fn((tenants: Array<{ tenantId: string; tenantName: string }>) => {
+    const matches = tenants.filter((tenant) => tenant.tenantName.toUpperCase().includes("CONTAINERZONE"));
+    return matches.length === 1 ? matches[0] : null;
+  }),
   findXeroBillByInvoiceNumber: vi.fn().mockResolvedValue(null),
   getXeroBillById: vi.fn().mockResolvedValue(null),
   findXeroPurchaseOrderByNumber: vi.fn().mockResolvedValue(null),
@@ -83,6 +88,19 @@ vi.mock("./xeroService", () => ({
   getXeroPOPaymentStatus: vi.fn().mockResolvedValue({ isPaid: false, paidAmount: null, paidDate: null }),
   convertPOsToBill: vi.fn().mockResolvedValue({ invoiceId: "x2", invoiceNumber: "BILL-002" }),
   updateXeroPODetails: vi.fn().mockResolvedValue(true),
+}));
+
+vi.mock("./financialReadOnlyXeroService", () => ({
+  getFinancialXeroConnectionStatus: vi.fn().mockResolvedValue({ configured: true, tokenState: "valid" }),
+  testFinancialXeroConnection: vi.fn().mockResolvedValue({
+    outcome: "passed", organisationName: "CONTAINERZONE", tenantId: "t-containerzone", expectedTenantLabel: "CONTAINERZONE", checkedAt: new Date(), message: "GET-only verified",
+  }),
+  preflightFinancialXeroIntents: vi.fn().mockResolvedValue([]),
+  previewHistoricalXeroReferences: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("./financialWorkflowDb", () => ({
+  createFinancialIntegrationAudit: vi.fn().mockResolvedValue(1),
 }));
 
 vi.mock("./emailService", () => ({

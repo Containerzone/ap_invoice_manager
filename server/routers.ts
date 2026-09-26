@@ -55,6 +55,7 @@ import {
   getXeroAuthUrl,
   exchangeXeroCode,
   getXeroTenants,
+  selectExpectedApXeroTenant,
   findXeroBillByInvoiceNumber,
   getXeroBillById,
   findXeroPurchaseOrderByNumber,
@@ -2453,8 +2454,13 @@ export const appRouter = router({
 
         const tokens = await exchangeXeroCode(input.code, clientId, clientSecret, input.redirectUri);
         const tenants = await getXeroTenants(tokens.accessToken);
-        const tenant = tenants[0];
-        if (!tenant) throw new TRPCError({ code: "BAD_REQUEST", message: "No Xero tenants found" });
+        const tenant = selectExpectedApXeroTenant(tenants);
+        if (!tenant) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "The Xero consent did not return one unambiguous CONTAINERZONE tenant. Select the ContainerZone organisation and reconnect again.",
+          });
+        }
 
         await upsertXeroToken({
           tenantId: tenant.tenantId,
@@ -2476,7 +2482,26 @@ export const appRouter = router({
           actorId: ctx.user.id,
         });
 
-        return { success: true, tenantName: tenant.tenantName };
+        // This is intentionally a GET-only verification immediately after OAuth.
+        // It checks the tenant that was just persisted but cannot refresh tokens or
+        // use any financial mutation helper.
+        const connectionHealth = await testFinancialXeroConnection();
+        await createFinancialIntegrationAudit({
+          integration: "xero",
+          action: "post_oauth_get_only_tenant_check",
+          outcome: connectionHealth.outcome,
+          tenantName: connectionHealth.organisationName,
+          tenantId: connectionHealth.tenantId,
+          details: {
+            expectedTenantLabel: connectionHealth.expectedTenantLabel,
+            readOnly: true,
+            message: connectionHealth.message,
+          },
+          actorId: ctx.user.id,
+          checkedAt: connectionHealth.checkedAt,
+        });
+
+        return { success: true, tenantName: tenant.tenantName, connectionHealth };
       }),
 
     disconnect: adminProcedure.mutation(async () => {
