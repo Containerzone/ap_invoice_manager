@@ -441,3 +441,13 @@
 - [x] Add Financial Operations navigation and workbench for dashboards, PO/customer-invoice proposals, run history, review queue, disabled schedule state and admin-only non-secret mappings.
 - [x] Add focused coverage for all workflow calculations/references/GST/idempotency plus authenticated endpoint and permission/disabled-schedule guardrails. Full suite passes after integration.
 - [ ] Future controlled cutover only: configure production financial webhook secret and confirm AP-owned VTiger/Xero credentials, then shadow-validate each family with real current VTiger records before requesting document-specific live approval.
+
+## Financial Trigger Migration — Phase 1.5 Shadow Validation and Cutover Readiness (Session 20)
+- [x] Add additive shadow-test evidence and non-secret configuration-audit migration `0025_furry_sauron.sql`.
+- [x] Add admin Financial Automation Settings with server-enforced no-write mode, AP-owned VTiger/Xero read-only health tests, webhook readiness, named rules and disabled schedule intent.
+- [x] Add Shadow Test Register, field-level evidence, source/proposal/preflight review, needs-data recording and CSV export.
+- [x] Add bounded GET-only historical Xero import preview; unmatched and ambiguous candidates require review and no preview results are persisted.
+- [x] Test Xero shadow preflight for no mutation paths; run TypeScript, full regression suite (38 files / 221 tests) and production build.
+- [x] Run the AP-owned VTiger GET-only connection check; record 14 needs-data branch rows against AP-held Deal D702903 rather than invent source data. Xero validation remains safely blocked pending AP Xero re-authentication.
+- [x] Create the Phase 1.5 Shadow Validation Handoff Report and checkpoint `e623b766`.
+- [ ] Decision gate — do not start live cutover until an administrator re-authenticates AP Xero, provides named current VTiger record IDs and expected facts, and explicitly approves a document-specific Draft-only cutover.
