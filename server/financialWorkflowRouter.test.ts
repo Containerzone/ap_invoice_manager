@@ -28,6 +28,9 @@ vi.mock("./financialWorkflowDb", () => ({
   getFinancialExceptionComments: vi.fn().mockResolvedValue([]),
   getFinancialOperationsDashboard: vi.fn().mockResolvedValue({ runsToday: 0 }),
   getFinancialWorkflowConfig: vi.fn().mockResolvedValue([]),
+  getFinancialWorkflowConfigAudits: vi.fn().mockResolvedValue([]),
+  createFinancialShadowTest: vi.fn().mockResolvedValue(901),
+  getFinancialShadowTests: vi.fn().mockResolvedValue([]),
   getFinancialWorkflowExceptions: vi.fn().mockResolvedValue([]),
   getFinancialWorkflowRunDetail: vi.fn().mockResolvedValue(undefined),
   getFinancialWorkflowRuns: vi.fn().mockResolvedValue([]),
@@ -39,7 +42,15 @@ vi.mock("./financialWorkflowDb", () => ({
 
 vi.mock("./vtigerFinancialReadService", () => ({
   getVtigerFinancialConnectionStatus: vi.fn().mockReturnValue({ configured: true, missing: [] }),
+  testVtigerFinancialConnection: vi.fn().mockResolvedValue({ configured: true, missing: [], outcome: "passed" }),
   retrieveCurrentVtigerFinancialRecord: vi.fn().mockResolvedValue({ customerOrganisationName: "Current customer", modifiedtime: "2026-09-25 12:00:00" }),
+}));
+
+vi.mock("./financialReadOnlyXeroService", () => ({
+  getFinancialXeroConnectionStatus: vi.fn().mockResolvedValue({ configured: true, tokenState: "valid" }),
+  testFinancialXeroConnection: vi.fn().mockResolvedValue({ outcome: "passed" }),
+  preflightFinancialXeroIntents: vi.fn().mockResolvedValue([]),
+  previewHistoricalXeroReferences: vi.fn().mockResolvedValue([]),
 }));
 
 function context(role: "admin" | "user"): TrpcContext {
@@ -93,5 +104,20 @@ describe("financial operations tRPC safeguards", () => {
     expect(evaluateAndPersistFinancialWorkflow).toHaveBeenCalledWith(expect.objectContaining({
       triggerType: "re_evaluation", sourceRecordId: "4x12345", sourceData: expect.objectContaining({ customerOrganisationName: "Current customer" }),
     }), 1);
+  });
+
+  it("records a named current-record shadow test with no Xero write permission", async () => {
+    const { appRouter } = await import("./routers");
+    const { preflightFinancialXeroIntents } = await import("./financialReadOnlyXeroService");
+    const { createFinancialShadowTest } = await import("./financialWorkflowDb");
+    const result = await appRouter.createCaller(context("admin")).financialOperations.validateCurrentVtigerRecord({
+      workflowType: "main_customer_invoice", branch: "Main customer invoice", vtigerRecordId: "4x12345", sourceRecordNumber: "D700001",
+      expectedResult: { proposedDocumentNumbers: ["INV-700001"] },
+    });
+    expect(result).toMatchObject({ mode: "shadow", xeroWritePermitted: false, xeroWriteMethodsCalled: [], testId: 901 });
+    expect(preflightFinancialXeroIntents).toHaveBeenCalledWith([]);
+    expect(createFinancialShadowTest).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRecordNumber: "D700001", xeroPreflight: expect.objectContaining({ readOnly: true, xeroWriteMethodsCalled: [] }),
+    }));
   });
 });

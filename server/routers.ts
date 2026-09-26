@@ -89,18 +89,36 @@ import {
   getFinancialExceptionComments,
   getFinancialOperationsDashboard,
   getFinancialWorkflowConfig,
+  getFinancialWorkflowConfigAudits,
   getFinancialWorkflowExceptions,
   getFinancialWorkflowRunDetail,
   getFinancialWorkflowRuns,
   getFinancialWorkflowSchedules,
+  createFinancialShadowTest,
+  getFinancialShadowTests,
   resolveFinancialWorkflowException,
   upsertFinancialWorkflowConfig,
   upsertFinancialWorkflowSchedule,
 } from "./financialWorkflowDb";
-import { getVtigerFinancialConnectionStatus, retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
+import { getVtigerFinancialConnectionStatus, retrieveCurrentVtigerFinancialRecord, testVtigerFinancialConnection } from "./vtigerFinancialReadService";
+import { getFinancialXeroConnectionStatus, preflightFinancialXeroIntents, previewHistoricalXeroReferences, testFinancialXeroConnection } from "./financialReadOnlyXeroService";
+import {
+  FINANCIAL_AUTOMATION_RULE_CONFIG_KEY,
+  FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY,
+  resolveFinancialAutomationRules,
+} from "./financialAutomationRules";
+import {
+  compareShadowExpectedResult,
+  mapVtigerFinancialSource,
+  sourceRecordNumberFromVtiger,
+  sourceRefreshTimeFromVtiger,
+  type ShadowExpectedResult,
+} from "./financialShadowValidation";
+import { getFinancialShadowWebhookStatus } from "./financialWorkflowWebhook";
 import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 
 // ─── Admin guard ──────────────────────────────────────────────────────────────
 
@@ -275,6 +293,110 @@ async function refreshXeroPoResults(
   }
 }
 
+const shadowExpectedResultSchema = z.object({
+  proposedDocumentNumbers: z.array(z.string().max(128)).max(25).optional(),
+  partyNames: z.array(z.string().max(255).nullable()).max(25).optional(),
+  accountCodes: z.array(z.string().max(32).nullable()).max(25).optional(),
+  itemCodes: z.array(z.string().max(128)).max(50).optional(),
+  gstTreatments: z.array(z.string().max(64)).max(25).optional(),
+  issueDates: z.array(z.string().max(32).nullable()).max(25).optional(),
+  dueDates: z.array(z.string().max(32).nullable()).max(25).optional(),
+  totals: z.array(z.number().finite()).max(25).optional(),
+  lineCounts: z.array(z.number().int().min(0).max(100)).max(25).optional(),
+  assertions: z.record(z.string().max(240), z.union([z.string().max(500), z.number().finite(), z.boolean(), z.null()])).optional(),
+});
+
+type ShadowTestInput = {
+  workflowType: FinancialWorkflowType;
+  branch: string;
+  sourceRecordId?: string;
+  sourceRecordNumber?: string;
+  sourceRecordType?: string;
+  sourceData: Record<string, unknown>;
+  existingDocumentNumbers?: string[];
+  expectedResult: ShadowExpectedResult;
+  sourceRefreshedAt?: Date;
+  createdBy: number;
+  idempotencySalt: string;
+};
+
+/**
+ * Evaluates an AP-side proposal and performs only exact GET-only Xero
+ * preflight reads. Its output is evidence and cannot invoke a write operation.
+ */
+async function executeFinancialShadowTest(input: ShadowTestInput) {
+  const result = await evaluateAndPersistFinancialWorkflow({
+    workflowType: input.workflowType,
+    triggerType: "re_evaluation",
+    sourceRecordId: input.sourceRecordId,
+    sourceRecordNumber: input.sourceRecordNumber,
+    sourceRecordType: input.sourceRecordType,
+    sourceData: input.sourceData,
+    existingDocumentNumbers: input.existingDocumentNumbers,
+    idempotencySalt: input.idempotencySalt,
+  }, input.createdBy);
+
+  let preflight: Awaited<ReturnType<typeof preflightFinancialXeroIntents>> = [];
+  let preflightProblem: string | null = null;
+  try {
+    preflight = await preflightFinancialXeroIntents(result.evaluation.intents);
+  } catch (error: any) {
+    preflightProblem = error?.message ?? "Xero read-only preflight could not be completed.";
+  }
+  const comparison = compareShadowExpectedResult(input.expectedResult, result.evaluation, preflight);
+  const actualEvidence = { ...comparison.actual, sourceValues: input.sourceData };
+  const hasDifferences = comparison.comparisons.some((entry) => entry.outcome === "different");
+  const hasExistingDocument = preflight.some((entry) => entry.duplicateState === "found" || entry.duplicateState === "ambiguous");
+  const hasBlockedPreflight = Boolean(preflightProblem) || preflight.some((entry) => entry.duplicateState === "blocked" || entry.duplicateState === "error");
+  const evaluationHeld = result.evaluation.outcome === "failed" || result.evaluation.intents.some((intent) => intent.validationStatus === "held");
+  const status = !comparison.hasExpectedFacts
+    ? "needs_data"
+    : hasBlockedPreflight
+      ? "blocked"
+      : hasExistingDocument || evaluationHeld
+        ? "held"
+        : hasDifferences
+          ? "failed"
+          : "passed";
+  const differenceExplanation = [
+    preflightProblem,
+    hasExistingDocument ? "One or more proposed document numbers already exists in Xero; the candidate is held for review." : null,
+    evaluationHeld ? "The shadow evaluator held or failed at least one proposed action; see its validation issues." : null,
+    hasDifferences ? "One or more supplied expected fields differs from the shadow result." : null,
+    !comparison.hasExpectedFacts ? "Expected result data has not yet been supplied for this real-source test." : null,
+  ].filter(Boolean).join(" ") || null;
+  const testId = await createFinancialShadowTest({
+    testKey: `phase15-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    workflowType: input.workflowType,
+    branch: input.branch,
+    sourceRecordType: input.sourceRecordType ?? null,
+    sourceRecordId: input.sourceRecordId ?? null,
+    sourceRecordNumber: input.sourceRecordNumber ?? null,
+    expectedResult: input.expectedResult,
+    actualResult: actualEvidence,
+    fieldComparisons: comparison.comparisons,
+    xeroPreflight: { results: preflight, error: preflightProblem, readOnly: true, xeroWriteMethodsCalled: [] },
+    status,
+    differenceExplanation,
+    sourceRefreshedAt: input.sourceRefreshedAt ?? null,
+    workflowRunId: result.persistence.runId,
+    documentIntentIds: result.persistence.intentIds,
+    exceptionIds: result.persistence.exceptionIds,
+    initiatedBy: input.createdBy,
+  });
+  return {
+    mode: "shadow" as const,
+    xeroWritePermitted: false as const,
+    xeroWriteMethodsCalled: [] as string[],
+    testId,
+    testStatus: status,
+    result,
+    preflight,
+    comparison: { ...comparison, actual: actualEvidence },
+    differenceExplanation,
+  };
+}
+
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
   // ─── Financial trigger migration — phase-one shadow mode ───────────────────
@@ -296,7 +418,95 @@ export const appRouter = router({
       .query(({ input }) => getFinancialExceptionComments(input.exceptionId)),
     schedules: protectedProcedure.query(() => getFinancialWorkflowSchedules()),
     config: adminProcedure.query(() => getFinancialWorkflowConfig()),
+    configAudits: adminProcedure.query(() => getFinancialWorkflowConfigAudits()),
+    shadowTests: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(500).optional() }).optional())
+      .query(({ input }) => getFinancialShadowTests(input?.limit ?? 250)),
     vtigerReadStatus: adminProcedure.query(() => getVtigerFinancialConnectionStatus()),
+    automationSettings: adminProcedure.query(async () => {
+      const [config, schedules, xero, vtiger] = await Promise.all([
+        getFinancialWorkflowConfig(),
+        getFinancialWorkflowSchedules(),
+        getFinancialXeroConnectionStatus(),
+        Promise.resolve(getVtigerFinancialConnectionStatus()),
+      ]);
+      const rules = resolveFinancialAutomationRules(config.find((entry) => entry.configKey === FINANCIAL_AUTOMATION_RULE_CONFIG_KEY)?.configValue);
+      return {
+        mode: "SHADOW / NO WRITE" as const,
+        xeroWritePermitted: false as const,
+        xeroWriteMethodsCalled: [] as string[],
+        vtiger,
+        xero,
+        webhook: getFinancialShadowWebhookStatus(),
+        rules,
+        sourceMapping: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY)?.configValue ?? {},
+        schedules: schedules.filter((schedule) => ["recurring_for_hire", "recurring_storage"].includes(schedule.workflowType)),
+      };
+    }),
+    testVtigerConnection: adminProcedure.mutation(() => testVtigerFinancialConnection()),
+    testXeroConnection: adminProcedure.mutation(() => testFinancialXeroConnection()),
+    historicalImportPreview: adminProcedure.input(z.object({
+      references: z.array(z.string().trim().min(1).max(128)).min(1).max(50),
+    })).mutation(async ({ input }) => ({
+      mode: "preview" as const,
+      persisted: false as const,
+      xeroWritePermitted: false as const,
+      rows: await previewHistoricalXeroReferences(input.references),
+    })),
+    validateCurrentVtigerRecord: adminProcedure.input(z.object({
+      workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
+      branch: z.string().trim().min(1).max(120),
+      vtigerRecordId: z.string().trim().regex(/^\d+x\d+$/i, "Use the VTiger moduleId x recordId format, for example 4x12345."),
+      sourceRecordNumber: z.string().trim().max(128).optional(),
+      sourceRecordType: z.string().trim().max(80).optional(),
+      existingDocumentNumbers: z.array(z.string().trim().max(128)).max(200).optional(),
+      expectedResult: shadowExpectedResultSchema,
+    })).mutation(async ({ input, ctx }) => {
+      const [rawSource, config] = await Promise.all([
+        retrieveCurrentVtigerFinancialRecord(input.vtigerRecordId),
+        getFinancialWorkflowConfig(),
+      ]);
+      const mapping = config.find((entry) => entry.configKey === FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY)?.configValue;
+      const mapped = mapVtigerFinancialSource(rawSource, mapping as Record<string, unknown> | undefined, input.workflowType as FinancialWorkflowType);
+      const sourceData = {
+        ...mapped.sourceData,
+        _shadowRawSource: rawSource,
+        _shadowAppliedMappings: mapped.appliedMappings,
+      };
+      return executeFinancialShadowTest({
+        workflowType: input.workflowType as FinancialWorkflowType,
+        branch: input.branch,
+        sourceRecordId: input.vtigerRecordId,
+        sourceRecordNumber: input.sourceRecordNumber || sourceRecordNumberFromVtiger(rawSource),
+        sourceRecordType: input.sourceRecordType ?? "VTiger record",
+        sourceData,
+        existingDocumentNumbers: input.existingDocumentNumbers,
+        expectedResult: input.expectedResult as ShadowExpectedResult,
+        sourceRefreshedAt: sourceRefreshTimeFromVtiger(rawSource, new Date()),
+        createdBy: ctx.user.id,
+        idempotencySalt: `phase15:${input.vtigerRecordId}:${Date.now()}`,
+      });
+    }),
+    recordBlockedShadowTest: adminProcedure.input(z.object({
+      workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
+      branch: z.string().trim().min(1).max(120),
+      sourceRecordNumber: z.string().trim().max(128).optional(),
+      sourceRecordType: z.string().trim().max(80).optional(),
+      missingCondition: z.string().trim().min(8).max(10_000),
+      expectedResult: shadowExpectedResultSchema.optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const testId = await createFinancialShadowTest({
+        testKey: `phase15-blocked-${Date.now()}-${randomUUID().slice(0, 8)}`,
+        workflowType: input.workflowType,
+        branch: input.branch,
+        sourceRecordType: input.sourceRecordType ?? "VTiger record",
+        sourceRecordNumber: input.sourceRecordNumber ?? null,
+        expectedResult: input.expectedResult ?? {},
+        status: "needs_data",
+        differenceExplanation: `Blocked — test data required: ${input.missingCondition}`,
+        initiatedBy: ctx.user.id,
+      });
+      return { testId, status: "needs_data" as const, xeroWritePermitted: false as const };
+    }),
     dryRun: adminProcedure.input(z.object({
       workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
       sourceRecordId: z.string().trim().max(128).optional(),

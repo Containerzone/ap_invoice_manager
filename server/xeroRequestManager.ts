@@ -22,7 +22,11 @@ const inFlightReads = new Map<string, Promise<unknown>>();
 function isExpectedXeroNotFound(operationName: string, error: any): boolean {
   return error?.response?.status === 404 && (
     operationName.startsWith("GET purchase-order:") ||
-    operationName.startsWith("GET invoice-id:")
+    operationName.startsWith("GET invoice-id:") ||
+    // Phase 1.5 shadow preflight deliberately probes exact candidate records,
+    // contacts and items. A missing candidate is validation evidence, not an
+    // operational outage that should generate an alert email.
+    operationName.startsWith("GET financial-read:")
   );
 }
 

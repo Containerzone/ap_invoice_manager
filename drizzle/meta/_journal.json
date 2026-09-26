@@ -176,6 +176,13 @@
       "when": 1790341173025,
       "tag": "0024_adorable_inhumans",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1790400726501,
+      "tag": "0025_furry_sauron",
+      "breakpoints": true
     }
   ]
 }

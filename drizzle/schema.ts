@@ -678,3 +678,52 @@ export const financialWorkflowConfig = mysqlTable("financial_workflow_config", {
 
 export type FinancialWorkflowConfig = typeof financialWorkflowConfig.$inferSelect;
 export type InsertFinancialWorkflowConfig = typeof financialWorkflowConfig.$inferInsert;
+
+// ─── Financial Shadow Validation Evidence ───────────────────────────────────
+//
+// Phase 1.5 remains evidence-only. These records make each administrator-led
+// read-only test reproducible without creating or changing a Xero document.
+
+export const financialWorkflowConfigAudits = mysqlTable("financial_workflow_config_audits", {
+  id: int("id").autoincrement().primaryKey(),
+  configKey: varchar("configKey", { length: 128 }).notNull(),
+  previousValue: json("previousValue"),
+  nextValue: json("nextValue").notNull(),
+  description: varchar("description", { length: 500 }),
+  changedBy: int("changedBy").notNull(),
+  changedAt: timestamp("changedAt").defaultNow().notNull(),
+});
+
+export type FinancialWorkflowConfigAudit = typeof financialWorkflowConfigAudits.$inferSelect;
+export type InsertFinancialWorkflowConfigAudit = typeof financialWorkflowConfigAudits.$inferInsert;
+
+export const financialShadowTests = mysqlTable("financial_shadow_tests", {
+  id: int("id").autoincrement().primaryKey(),
+  testKey: varchar("testKey", { length: 128 }).notNull(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  branch: varchar("branch", { length: 120 }).notNull(),
+  sourceRecordType: varchar("sourceRecordType", { length: 80 }),
+  sourceRecordId: varchar("sourceRecordId", { length: 128 }),
+  sourceRecordNumber: varchar("sourceRecordNumber", { length: 128 }),
+  expectedResult: json("expectedResult").notNull(),
+  actualResult: json("actualResult"),
+  fieldComparisons: json("fieldComparisons"),
+  xeroPreflight: json("xeroPreflight"),
+  status: mysqlEnum("status", ["pending", "passed", "failed", "held", "needs_data", "blocked"] as const)
+    .default("pending")
+    .notNull(),
+  differenceExplanation: text("differenceExplanation"),
+  sourceRefreshedAt: timestamp("sourceRefreshedAt"),
+  workflowRunId: int("workflowRunId"),
+  documentIntentIds: json("documentIntentIds"),
+  exceptionIds: json("exceptionIds"),
+  initiatedBy: int("initiatedBy"),
+  testedAt: timestamp("testedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  shadowTestKeyUnique: uniqueIndex("financial_shadow_tests_test_key_unique").on(table.testKey),
+}));
+
+export type FinancialShadowTest = typeof financialShadowTests.$inferSelect;
+export type InsertFinancialShadowTest = typeof financialShadowTests.$inferInsert;

@@ -3,7 +3,9 @@ import {
   extraHireRuns,
   financialDocumentIntents,
   financialDocuments,
+  financialShadowTests,
   financialWorkflowConfig,
+  financialWorkflowConfigAudits,
   financialWorkflowExceptionComments,
   financialWorkflowExceptions,
   financialWorkflowRuns,
@@ -12,6 +14,7 @@ import {
   warrantyDocuments,
   workflowSchedules,
   type FinancialWorkflowConfig,
+  type FinancialShadowTest,
   type FinancialWorkflowException,
   type FinancialWorkflowRun,
 } from "../drizzle/schema";
@@ -323,9 +326,84 @@ export async function upsertFinancialWorkflowConfig(
 ): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
+  const prior = (await db.select().from(financialWorkflowConfig)
+    .where(eq(financialWorkflowConfig.configKey, configKey)).limit(1))[0];
   await db.insert(financialWorkflowConfig).values({ configKey, configValue: configValue as any, description, updatedBy }).onDuplicateKeyUpdate({
     set: { configValue: configValue as any, description, updatedBy, updatedAt: new Date() },
   });
+  // Every administrator change to non-secret financial automation settings is
+  // retained as an append-only audit record. Credentials never enter this table.
+  await db.insert(financialWorkflowConfigAudits).values({
+    configKey,
+    previousValue: prior?.configValue ?? null,
+    nextValue: configValue as any,
+    description,
+    changedBy: updatedBy,
+  });
+}
+
+export async function getFinancialWorkflowConfigAudits(limit = 200) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialWorkflowConfigAudits)
+    .orderBy(desc(financialWorkflowConfigAudits.changedAt))
+    .limit(limit);
+}
+
+export type CreateFinancialShadowTest = {
+  testKey: string;
+  workflowType: string;
+  branch: string;
+  sourceRecordType?: string | null;
+  sourceRecordId?: string | null;
+  sourceRecordNumber?: string | null;
+  expectedResult: unknown;
+  actualResult?: unknown;
+  fieldComparisons?: unknown;
+  xeroPreflight?: unknown;
+  status: "pending" | "passed" | "failed" | "held" | "needs_data" | "blocked";
+  differenceExplanation?: string | null;
+  sourceRefreshedAt?: Date | null;
+  workflowRunId?: number | null;
+  documentIntentIds?: number[];
+  exceptionIds?: number[];
+  initiatedBy?: number | null;
+  testedAt?: Date | null;
+};
+
+/** Saves an evidence-only shadow test. The related run remains shadow-only. */
+export async function createFinancialShadowTest(data: CreateFinancialShadowTest): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const result = await db.insert(financialShadowTests).values({
+    testKey: data.testKey,
+    workflowType: data.workflowType,
+    branch: data.branch,
+    sourceRecordType: data.sourceRecordType ?? null,
+    sourceRecordId: data.sourceRecordId ?? null,
+    sourceRecordNumber: data.sourceRecordNumber ?? null,
+    expectedResult: data.expectedResult as any,
+    actualResult: data.actualResult as any,
+    fieldComparisons: data.fieldComparisons as any,
+    xeroPreflight: data.xeroPreflight as any,
+    status: data.status,
+    differenceExplanation: data.differenceExplanation ?? null,
+    sourceRefreshedAt: data.sourceRefreshedAt ?? null,
+    workflowRunId: data.workflowRunId ?? null,
+    documentIntentIds: data.documentIntentIds as any,
+    exceptionIds: data.exceptionIds as any,
+    initiatedBy: data.initiatedBy ?? null,
+    testedAt: data.testedAt ?? new Date(),
+  });
+  return Number((result[0] as any).insertId);
+}
+
+export async function getFinancialShadowTests(limit = 250): Promise<FinancialShadowTest[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialShadowTests)
+    .orderBy(desc(financialShadowTests.testedAt), desc(financialShadowTests.createdAt))
+    .limit(limit);
 }
 
 export async function getFinancialOperationsDashboard() {

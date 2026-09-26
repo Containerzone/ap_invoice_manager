@@ -6,6 +6,12 @@ export type VtigerFinancialConnectionStatus = {
   missing: Array<"VTIGER_URL" | "VTIGER_USERNAME" | "VTIGER_ACCESS_KEY">;
 };
 
+export type VtigerFinancialConnectionTest = VtigerFinancialConnectionStatus & {
+  outcome: "passed" | "blocked" | "failed";
+  checkedAt: Date;
+  message: string;
+};
+
 function config() {
   const url = process.env.VTIGER_URL?.trim().replace(/\/$/, "") ?? "";
   const username = process.env.VTIGER_USERNAME?.trim() ?? "";
@@ -39,6 +45,31 @@ async function vtigerRequest<T>(params: Record<string, string>): Promise<T> {
   const response = await axios.get(endpoint(), { params, timeout: 20_000 });
   if (!response.data?.success) throw new Error(response.data?.error?.message ?? "VTiger read request failed");
   return response.data.result as T;
+}
+
+function safeMessage(error: unknown): string {
+  const response = (error as any)?.response;
+  if (response?.status === 401 || response?.status === 403) return "VTiger rejected the configured AP Management credentials.";
+  if (typeof response?.status === "number") return `VTiger read request returned HTTP ${response.status}.`;
+  return error instanceof Error ? error.message : "VTiger read request could not be completed.";
+}
+
+/**
+ * Verifies configuration with only the VTiger GET challenge endpoint. It does
+ * not create a record, change a workflow URL or invoke any VTiger mutation.
+ */
+export async function testVtigerFinancialConnection(): Promise<VtigerFinancialConnectionTest> {
+  const status = getVtigerFinancialConnectionStatus();
+  const checkedAt = new Date();
+  if (!status.configured) return { ...status, outcome: "blocked", checkedAt, message: "VTiger read-only configuration is incomplete." };
+  try {
+    const { username } = config();
+    const challenge = await vtigerRequest<{ token?: string }>({ operation: "getchallenge", username });
+    if (!challenge?.token) throw new Error("VTiger challenge did not return a usable temporary token.");
+    return { ...status, outcome: "passed", checkedAt, message: "Read-only VTiger challenge passed. No CRM record, workflow URL or schedule was changed." };
+  } catch (error) {
+    return { ...status, outcome: "failed", checkedAt, message: safeMessage(error) };
+  }
 }
 
 /**

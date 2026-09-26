@@ -14,6 +14,16 @@ function configuredShadowWebhookSecret(): string | null {
   return secret || null;
 }
 
+/** Configuration presence only; neither the secret nor any credential is exposed. */
+export function getFinancialShadowWebhookStatus() {
+  return {
+    configured: Boolean(configuredShadowWebhookSecret()),
+    endpointPath: "/api/financial-workflows/shadow-events",
+    acceptedModes: ["shadow", "dry_run"] as const,
+    xeroWritePermitted: false as const,
+  };
+}
+
 function isWorkflowType(value: unknown): value is FinancialWorkflowType {
   return typeof value === "string" && (FINANCIAL_WORKFLOW_TYPES as readonly string[]).includes(value);
 }

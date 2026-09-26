@@ -6,7 +6,12 @@ import {
 import {
   persistFinancialWorkflowEvaluation,
   type PersistedFinancialEvaluation,
+  getFinancialWorkflowConfig,
 } from "./financialWorkflowDb";
+import {
+  FINANCIAL_AUTOMATION_RULE_CONFIG_KEY,
+  resolveFinancialAutomationRules,
+} from "./financialAutomationRules";
 
 /**
  * Single entry point for all first-phase financial triggers. This application
@@ -27,7 +32,17 @@ export async function evaluateAndPersistFinancialWorkflow(
   if (!FINANCIAL_SHADOW_MODE) {
     throw new Error("Financial workflow execution is restricted to shadow mode");
   }
-  const evaluation = evaluateFinancialWorkflow({ ...input });
-  const persistence = await persistFinancialWorkflowEvaluation(input, evaluation, createdBy);
+  const config = await getFinancialWorkflowConfig();
+  const configuredRules = config.find((entry) => entry.configKey === FINANCIAL_AUTOMATION_RULE_CONFIG_KEY)?.configValue;
+  const rules = resolveFinancialAutomationRules(configuredRules);
+  const effectiveInput: FinancialWorkflowInput = { ...input, rules };
+  const evaluation = evaluateFinancialWorkflow(effectiveInput);
+  evaluation.safeRequestSummary = {
+    ...evaluation.safeRequestSummary,
+    effectiveRules: rules,
+    financialShadowMode: true,
+    xeroWriteMethodsCalled: [],
+  };
+  const persistence = await persistFinancialWorkflowEvaluation(effectiveInput, evaluation, createdBy);
   return { evaluation, persistence };
 }

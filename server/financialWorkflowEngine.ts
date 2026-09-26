@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import {
+  DEFAULT_FINANCIAL_AUTOMATION_RULES,
+  type FinancialAutomationRules,
+} from "./financialAutomationRules";
 
 export const FINANCIAL_WORKFLOW_TYPES = [
   "container_control_acquisition",
@@ -31,6 +35,8 @@ export type FinancialWorkflowInput = {
   idempotencySalt?: string;
   sourceData: FinancialSourceData;
   existingDocumentNumbers?: string[];
+  /** Effective non-secret AP automation settings frozen into each shadow run. */
+  rules?: FinancialAutomationRules;
   now?: Date;
 };
 
@@ -86,8 +92,11 @@ export type FinancialWorkflowEvaluation = {
   safeRequestSummary: Record<string, unknown>;
 };
 
-const GST_RATE = 0.1;
 const AUSTRALIA_TZ = "Australia/Sydney";
+
+function rulesOf(input: FinancialWorkflowInput): FinancialAutomationRules {
+  return input.rules ?? DEFAULT_FINANCIAL_AUTOMATION_RULES;
+}
 
 function asText(value: unknown): string | null {
   if (typeof value === "string") return value.trim() || null;
@@ -158,12 +167,13 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function createFinancialIdempotencyKey(input: Pick<FinancialWorkflowInput, "workflowType" | "sourceRecordId" | "sourceRecordNumber" | "sourceData" | "idempotencySalt">): string {
+export function createFinancialIdempotencyKey(input: Pick<FinancialWorkflowInput, "workflowType" | "sourceRecordId" | "sourceRecordNumber" | "sourceData" | "idempotencySalt" | "rules">): string {
   const payload = stableJson({
     workflowType: input.workflowType,
     sourceRecordId: input.sourceRecordId ?? null,
     sourceRecordNumber: input.sourceRecordNumber ?? null,
     idempotencySalt: input.idempotencySalt ?? null,
+    rules: input.rules ?? null,
     sourceData: input.sourceData,
   });
   return createHash("sha256").update(payload).digest("hex");
@@ -188,13 +198,18 @@ export function nextRecurringHirePoNumber(containerControlNumber: string, existi
   throw new Error(`Unable to find a free recurring-hire reference for ${containerControlNumber}`);
 }
 
-function emptyTotals(lineItems: FinancialLineItem[], gstTreatment: "GST_EXCLUSIVE" | "GST_INCLUSIVE" | "PENDING_CONFIGURATION") {
+function emptyTotals(
+  lineItems: FinancialLineItem[],
+  gstTreatment: "GST_EXCLUSIVE" | "GST_INCLUSIVE" | "PENDING_CONFIGURATION",
+  gstRatePercent: number,
+) {
   const amount = money(lineItems.reduce((sum, item) => sum + item.lineAmount, 0));
+  const gstRate = gstRatePercent / 100;
   if (gstTreatment === "GST_INCLUSIVE") {
-    const subtotal = money(amount / (1 + GST_RATE));
+    const subtotal = money(amount / (1 + gstRate));
     return { subtotal, taxAmount: money(amount - subtotal), total: amount };
   }
-  return { subtotal: amount, taxAmount: money(amount * GST_RATE), total: money(amount * (1 + GST_RATE)) };
+  return { subtotal: amount, taxAmount: money(amount * gstRate), total: money(amount * (1 + gstRate)) };
 }
 
 function line(opts: Omit<FinancialLineItem, "lineAmount">): FinancialLineItem {
@@ -205,7 +220,7 @@ function makeIntent(
   input: FinancialWorkflowInput,
   values: Omit<ProposedFinancialDocument, "sourceWorkflow" | "sourceRecordId" | "subtotal" | "taxAmount" | "total">,
 ): ProposedFinancialDocument {
-  const totals = emptyTotals(values.lineItems, values.gstTreatment);
+  const totals = emptyTotals(values.lineItems, values.gstTreatment, rulesOf(input).defaults.gstRatePercent);
   return {
     ...values,
     ...totals,
@@ -256,6 +271,7 @@ function sourceSummary(input: FinancialWorkflowInput): Record<string, unknown> {
 
 function acquisition(input: FinancialWorkflowInput, issues: FinancialValidationIssue[]): ProposedFinancialDocument[] {
   const source = input.sourceData;
+  const rules = rulesOf(input);
   const controlNumber = requireValue(issues, source.containerControlNumber, "Container Control number");
   const stage = normalized(source.status ?? source.containerControlStatus);
   if (stage && stage !== "REQUEST") issue(issues, "UNEXPECTED_TRIGGER_STATUS", "Container Control is not at REQUEST", `Expected REQUEST but received ${stage}. The result remains shadow-only.`, "warning");
@@ -274,9 +290,9 @@ function acquisition(input: FinancialWorkflowInput, issues: FinancialValidationI
     intents.push(makeIntent(input, {
       documentFamily: "purchase_order", documentType: type, proposedAction: "create_draft",
       proposedDocumentNumber: controlNumber ? `${prefix}${controlNumber}` : null, reference: controlNumber,
-      partyName: selectedParty.name, partySourceId: selectedParty.id, accountCode: "322", gstTreatment: "GST_EXCLUSIVE",
+      partyName: selectedParty.name, partySourceId: selectedParty.id, accountCode: rules.accounts.acquisition, gstTreatment: "GST_EXCLUSIVE",
       currency: "AUD", issueDate: null, dueDate: null,
-      lineItems: [line({ itemCode: key === "asset" ? "Container Asset" : "Container Sale", description: `${type} — Container Control ${controlNumber ?? "TBC"}`, quantity: 1, unitAmount: amount, accountCode: "322", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" })],
+      lineItems: [line({ itemCode: key === "asset" ? rules.itemCodes.acquisitionAsset : rules.itemCodes.acquisitionCustomerSale, description: `${type} — Container Control ${controlNumber ?? "TBC"}`, quantity: 1, unitAmount: amount, accountCode: rules.accounts.acquisition, taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_EXCLUSIVE" })],
       validationStatus: selectedParty.name && controlNumber ? "valid" : "held",
     }));
   };
@@ -284,7 +300,7 @@ function acquisition(input: FinancialWorkflowInput, issues: FinancialValidationI
   createAcquisitionPo("customerSale", "S", "customer_sale");
 
   if (normalized(source.acquisition) === "FOR HIRE") {
-    const cost = asNumber(source.hireCostExGst) ?? (feet === 20 ? 120 : feet === 40 ? 240 : null);
+    const cost = asNumber(source.hireCostExGst) ?? (feet === 20 ? rules.rates.initialHire20MonthlyExGst : feet === 40 ? rules.rates.initialHire40MonthlyExGst : null);
     if (cost === null) issue(issues, "MISSING_HIRE_COST", "Missing hire cost", "A valid 20-foot or 40-foot hire cost is required.", "error", intents.length);
     if (!hireSupplier.name) issue(issues, "MISSING_HIRE_SUPPLIER", "Missing hire supplier", "Initial For Hire PO requires an allocated supplier.", "error", intents.length);
     const end = collectionDate ? addDays(collectionDate, 30) : null;
@@ -292,9 +308,9 @@ function acquisition(input: FinancialWorkflowInput, issues: FinancialValidationI
     intents.push(makeIntent(input, {
       documentFamily: "purchase_order", documentType: "initial_for_hire", proposedAction: "create_draft",
       proposedDocumentNumber: controlNumber ? `H${controlNumber}` : null, reference: controlNumber,
-      partyName: hireSupplier.name, partySourceId: hireSupplier.id, accountCode: "312", gstTreatment: "GST_EXCLUSIVE",
+      partyName: hireSupplier.name, partySourceId: hireSupplier.id, accountCode: rules.accounts.initialHire, gstTreatment: "GST_EXCLUSIVE",
       currency: "AUD", issueDate: collectionDate, dueDate: null,
-      lineItems: cost === null ? [] : [line({ itemCode: feet === 20 ? "HC 20" : "HC 40", description: `${footLabel} Container Hire from ${displayDate(collectionDate)} to ${displayDate(end)}`, quantity: 1, unitAmount: cost, accountCode: "312", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" })],
+      lineItems: cost === null ? [] : [line({ itemCode: feet === 20 ? rules.itemCodes.initialHire20 : rules.itemCodes.initialHire40, description: `${footLabel} Container Hire from ${displayDate(collectionDate)} to ${displayDate(end)}`, quantity: 1, unitAmount: cost, accountCode: rules.accounts.initialHire, taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_EXCLUSIVE" })],
       validationStatus: controlNumber && feet && collectionDate && hireSupplier.name && cost !== null ? "valid" : "held",
     }));
   }
@@ -304,15 +320,16 @@ function acquisition(input: FinancialWorkflowInput, issues: FinancialValidationI
 
 function recurringHire(input: FinancialWorkflowInput, issues: FinancialValidationIssue[]): ProposedFinancialDocument[] {
   const source = input.sourceData;
+  const rules = rulesOf(input);
   const controlNumber = requireValue(issues, source.containerControlNumber, "Container Control number");
   const acquisitionType = normalized(source.acquisition);
   const status = normalized(source.status ?? source.containerControlStatus);
-  if (acquisitionType !== "FOR HIRE") issue(issues, "INELIGIBLE_ACQUISITION", "Recurring hire requires FOR HIRE acquisition", `Received ${acquisitionType || "blank"}.`, "error");
-  if (!["ON HIRE", "IDLE"].includes(status)) issue(issues, "INELIGIBLE_CONTAINER_STATUS", "Container is not eligible for recurring hire", "Only ON HIRE and IDLE Container Controls are eligible; DEHIRED, REQUEST and READY are excluded.", "error");
+  if (acquisitionType !== rules.validation.recurringHireAcquisition) issue(issues, "INELIGIBLE_ACQUISITION", `Recurring hire requires ${rules.validation.recurringHireAcquisition} acquisition`, `Received ${acquisitionType || "blank"}.`, "error");
+  if (!rules.validation.allowedRecurringHireStatuses.includes(status)) issue(issues, "INELIGIBLE_CONTAINER_STATUS", "Container is not eligible for recurring hire", "Only ON HIRE and IDLE Container Controls are eligible; DEHIRED, REQUEST and READY are excluded.", "error");
   const feet = requireSupportedContainer(issues, source.containerType);
   const containerNumber = requireValue(issues, source.containerNumber, "Container Number");
   const periodStart = asDate(source.periodStart) ?? new Date(Date.UTC((input.now ?? new Date()).getUTCFullYear(), (input.now ?? new Date()).getUTCMonth() + 1, 1));
-  const periodEnd = asDate(source.periodEnd) ?? addDays(periodStart, 29);
+  const periodEnd = asDate(source.periodEnd) ?? addDays(periodStart, rules.defaults.recurringHireDays - 1);
   const dailyRate = asNumber(source.purchaseDailyRateExGst);
   if (dailyRate === null || dailyRate <= 0) issue(issues, "MISSING_XERO_ITEM_RATE", "Missing Xero purchase-side daily rate", "Recurring For Hire must read the applicable daily rate from the Xero item at execution; supply it for this shadow evaluation.");
   const supplier = party(source, "supplier");
@@ -320,14 +337,15 @@ function recurringHire(input: FinancialWorkflowInput, issues: FinancialValidatio
   const poNumber = controlNumber ? nextRecurringHirePoNumber(controlNumber, input.existingDocumentNumbers ?? []) : null;
   return [makeIntent(input, {
     documentFamily: "purchase_order", documentType: "recurring_for_hire", proposedAction: "create_draft", proposedDocumentNumber: poNumber,
-    reference: controlNumber, partyName: supplier.name, partySourceId: supplier.id, accountCode: "312", gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: periodStart, dueDate: null,
-    lineItems: dailyRate === null || !feet ? [] : [line({ itemCode: feet === 20 ? "HC 20 E" : "HC 40 E", description: `${containerNumber ?? "Container TBC"}, ${feet}' Container Extended Hire per day rate from ${displayDate(periodStart)} to ${displayDate(periodEnd)}`, quantity: 30, unitAmount: dailyRate, accountCode: "312", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" })],
-    validationStatus: controlNumber && feet && containerNumber && supplier.name && dailyRate && acquisitionType === "FOR HIRE" && ["ON HIRE", "IDLE"].includes(status) ? "valid" : "held",
+    reference: controlNumber, partyName: supplier.name, partySourceId: supplier.id, accountCode: rules.accounts.recurringHire, gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: periodStart, dueDate: null,
+    lineItems: dailyRate === null || !feet ? [] : [line({ itemCode: feet === 20 ? rules.itemCodes.recurringHire20 : rules.itemCodes.recurringHire40, description: `${containerNumber ?? "Container TBC"}, ${feet}' Container Extended Hire per day rate from ${displayDate(periodStart)} to ${displayDate(periodEnd)}`, quantity: rules.defaults.recurringHireDays, unitAmount: dailyRate, accountCode: rules.accounts.recurringHire, taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_EXCLUSIVE" })],
+    validationStatus: controlNumber && feet && containerNumber && supplier.name && dailyRate && acquisitionType === rules.validation.recurringHireAcquisition && rules.validation.allowedRecurringHireStatuses.includes(status) ? "valid" : "held",
   })];
 }
 
 function storageActivation(input: FinancialWorkflowInput, issues: FinancialValidationIssue[], recurring = false): ProposedFinancialDocument[] {
   const source = input.sourceData;
+  const rules = rulesOf(input);
   const dealDigits = digits(input.sourceRecordNumber ?? source.dealNumber ?? source.dealId);
   if (!dealDigits) issue(issues, "MISSING_DEAL_NUMBER", "Missing Deal number", "Storage billing documents require a Deal number.");
   const feet = requireSupportedContainer(issues, source.containerType);
@@ -339,33 +357,33 @@ function storageActivation(input: FinancialWorkflowInput, issues: FinancialValid
   const stage = requireValue(issues, source.storageStage, "storage stage");
   const transportSupplier = party(source, "transportSupplier");
   const storageSupplier = party(source, "storageSupplier");
-  const customerWeeklyRate = asNumber(source.customerStorageWeeklyRate) ?? (feet === 20 ? 65 : feet === 40 ? 95 : null);
-  const supplierWeeklyRate = asNumber(source.supplierStorageWeeklyRateExGst) ?? (feet === 20 ? 50 : feet === 40 ? 70 : null);
-  const transportRate = asNumber(source.transportRateExGst) ?? (feet === 20 ? 275 : feet === 40 ? 375 : null);
+  const customerWeeklyRate = asNumber(source.customerStorageWeeklyRate) ?? (feet === 20 ? rules.rates.storageCustomer20Weekly : feet === 40 ? rules.rates.storageCustomer40Weekly : null);
+  const supplierWeeklyRate = asNumber(source.supplierStorageWeeklyRateExGst) ?? (feet === 20 ? rules.rates.storageSupplier20WeeklyExGst : feet === 40 ? rules.rates.storageSupplier40WeeklyExGst : null);
+  const transportRate = asNumber(source.transportRateExGst) ?? (feet === 20 ? rules.rates.storageTransport20ExGst : feet === 40 ? rules.rates.storageTransport40ExGst : null);
   const baseInvoiceNumber = asText(source.storageInvoiceNumber) ?? (dealDigits ? `INV-${dealDigits}-S` : null);
   if (!asText(source.storageInvoiceNumber)) issue(issues, "STORAGE_INVOICE_REFERENCE_ASSUMED", "Storage invoice reference is provisional", "The plan does not specify a storage-invoice numbering rule; INV-<Deal>-S is displayed for shadow visibility only and must be confirmed in configuration before any cutover.", "warning");
-  const customerItem = feet === 20 ? "GD 20" : "GD 40";
+  const customerItem = feet === 20 ? rules.itemCodes.gd20 : rules.itemCodes.gd40;
   const documents: ProposedFinancialDocument[] = [makeIntent(input, {
     documentFamily: "customer_invoice", documentType: recurring ? "recurring_storage" : "storage_activation", proposedAction: "create_draft", proposedDocumentNumber: baseInvoiceNumber,
     reference: `Storage ${stage ?? "TBC"}`, partyName: customer.name, partySourceId: customer.id, accountCode: null,
     gstTreatment: "PENDING_CONFIGURATION", currency: "AUD", issueDate: dateIn, dueDate: null,
-    lineItems: customerWeeklyRate === null || !feet ? [] : [line({ itemCode: customerItem, description: `${feet}' Container Storage — ${containerNumber ?? "Container TBC"}`, quantity: 1, unitAmount: customerWeeklyRate, accountCode: "", taxRate: 10, gstTreatment: "GST_INCLUSIVE" })],
+    lineItems: customerWeeklyRate === null || !feet ? [] : [line({ itemCode: customerItem, description: `${feet}' Container Storage — ${containerNumber ?? "Container TBC"}`, quantity: 1, unitAmount: customerWeeklyRate, accountCode: "", taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_INCLUSIVE" })],
     validationStatus: customer.name && feet && containerNumber && dateIn && stage && customerWeeklyRate ? "warning" : "held",
   })];
   if (!recurring) {
     if (!transportSupplier.name) issue(issues, "MISSING_TRANSPORT_SUPPLIER", "Missing transport supplier", "JD storage activation PO requires an allocated transport supplier.", "error", documents.length);
     documents.push(makeIntent(input, {
       documentFamily: "purchase_order", documentType: "jd_transport", proposedAction: "create_draft", proposedDocumentNumber: dealDigits ? `JD${dealDigits}` : null,
-      reference: `Storage ${stage ?? "TBC"}`, partyName: transportSupplier.name, partySourceId: transportSupplier.id, accountCode: "310", gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: dateIn, dueDate: null,
-      lineItems: transportRate === null || !feet ? [] : [line({ itemCode: feet === 20 ? "JD 20" : "JD 40", description: `${feet}' Container transport to storage — ${containerNumber ?? "Container TBC"}`, quantity: 1, unitAmount: transportRate, accountCode: "310", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" })],
+      reference: `Storage ${stage ?? "TBC"}`, partyName: transportSupplier.name, partySourceId: transportSupplier.id, accountCode: rules.accounts.jdTransport, gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: dateIn, dueDate: null,
+      lineItems: transportRate === null || !feet ? [] : [line({ itemCode: feet === 20 ? rules.itemCodes.jd20 : rules.itemCodes.jd40, description: `${feet}' Container transport to storage — ${containerNumber ?? "Container TBC"}`, quantity: 1, unitAmount: transportRate, accountCode: rules.accounts.jdTransport, taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_EXCLUSIVE" })],
       validationStatus: transportSupplier.name && feet && transportRate && dealDigits ? "valid" : "held",
     }));
   }
   if (!storageSupplier.name) issue(issues, "MISSING_STORAGE_SUPPLIER", "Missing storage supplier", "GD storage PO requires an allocated storage supplier.", "error", documents.length);
   documents.push(makeIntent(input, {
     documentFamily: "purchase_order", documentType: "gd_storage", proposedAction: "create_draft", proposedDocumentNumber: dealDigits ? `GD${dealDigits}` : null,
-    reference: `Storage ${stage ?? "TBC"}`, partyName: storageSupplier.name, partySourceId: storageSupplier.id, accountCode: "311", gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: dateIn, dueDate: null,
-    lineItems: supplierWeeklyRate === null || !feet ? [] : [line({ itemCode: feet === 20 ? "GD 20" : "GD 40", description: `${feet}' Container Storage — ${containerNumber ?? "Container TBC"}`, quantity: 1, unitAmount: supplierWeeklyRate, accountCode: "311", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" })],
+    reference: `Storage ${stage ?? "TBC"}`, partyName: storageSupplier.name, partySourceId: storageSupplier.id, accountCode: rules.accounts.gdStorage, gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: dateIn, dueDate: null,
+    lineItems: supplierWeeklyRate === null || !feet ? [] : [line({ itemCode: feet === 20 ? rules.itemCodes.gd20 : rules.itemCodes.gd40, description: `${feet}' Container Storage — ${containerNumber ?? "Container TBC"}`, quantity: 1, unitAmount: supplierWeeklyRate, accountCode: rules.accounts.gdStorage, taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_EXCLUSIVE" })],
     validationStatus: storageSupplier.name && feet && supplierWeeklyRate && dealDigits ? "valid" : "held",
   }));
   return documents;
@@ -390,6 +408,7 @@ function storageFinalisation(input: FinancialWorkflowInput, issues: FinancialVal
 
 function mainInvoice(input: FinancialWorkflowInput, issues: FinancialValidationIssue[]): ProposedFinancialDocument[] {
   const source = input.sourceData;
+  const rules = rulesOf(input);
   const dealDigits = digits(input.sourceRecordNumber ?? source.dealNumber ?? source.dealId);
   if (!dealDigits) issue(issues, "MISSING_DEAL_NUMBER", "Missing Deal number", "Main customer invoice requires a Deal number.");
   const customer = party(source, "customer");
@@ -399,7 +418,7 @@ function mainInvoice(input: FinancialWorkflowInput, issues: FinancialValidationI
   const lines = quoteLines.map((quoteLine, index) => {
     const amount = asNumber(quoteLine.amountExGst ?? quoteLine.amount) ?? 0;
     const quantity = asNumber(quoteLine.quantity) ?? 1;
-    return line({ itemCode: asText(quoteLine.itemCode) ?? `QUOTE-${index + 1}`, description: asText(quoteLine.description) ?? "Quote Service", quantity, unitAmount: money(amount / quantity), accountCode: asText(quoteLine.accountCode) ?? "", taxRate: asNumber(quoteLine.taxRate) ?? 10, gstTreatment: "GST_EXCLUSIVE" });
+    return line({ itemCode: asText(quoteLine.itemCode) ?? `QUOTE-${index + 1}`, description: asText(quoteLine.description) ?? "Quote Service", quantity, unitAmount: money(amount / quantity), accountCode: asText(quoteLine.accountCode) ?? "", taxRate: asNumber(quoteLine.taxRate) ?? rules.defaults.gstRatePercent, gstTreatment: "GST_EXCLUSIVE" });
   });
   return [makeIntent(input, {
     documentFamily: "customer_invoice", documentType: "main_customer_invoice", proposedAction: "create_draft", proposedDocumentNumber: dealDigits ? `INV-${dealDigits}` : null,
@@ -410,6 +429,7 @@ function mainInvoice(input: FinancialWorkflowInput, issues: FinancialValidationI
 
 function depositInvoice(input: FinancialWorkflowInput, issues: FinancialValidationIssue[]): ProposedFinancialDocument[] {
   const source = input.sourceData;
+  const rules = rulesOf(input);
   const dealDigits = digits(input.sourceRecordNumber ?? source.dealNumber ?? source.dealId);
   const depositStatus = normalized(source.depositStatus);
   const amount = asNumber(source.depositAmountRequired);
@@ -422,34 +442,36 @@ function depositInvoice(input: FinancialWorkflowInput, issues: FinancialValidati
   return [makeIntent(input, {
     documentFamily: "customer_invoice", documentType: "deposit_invoice", proposedAction: "create_draft", proposedDocumentNumber: dealDigits ? `INV-${dealDigits}-D` : null,
     reference: asText(source.quoteNumber), partyName: customer.name, partySourceId: customer.id, accountCode: null, gstTreatment: "GST_INCLUSIVE", currency: "AUD", issueDate: asDate(source.issueDate), dueDate: asDate(source.dueDate),
-    lineItems: amount === null || amount <= 0 ? [] : [line({ itemCode: "Deposit Required", description: "Deposit Required", quantity: 1, unitAmount: amount, accountCode: "", taxRate: 10, gstTreatment: "GST_INCLUSIVE" })],
+    lineItems: amount === null || amount <= 0 ? [] : [line({ itemCode: rules.itemCodes.deposit, description: "Deposit Required", quantity: 1, unitAmount: amount, accountCode: "", taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_INCLUSIVE" })],
     validationStatus: dealDigits && customer.name && amount && amount > 0 && (!depositStatus || depositStatus === "PENDING") ? (mainStatus && mainStatus !== "DRAFT" ? "warning" : "valid") : "held",
   })];
 }
 
 function finalWeight(input: FinancialWorkflowInput, issues: FinancialValidationIssue[]): ProposedFinancialDocument[] {
   const source = input.sourceData;
+  const rules = rulesOf(input);
   const dealDigits = digits(input.sourceRecordNumber ?? source.dealNumber ?? source.dealId);
   const direction = normalized(source.weightDirection);
   const mainStatus = normalized(source.mainInvoiceStatus);
   const mainNumber = asText(source.mainInvoiceNumber) ?? (dealDigits ? `INV-${dealDigits}` : null);
   if (!["OVERWEIGHT", "UNDERWEIGHT"].includes(direction)) issue(issues, "INVALID_WEIGHT_DIRECTION", "Weight direction must be OVERWEIGHT or UNDERWEIGHT", "No financial change can be proposed.");
-  if (mainStatus !== "DRAFT") issue(issues, "NON_DRAFT_MAIN_INVOICE", "Final weight adjustment is held", "Final-weight workflow never updates a non-Draft main invoice.");
+  if (mainStatus !== rules.validation.mainInvoiceDraftStatus) issue(issues, "NON_DRAFT_MAIN_INVOICE", "Final weight adjustment is held", "Final-weight workflow never updates a non-Draft main invoice.");
   const adjustment = asNumber(source.excessWeightAmountExGst);
   if (direction === "OVERWEIGHT" && (adjustment === null || adjustment <= 0)) issue(issues, "INVALID_EXCESS_WEIGHT_AMOUNT", "Overweight adjustment must be positive", "SER70 cannot be created from a missing or negative amount.");
   const dueDate = asDate(source.dueDate);
   if (direction === "UNDERWEIGHT" && !dueDate) issue(issues, "MISSING_DUE_DATE", "Underweight adjustment requires a due date", "Underweight must update only the due date and cannot create a negative weight line.");
-  const editable = mainStatus === "DRAFT";
+  const editable = mainStatus === rules.validation.mainInvoiceDraftStatus;
   return [makeIntent(input, {
     documentFamily: "customer_invoice", documentType: direction === "UNDERWEIGHT" ? "underweight_due_date" : "overweight_adjustment", proposedAction: editable ? "update_draft" : "hold", proposedDocumentNumber: mainNumber,
     reference: asText(source.quoteNumber), partyName: asText(source.customerName), partySourceId: asText(source.customerXeroContactId), accountCode: null, gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: null, dueDate: direction === "UNDERWEIGHT" ? dueDate : null,
-    lineItems: direction === "OVERWEIGHT" && adjustment && adjustment > 0 ? [line({ itemCode: "SER70", description: asText(source.excessWeightDescription) ?? "Excess weight", quantity: 1, unitAmount: adjustment, accountCode: asText(source.accountCode) ?? "", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" })] : [],
+    lineItems: direction === "OVERWEIGHT" && adjustment && adjustment > 0 ? [line({ itemCode: rules.itemCodes.overweight, description: asText(source.excessWeightDescription) ?? "Excess weight", quantity: 1, unitAmount: adjustment, accountCode: asText(source.accountCode) ?? "", taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_EXCLUSIVE" })] : [],
     validationStatus: editable && ((direction === "OVERWEIGHT" && adjustment && adjustment > 0) || (direction === "UNDERWEIGHT" && dueDate)) ? "valid" : "held",
   })];
 }
 
 function extraHire(input: FinancialWorkflowInput, issues: FinancialValidationIssue[]): ProposedFinancialDocument[] {
   const source = input.sourceData;
+  const rules = rulesOf(input);
   const dealDigits = digits(input.sourceRecordNumber ?? source.dealNumber ?? source.dealId);
   const hireDuration = asNumber(source.hireDurationDays);
   const hireEnd = asDate(source.hireEndDate);
@@ -461,17 +483,18 @@ function extraHire(input: FinancialWorkflowInput, issues: FinancialValidationIss
   if (!customer.name) issue(issues, "MISSING_XERO_CUSTOMER", "Missing Xero customer", "Extra Hire invoice requires a customer.");
   const baseNumber = dealDigits ? `INV-${dealDigits}` : null;
   const number = baseNumber ? nextAvailableSuffix(baseNumber, input.existingDocumentNumbers ?? [], ["D"]) : null;
-  const weeklyRate = feet === 20 ? 45 : feet === 40 ? 70 : null;
+  const weeklyRate = feet === 20 ? rules.rates.extraHire20WeeklyExGst : feet === 40 ? rules.rates.extraHire40WeeklyExGst : null;
   return [makeIntent(input, {
     documentFamily: "customer_invoice", documentType: "extra_hire", proposedAction: "create_draft", proposedDocumentNumber: number,
-    reference: containerNumber, partyName: customer.name, partySourceId: customer.id, accountCode: "210", gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: hireEnd, dueDate: null,
-    lineItems: weeklyRate === null || !feet ? [] : [line({ itemCode: feet === 20 ? "20' Hire" : "40' Hire", description: `${feet}' Extra Hire — ${containerNumber ?? "Container TBC"}`, quantity: 4.286, unitAmount: weeklyRate, accountCode: "210", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" })],
+    reference: containerNumber, partyName: customer.name, partySourceId: customer.id, accountCode: rules.accounts.extraHire, gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: hireEnd, dueDate: null,
+    lineItems: weeklyRate === null || !feet ? [] : [line({ itemCode: feet === 20 ? rules.itemCodes.extraHire20 : rules.itemCodes.extraHire40, description: `${feet}' Extra Hire — ${containerNumber ?? "Container TBC"}`, quantity: rules.defaults.extraHireWeeks, unitAmount: weeklyRate, accountCode: rules.accounts.extraHire, taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_EXCLUSIVE" })],
     validationStatus: dealDigits && customer.name && hireDuration === 30 && hireEnd && feet && containerNumber ? "valid" : "held",
   })];
 }
 
 function warranty(input: FinancialWorkflowInput, issues: FinancialValidationIssue[]): ProposedFinancialDocument[] {
   const source = input.sourceData;
+  const rules = rulesOf(input);
   const dealDigits = digits(input.sourceRecordNumber ?? source.dealNumber ?? source.dealId);
   const addedService = asText(source.addedService ?? source.warrantyAddedService);
   if (!addedService) issue(issues, "MISSING_ADDED_SERVICE", "Missing Added Services warranty", "Warranty reconciliation uses Added Services only; Warranty Confirmed is deliberately ignored.");
@@ -484,19 +507,19 @@ function warranty(input: FinancialWorkflowInput, issues: FinancialValidationIssu
   const customer = party(source, "customer");
   const baseNumber = dealDigits ? `INV-${dealDigits}` : null;
   const invoiceNumber = mainStatus === "DRAFT" ? baseNumber : baseNumber ? nextAvailableSuffix(baseNumber, input.existingDocumentNumbers ?? [], ["D"]) : null;
-  const customerAction: ProposedAction = mainStatus === "DRAFT" ? "update_draft" : "create_draft";
-  if (mainStatus && mainStatus !== "DRAFT") issue(issues, "WARRANTY_NON_DRAFT_MAIN", "Warranty will use a separate Draft suffix invoice", "No replacement or amendment of a non-Draft main invoice is proposed.", "warning");
-  const warrantyLine = itemCode && premium && nativeDescription ? [line({ itemCode, description: nativeDescription, quantity: 1, unitAmount: premium, accountCode: "", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" })] : [];
+  const customerAction: ProposedAction = mainStatus === rules.validation.mainInvoiceDraftStatus ? "update_draft" : "create_draft";
+  if (mainStatus && mainStatus !== rules.validation.mainInvoiceDraftStatus) issue(issues, "WARRANTY_NON_DRAFT_MAIN", "Warranty will use a separate Draft suffix invoice", "No replacement or amendment of a non-Draft main invoice is proposed.", "warning");
+  const warrantyLine = itemCode && premium && nativeDescription ? [line({ itemCode, description: nativeDescription, quantity: 1, unitAmount: premium, accountCode: "", taxRate: rules.defaults.gstRatePercent, gstTreatment: "GST_EXCLUSIVE" })] : [];
   const documents: ProposedFinancialDocument[] = [makeIntent(input, {
     documentFamily: "customer_invoice", documentType: "warranty_invoice", proposedAction: customerAction, proposedDocumentNumber: invoiceNumber,
     reference: addedService, partyName: customer.name, partySourceId: customer.id, accountCode: null, gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: asDate(source.issueDate), dueDate: asDate(source.dueDate), lineItems: warrantyLine,
     validationStatus: dealDigits && customer.name && warrantyLine.length > 0 ? (mainStatus && mainStatus !== "DRAFT" ? "warning" : "valid") : "held",
   })];
   const aviso = party(source, "avisoSupplier");
-  const avisoName = aviso.name ?? "Aviso Broking Pty Ltd";
+  const avisoName = aviso.name ?? rules.warranty.supplierName;
   documents.push(makeIntent(input, {
     documentFamily: "purchase_order", documentType: "aviso_warranty", proposedAction: "create_draft", proposedDocumentNumber: dealDigits ? `I${dealDigits}` : null,
-    reference: addedService, partyName: avisoName, partySourceId: aviso.id, accountCode: "313", gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: asDate(source.issueDate), dueDate: null, lineItems: warrantyLine.map((item) => ({ ...item, accountCode: "313" })),
+    reference: addedService, partyName: avisoName, partySourceId: aviso.id, accountCode: rules.warranty.accountCode, gstTreatment: "GST_EXCLUSIVE", currency: "AUD", issueDate: asDate(source.issueDate), dueDate: null, lineItems: warrantyLine.map((item) => ({ ...item, accountCode: rules.warranty.accountCode })),
     validationStatus: dealDigits && warrantyLine.length > 0 ? "valid" : "held",
   }));
   return documents;
