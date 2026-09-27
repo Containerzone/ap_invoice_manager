@@ -496,3 +496,11 @@
 - [x] Preserve all existing child screens and admin-only boundaries: staff retain their permitted Overview/PO/Invoices/Runs/Exceptions/Schedules views, while Candidate Roster, Shadow Test Register, Historical Preview and Automation Settings remain administrator-only.
 - [x] Add tested navigation metadata so child coverage is complete and no child tab can be duplicated or incorrectly exposed to staff.
 - [x] Validate TypeScript, the full 41-file / 240-test regression suite and production build. **SHADOW ONLY — no financial writes possible.**
+
+## Financial Trigger Migration — Disabled Production Cutover Layer (Session 28)
+- [x] Add and apply `0028_happy_korvac.sql` for additive per-family cutover controls, immutable planning packs and local cutover audits. Viewing the control matrix does not create rows.
+- [x] Add a transport-neutral Xero Draft payload seam with deterministic idempotency keys, explicit Draft status and GST treatment; it imports no HTTP/Xero client and its only execution entry point always throws `FinancialWriteDisabledError`.
+- [x] Add admin-only **Cutover Control Centre** under Financial Operations → Controls. It shows global write lock, all ten family controls, current/legacy/replacement writer identifiers, readiness/reconciliation/approval state, rollback instructions, packs and audits.
+- [x] Permit cutover-pack preparation only from a clean, administrator-confirmed shadow test with linked run/intents. Pack preparation writes local evidence only; it does not grant approval, enable a family, register a schedule, disable Operations or send a Xero request.
+- [x] Validate the migration tables, TypeScript, 42 test files / 245 tests, production build and a no-transport audit. **No live financial route, Xero write transport or schedule-enable action exists.**
+- [ ] Future gate: complete a named, confirmed family shadow test, document the exact existing writer/schedule identifier, then request a new document-specific approval containing the exact Draft Xero action, party, amount, reference and rollback choice. The system remains disabled until a later separately approved implementation.

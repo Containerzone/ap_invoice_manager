@@ -806,3 +806,86 @@ export const financialIntegrationAudits = mysqlTable("financial_integration_audi
 
 export type FinancialIntegrationAudit = typeof financialIntegrationAudits.$inferSelect;
 export type InsertFinancialIntegrationAudit = typeof financialIntegrationAudits.$inferInsert;
+
+// ─── Financial Cutover Controls — Permanently Disabled Until Approval ─────────
+//
+// These records prepare an auditable, per-family migration plan. They do not
+// register a writer endpoint, enable a schedule, or authorise a Xero request.
+
+export const financialCutoverControls = mysqlTable("financial_cutover_controls", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  mode: mysqlEnum("mode", ["shadow", "live_ready_disabled", "live_enabled", "paused", "retired"] as const)
+    .default("shadow")
+    .notNull(),
+  implementationVersion: varchar("implementationVersion", { length: 128 }).notNull(),
+  ruleVersion: varchar("ruleVersion", { length: 128 }).notNull(),
+  currentWriterOwner: mysqlEnum("currentWriterOwner", ["operations", "ap_management", "unknown"] as const)
+    .default("unknown")
+    .notNull(),
+  previousWriterOwner: mysqlEnum("previousWriterOwner", ["operations", "ap_management", "unknown"] as const)
+    .default("unknown")
+    .notNull(),
+  legacyWriterIdentifier: varchar("legacyWriterIdentifier", { length: 500 }),
+  replacementIdentifier: varchar("replacementIdentifier", { length: 500 }).notNull(),
+  liveEnabled: boolean("liveEnabled").default(false).notNull(),
+  lastShadowRunId: int("lastShadowRunId"),
+  lastLiveRunId: int("lastLiveRunId"),
+  failureCount: int("failureCount").default(0).notNull(),
+  reconciliationState: mysqlEnum("reconciliationState", ["not_started", "shadow_ready", "awaiting_approval", "reconciled", "exception"] as const)
+    .default("not_started")
+    .notNull(),
+  approvalReference: varchar("approvalReference", { length: 255 }),
+  rollbackPlan: text("rollbackPlan").notNull(),
+  updatedBy: int("updatedBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  cutoverControlWorkflowUnique: uniqueIndex("financial_cutover_controls_workflow_unique").on(table.workflowType),
+}));
+
+export type FinancialCutoverControl = typeof financialCutoverControls.$inferSelect;
+export type InsertFinancialCutoverControl = typeof financialCutoverControls.$inferInsert;
+
+export const financialCutoverPacks = mysqlTable("financial_cutover_packs", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  shadowTestId: int("shadowTestId"),
+  candidateRosterEntryId: int("candidateRosterEntryId"),
+  sourceRecordNumber: varchar("sourceRecordNumber", { length: 128 }),
+  proposedDocumentIntentIds: json("proposedDocumentIntentIds").notNull(),
+  documentSummary: json("documentSummary").notNull(),
+  xeroPreflight: json("xeroPreflight"),
+  idempotencyKey: varchar("idempotencyKey", { length: 255 }),
+  legacyWriterIdentifier: varchar("legacyWriterIdentifier", { length: 500 }),
+  replacementIdentifier: varchar("replacementIdentifier", { length: 500 }).notNull(),
+  rollbackPlan: text("rollbackPlan").notNull(),
+  requiredApprovalText: text("requiredApprovalText").notNull(),
+  state: mysqlEnum("state", ["prepared", "awaiting_approval", "approved", "superseded"] as const)
+    .default("prepared")
+    .notNull(),
+  preparedBy: int("preparedBy").notNull(),
+  approvedBy: int("approvedBy"),
+  approvedAt: timestamp("approvedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type FinancialCutoverPack = typeof financialCutoverPacks.$inferSelect;
+export type InsertFinancialCutoverPack = typeof financialCutoverPacks.$inferInsert;
+
+/** Append-only local audit of disabled cutover planning; no credential values are stored. */
+export const financialCutoverAudits = mysqlTable("financial_cutover_audits", {
+  id: int("id").autoincrement().primaryKey(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  cutoverControlId: int("cutoverControlId"),
+  cutoverPackId: int("cutoverPackId"),
+  action: varchar("action", { length: 100 }).notNull(),
+  outcome: mysqlEnum("outcome", ["prepared", "blocked", "rejected"] as const).notNull(),
+  details: json("details"),
+  actorId: int("actorId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FinancialCutoverAudit = typeof financialCutoverAudits.$inferSelect;
+export type InsertFinancialCutoverAudit = typeof financialCutoverAudits.$inferInsert;

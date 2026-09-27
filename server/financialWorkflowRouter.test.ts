@@ -30,7 +30,11 @@ vi.mock("./financialWorkflowDb", () => ({
   getFinancialWorkflowConfig: vi.fn().mockResolvedValue([]),
   getFinancialWorkflowConfigAudits: vi.fn().mockResolvedValue([]),
   createFinancialCandidateDiscovery: vi.fn().mockResolvedValue(33),
+  createDisabledFinancialCutoverPack: vi.fn().mockResolvedValue({ packId: 44, controlId: 55 }),
   createFinancialIntegrationAudit: vi.fn().mockResolvedValue(44),
+  getFinancialCutoverAudits: vi.fn().mockResolvedValue([]),
+  getFinancialCutoverControls: vi.fn().mockResolvedValue([]),
+  getFinancialCutoverPacks: vi.fn().mockResolvedValue([]),
   createFinancialShadowTest: vi.fn().mockResolvedValue(901),
   getFinancialCandidateDiscoveries: vi.fn().mockResolvedValue([]),
   getFinancialCandidateRoster: vi.fn().mockResolvedValue([]),
@@ -213,5 +217,34 @@ describe("financial operations tRPC safeguards", () => {
     await expect(appRouter.createCaller(context("admin")).financialOperations.reviewShadowTest({
       testId: 902, reviewStatus: "confirmed", reviewerComment: "Attempting to override a blocked test.",
     })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+
+  it("prepares a disabled cutover pack only from administrator-confirmed clean shadow evidence", async () => {
+    const { appRouter } = await import("./routers");
+    const { createDisabledFinancialCutoverPack, getFinancialShadowTestById, getFinancialWorkflowRunDetail } = await import("./financialWorkflowDb");
+    vi.mocked(getFinancialShadowTestById).mockResolvedValueOnce({
+      id: 901, workflowType: "container_control_acquisition", status: "passed", reviewStatus: "confirmed",
+      workflowRunId: 77, sourceRecordNumber: "CC-1860", xeroPreflight: { readOnly: true },
+    } as any);
+    vi.mocked(getFinancialWorkflowRunDetail).mockResolvedValueOnce({
+      run: { id: 77, idempotencyKey: "stable-key" },
+      intents: [{ id: 201, documentFamily: "purchase_order", documentType: "initial_for_hire", proposedDocumentNumber: "H1860", total: "132.00", lineItems: [] }],
+      exceptions: [],
+    } as any);
+    const result = await appRouter.createCaller(context("admin")).financialOperations.prepareDisabledCutoverPack({ shadowTestId: 901 });
+    expect(result).toMatchObject({ packId: 44, controlId: 55, mode: "live_ready_disabled", xeroWritePermitted: false });
+    expect(createDisabledFinancialCutoverPack).toHaveBeenCalledWith(expect.objectContaining({
+      shadowTestId: 901, workflowType: "container_control_acquisition", proposedDocumentIntentIds: [201], idempotencyKey: "stable-key",
+    }));
+  });
+
+  it("rejects cutover pack preparation for unconfirmed or held evidence", async () => {
+    const { appRouter } = await import("./routers");
+    const { getFinancialShadowTestById } = await import("./financialWorkflowDb");
+    vi.mocked(getFinancialShadowTestById).mockResolvedValueOnce({
+      id: 902, workflowType: "container_control_acquisition", status: "held", reviewStatus: "pending",
+    } as any);
+    await expect(appRouter.createCaller(context("admin")).financialOperations.prepareDisabledCutoverPack({ shadowTestId: 902 }))
+      .rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
   });
 });

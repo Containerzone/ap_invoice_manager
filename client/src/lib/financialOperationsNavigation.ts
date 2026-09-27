@@ -8,7 +8,8 @@ export type FinancialOperationsTab =
   | "candidate-finder"
   | "shadow-tests"
   | "history-preview"
-  | "configuration";
+  | "configuration"
+  | "cutover-centre";
 
 export type FinancialOperationsParentArea =
   | "dashboard"
@@ -71,6 +72,7 @@ export const FINANCIAL_OPERATIONS_NAVIGATION: readonly FinancialOperationsNaviga
     tabs: [
       { value: "schedules", label: "Schedules" },
       { value: "configuration", label: "Automation Settings", adminOnly: true },
+      { value: "cutover-centre", label: "Cutover Control Centre", adminOnly: true },
     ],
   },
 ] as const;

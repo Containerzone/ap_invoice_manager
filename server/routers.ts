@@ -98,7 +98,11 @@ import {
   getFinancialWorkflowSchedules,
   createFinancialShadowTest,
   createFinancialCandidateDiscovery,
+  createDisabledFinancialCutoverPack,
   createFinancialIntegrationAudit,
+  getFinancialCutoverAudits,
+  getFinancialCutoverControls,
+  getFinancialCutoverPacks,
   getFinancialCandidateDiscoveries,
   getFinancialCandidateRoster,
   getFinancialCandidateRosterEntry,
@@ -498,6 +502,11 @@ export const appRouter = router({
       .query(({ input }) => getFinancialCandidateRoster(input?.limit ?? 50)),
     integrationAudits: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
       .query(({ input }) => getFinancialIntegrationAudits(input?.limit ?? 100)),
+    cutoverControls: adminProcedure.query(() => getFinancialCutoverControls()),
+    cutoverPacks: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
+      .query(({ input }) => getFinancialCutoverPacks(input?.limit ?? 100)),
+    cutoverAudits: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
+      .query(({ input }) => getFinancialCutoverAudits(input?.limit ?? 100)),
     vtigerReadStatus: adminProcedure.query(() => getVtigerFinancialConnectionStatus()),
     automationSettings: adminProcedure.query(async () => {
       const [config, schedules, xero, vtiger] = await Promise.all([
@@ -529,6 +538,58 @@ export const appRouter = router({
       const result = await testFinancialXeroConnection();
       await createFinancialIntegrationAudit({ integration: "xero", action: "get_only_tenant_check", outcome: result.outcome, tenantName: result.organisationName, tenantId: result.tenantId, details: { expectedTenantLabel: result.expectedTenantLabel, readOnly: true }, actorId: ctx.user.id, checkedAt: result.checkedAt });
       return result;
+    }),
+    prepareDisabledCutoverPack: adminProcedure.input(z.object({
+      shadowTestId: z.number().int().positive(),
+      legacyWriterIdentifier: z.string().trim().min(3).max(500).nullable().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const test = await getFinancialShadowTestById(input.shadowTestId);
+      if (!test) throw new TRPCError({ code: "NOT_FOUND", message: "Shadow evidence record was not found." });
+      if (test.status !== "passed" || test.reviewStatus !== "confirmed") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "A cutover pack requires a clean shadow test that an AP administrator has confirmed." });
+      }
+      if (!test.workflowRunId) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The confirmed shadow evidence has no linked workflow run." });
+      }
+      const detail = await getFinancialWorkflowRunDetail(test.workflowRunId);
+      if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "The linked workflow run is no longer available." });
+      const intentIds = detail.intents.map((intent) => intent.id);
+      if (intentIds.length === 0) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The confirmed shadow run has no proposed document intents." });
+      }
+      const documentSummary = detail.intents.map((intent) => ({
+        documentFamily: intent.documentFamily,
+        documentType: intent.documentType,
+        proposedAction: intent.proposedAction,
+        documentNumber: intent.proposedDocumentNumber,
+        reference: intent.reference,
+        partyName: intent.partyName,
+        accountCode: intent.accountCode,
+        gstTreatment: intent.gstTreatment,
+        subtotal: intent.subtotal,
+        taxAmount: intent.taxAmount,
+        total: intent.total,
+        issueDate: intent.issueDate,
+        dueDate: intent.dueDate,
+        lineItems: intent.lineItems,
+      }));
+      const pack = await createDisabledFinancialCutoverPack({
+        workflowType: test.workflowType,
+        shadowTestId: test.id,
+        sourceRecordNumber: test.sourceRecordNumber,
+        proposedDocumentIntentIds: intentIds,
+        documentSummary,
+        xeroPreflight: test.xeroPreflight,
+        idempotencyKey: detail.run.idempotencyKey,
+        legacyWriterIdentifier: input.legacyWriterIdentifier ?? null,
+        preparedBy: ctx.user.id,
+      });
+      return {
+        ...pack,
+        mode: "live_ready_disabled" as const,
+        xeroWritePermitted: false as const,
+        nextStep: "Document the legacy writer/schedule and obtain a new document-specific approval before any activation request.",
+      };
     }),
     findVtigerCandidate: adminProcedure.input(z.object({
       sourceCategory: z.enum(["deal", "container_control"]),

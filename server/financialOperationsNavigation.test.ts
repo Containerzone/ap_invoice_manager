@@ -27,6 +27,7 @@ describe("Financial Operations parent navigation", () => {
       "history-preview",
       "schedules",
       "configuration",
+      "cutover-centre",
     ]);
     expect(new Set(tabs).size).toBe(tabs.length);
   });
@@ -39,5 +40,7 @@ describe("Financial Operations parent navigation", () => {
     expect(firstAvailableFinancialOperationsTab(controls, false)).toBe("schedules");
     expect(isFinancialOperationsTabAvailable(review.tabs[1]!, false)).toBe(false);
     expect(isFinancialOperationsTabAvailable(review.tabs[1]!, true)).toBe(true);
+    expect(isFinancialOperationsTabAvailable(controls.tabs[2]!, false)).toBe(false);
+    expect(isFinancialOperationsTabAvailable(controls.tabs[2]!, true)).toBe(true);
   });
 });

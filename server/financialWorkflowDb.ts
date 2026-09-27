@@ -1,6 +1,9 @@
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import {
   extraHireRuns,
+  financialCutoverAudits,
+  financialCutoverControls,
+  financialCutoverPacks,
   financialDocumentIntents,
   financialDocuments,
   financialCandidateDiscoveries,
@@ -17,6 +20,8 @@ import {
   warrantyDocuments,
   workflowSchedules,
   type FinancialWorkflowConfig,
+  type FinancialCutoverControl,
+  type FinancialCutoverPack,
   type FinancialCandidateDiscovery,
   type FinancialCandidateRoster,
   type FinancialIntegrationAudit,
@@ -25,7 +30,8 @@ import {
   type FinancialWorkflowRun,
 } from "../drizzle/schema";
 import { getDb } from "./db";
-import type { FinancialWorkflowEvaluation, FinancialWorkflowInput } from "./financialWorkflowEngine";
+import { FINANCIAL_WORKFLOW_TYPES, type FinancialWorkflowEvaluation, type FinancialWorkflowInput } from "./financialWorkflowEngine";
+import { FINANCIAL_WRITER_IMPLEMENTATION_VERSION } from "./financialProductionWriter";
 
 export type PersistedFinancialEvaluation = {
   runId: number;
@@ -639,4 +645,170 @@ export async function getFinancialDocuments(limit = 200) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(financialDocuments).orderBy(desc(financialDocuments.refreshedAt)).limit(limit);
+}
+
+
+export type FinancialCutoverControlView = FinancialCutoverControl & {
+  persisted: boolean;
+  globalWriteLock: true;
+};
+
+const DISABLED_AP_WRITER_IDENTIFIER = "financial-production-writer:disabled (no registered live endpoint)";
+const DEFAULT_ROLLBACK_PLAN = "Keep the AP production writer disabled. Do not change an Operations writer, VTiger workflow URL or schedule. For a future approved live cutover, pause the AP family first, retain the ledger and Xero evidence, and reconcile before any manual restoration decision.";
+
+function newCutoverControl(workflowType: string): FinancialCutoverControlView {
+  const now = new Date();
+  return {
+    id: 0,
+    workflowType,
+    mode: "shadow",
+    implementationVersion: FINANCIAL_WRITER_IMPLEMENTATION_VERSION,
+    ruleVersion: "financial-automation.rules",
+    currentWriterOwner: "unknown",
+    previousWriterOwner: "unknown",
+    legacyWriterIdentifier: null,
+    replacementIdentifier: DISABLED_AP_WRITER_IDENTIFIER,
+    liveEnabled: false,
+    lastShadowRunId: null,
+    lastLiveRunId: null,
+    failureCount: 0,
+    reconciliationState: "not_started",
+    approvalReference: null,
+    rollbackPlan: DEFAULT_ROLLBACK_PLAN,
+    updatedBy: null,
+    createdAt: now,
+    updatedAt: now,
+    persisted: false,
+    globalWriteLock: true,
+  };
+}
+
+/**
+ * Returns a complete per-family control matrix without creating rows merely by
+ * viewing it. Missing rows are deliberately represented as non-persisted
+ * shadow controls, keeping database writes administrator-initiated.
+ */
+export async function getFinancialCutoverControls(): Promise<FinancialCutoverControlView[]> {
+  const db = await getDb();
+  if (!db) return FINANCIAL_WORKFLOW_TYPES.map((workflowType) => newCutoverControl(workflowType));
+  const persisted = await db.select().from(financialCutoverControls).orderBy(financialCutoverControls.workflowType);
+  const byWorkflow = new Map(persisted.map((item) => [item.workflowType, item]));
+  return FINANCIAL_WORKFLOW_TYPES.map((workflowType) => {
+    const control = byWorkflow.get(workflowType);
+    return control
+      ? { ...control, persisted: true, globalWriteLock: true as const }
+      : newCutoverControl(workflowType);
+  });
+}
+
+export async function getFinancialCutoverPacks(limit = 100): Promise<FinancialCutoverPack[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialCutoverPacks)
+    .orderBy(desc(financialCutoverPacks.updatedAt), desc(financialCutoverPacks.id))
+    .limit(limit);
+}
+
+export async function getFinancialCutoverPack(id: number): Promise<FinancialCutoverPack | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(financialCutoverPacks).where(eq(financialCutoverPacks.id, id)).limit(1))[0];
+}
+
+export async function ensureDisabledFinancialCutoverControl(input: {
+  workflowType: string;
+  lastShadowRunId?: number | null;
+  updatedBy: number;
+}): Promise<FinancialCutoverControl> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const existing = (await db.select().from(financialCutoverControls)
+    .where(eq(financialCutoverControls.workflowType, input.workflowType)).limit(1))[0];
+  const values = {
+    mode: "live_ready_disabled" as const,
+    implementationVersion: FINANCIAL_WRITER_IMPLEMENTATION_VERSION,
+    ruleVersion: "financial-automation.rules",
+    currentWriterOwner: "unknown" as const,
+    previousWriterOwner: "unknown" as const,
+    replacementIdentifier: DISABLED_AP_WRITER_IDENTIFIER,
+    liveEnabled: false,
+    lastShadowRunId: input.lastShadowRunId ?? null,
+    reconciliationState: "awaiting_approval" as const,
+    rollbackPlan: DEFAULT_ROLLBACK_PLAN,
+    updatedBy: input.updatedBy,
+    updatedAt: new Date(),
+  };
+  if (existing) {
+    await db.update(financialCutoverControls).set(values).where(eq(financialCutoverControls.id, existing.id));
+    return { ...existing, ...values };
+  }
+  const result = await db.insert(financialCutoverControls).values({ workflowType: input.workflowType, ...values });
+  const id = Number((result[0] as any).insertId);
+  return (await db.select().from(financialCutoverControls).where(eq(financialCutoverControls.id, id)).limit(1))[0]!;
+}
+
+/**
+ * Stores an exact, reviewable migration pack. It does not constitute approval,
+ * cannot set a family live and never calls a Xero transport.
+ */
+export async function createDisabledFinancialCutoverPack(input: {
+  workflowType: string;
+  shadowTestId: number;
+  candidateRosterEntryId?: number | null;
+  sourceRecordNumber?: string | null;
+  proposedDocumentIntentIds: number[];
+  documentSummary: unknown;
+  xeroPreflight?: unknown;
+  idempotencyKey?: string | null;
+  legacyWriterIdentifier?: string | null;
+  preparedBy: number;
+}): Promise<{ packId: number; controlId: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const control = await ensureDisabledFinancialCutoverControl({
+    workflowType: input.workflowType,
+    lastShadowRunId: null,
+    updatedBy: input.preparedBy,
+  });
+  const requiredApprovalText = `Explicit approval required before any live action: identify one named ${input.workflowType} source, the exact Draft Xero document number(s), counterparty, amount and approval reference. This prepared pack does not enable AP Management or disable any existing writer.`;
+  const result = await db.insert(financialCutoverPacks).values({
+    workflowType: input.workflowType,
+    shadowTestId: input.shadowTestId,
+    candidateRosterEntryId: input.candidateRosterEntryId ?? null,
+    sourceRecordNumber: input.sourceRecordNumber ?? null,
+    proposedDocumentIntentIds: input.proposedDocumentIntentIds as any,
+    documentSummary: input.documentSummary as any,
+    xeroPreflight: input.xeroPreflight as any,
+    idempotencyKey: input.idempotencyKey ?? null,
+    legacyWriterIdentifier: input.legacyWriterIdentifier ?? null,
+    replacementIdentifier: DISABLED_AP_WRITER_IDENTIFIER,
+    rollbackPlan: DEFAULT_ROLLBACK_PLAN,
+    requiredApprovalText,
+    state: "awaiting_approval",
+    preparedBy: input.preparedBy,
+  });
+  const packId = Number((result[0] as any).insertId);
+  await db.insert(financialCutoverAudits).values({
+    workflowType: input.workflowType,
+    cutoverControlId: control.id,
+    cutoverPackId: packId,
+    action: "disabled_cutover_pack_prepared",
+    outcome: "prepared",
+    details: {
+      shadowOnly: true,
+      liveEnabled: false,
+      replacementIdentifier: DISABLED_AP_WRITER_IDENTIFIER,
+      proposedDocumentIntentIds: input.proposedDocumentIntentIds,
+    } as any,
+    actorId: input.preparedBy,
+  });
+  return { packId, controlId: control.id };
+}
+
+export async function getFinancialCutoverAudits(limit = 200) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialCutoverAudits)
+    .orderBy(desc(financialCutoverAudits.createdAt), desc(financialCutoverAudits.id))
+    .limit(limit);
 }
