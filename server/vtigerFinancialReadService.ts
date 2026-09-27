@@ -55,18 +55,23 @@ function safeMessage(error: unknown): string {
 }
 
 /**
- * Verifies configuration with only the VTiger GET challenge endpoint. It does
- * not create a record, change a workflow URL or invoke any VTiger mutation.
+ * Verifies the configured credential through VTiger's GET-only challenge/login
+ * exchange. A challenge only proves that the username is recognised; a login is
+ * required before reporting the AP read credential as healthy. It never creates
+ * a record, changes a workflow URL or invokes any VTiger mutation.
  */
 export async function testVtigerFinancialConnection(): Promise<VtigerFinancialConnectionTest> {
   const status = getVtigerFinancialConnectionStatus();
   const checkedAt = new Date();
   if (!status.configured) return { ...status, outcome: "blocked", checkedAt, message: "VTiger read-only configuration is incomplete." };
   try {
-    const { username } = config();
+    const { username, accessKey } = config();
     const challenge = await vtigerRequest<{ token?: string }>({ operation: "getchallenge", username });
     if (!challenge?.token) throw new Error("VTiger challenge did not return a usable temporary token.");
-    return { ...status, outcome: "passed", checkedAt, message: "Read-only VTiger challenge passed. No CRM record, workflow URL or schedule was changed." };
+    const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
+    const login = await vtigerRequest<{ sessionName?: string }>({ operation: "login", username, accessKey: accessKeyHash });
+    if (!login?.sessionName) throw new Error("VTiger read-only login did not return a usable session.");
+    return { ...status, outcome: "passed", checkedAt, message: "Read-only VTiger challenge and login passed. No CRM record, workflow URL or schedule was changed." };
   } catch (error) {
     return { ...status, outcome: "failed", checkedAt, message: safeMessage(error) };
   }

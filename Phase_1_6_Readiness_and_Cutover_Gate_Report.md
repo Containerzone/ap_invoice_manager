@@ -83,3 +83,19 @@ A future live cutover requires separately approved, evidence-backed sign-off for
 3. One reviewed shadow test per relevant workflow family with documented exceptions resolved or explicitly accepted.
 4. Document-specific approval before any future live financial action.
 5. A separate review/approval before enabling any schedule or changing any external callback/workflow configuration.
+
+## Post-reconnect validation addendum — 27 September 2026
+
+The administrator completed the AP Management OAuth reconnect. The application recorded both the reconnect and its immediate **GET-only** tenant check against the expected **CONTAINERZONE** organisation. No Xero token was exposed and no Xero document, contact, item, payment, setting or financial record was changed.
+
+| Gate | Current outcome | Evidence |
+|---|---|---|
+| AP-owned Xero reconnect | **Passed** | Reconnect audit and immediate GET-only tenant audit both recorded `CONTAINERZONE`. |
+| Xero financial validation mode | **Passed / no-write** | The health check uses `GET` only and explicitly prohibits token refresh and all financial mutation helpers. |
+| VTiger challenge endpoint | Available | The configured account can obtain a read-only challenge. |
+| VTiger read-only login | **Blocked** | The login call returns `Specified token is invalid or expired`; this is now detected accurately instead of treating a challenge as healthy access. |
+| Exact candidate `D702903` | **Blocked** | No VTiger candidate ID was accepted, so no shadow test or Xero preflight was run. |
+
+> **Current stop condition:** AP/IT must renew the AP Management VTiger read-only access key for the existing integration. This must not alter VTiger workflows, schedules, URLs, Operations settings or Xero credentials. After that, the next permitted step is one exact, GET-only Candidate Finder lookup for `D702903`, followed only by a shadow evidence run if it resolves uniquely.
+
+The read-only verification correction was tested with TypeScript, **40 test files / 235 tests**, and a production build. Live cutover remains disabled and unauthorised.

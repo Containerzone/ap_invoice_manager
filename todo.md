@@ -467,3 +467,9 @@
 - [x] Make expired Xero connection state explicit in Settings and show a separate callback warning if consent succeeds but GET-only verification does not.
 - [x] Validate TypeScript, focused reconnection coverage and full regression suite (39 files / 233 tests) plus production build.
 - [ ] Required user gate: publish this checkpoint, then select **Reconnect Xero** from Settings and complete the `CONTAINERZONE` consent flow. Remain on the callback until it says **Connected and verified**. VTiger read-only access also still needs AP/IT renewal before a named candidate can progress.
+
+## Phase 1.6 Gate Validation — Post-Reconnect (Session 24)
+- [x] Confirm AP Management OAuth reconnect completed for the expected `CONTAINERZONE` Xero tenant and persisted separate reconnect plus immediate GET-only tenant-verification audit records. No Xero write endpoint was invoked.
+- [x] Correct the VTiger connection check so it validates the full GET-only challenge **and** login exchange; a challenge alone is no longer reported as healthy access.
+- [x] Record the live result: VTiger challenge is available but the AP read-only login returns `Specified token is invalid or expired`, so no candidate lookup or shadow test can proceed safely.
+- [ ] Required AP/IT action: replace or renew the **AP Management** VTiger read-only access key for the existing AP integration, then reply `done`. Do not change any workflow URL, schedule, Operations setting or Xero credential. The next step will be an exact GET-only lookup for `D702903` and the first field-level shadow test.
