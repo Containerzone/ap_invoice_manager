@@ -100,11 +100,17 @@ import {
   createFinancialCandidateDiscovery,
   createFinancialIntegrationAudit,
   getFinancialCandidateDiscoveries,
+  getFinancialCandidateRoster,
+  getFinancialCandidateRosterEntry,
   getFinancialIntegrationAudits,
   getFinancialShadowTestById,
   getFinancialShadowTests,
   reviewFinancialShadowTest,
   resolveFinancialWorkflowException,
+  upsertFinancialCandidateRosterEntry,
+  updateFinancialCandidateRosterDiscovery,
+  markFinancialCandidateRosterNeedsData,
+  linkFinancialCandidateRosterShadowTest,
   upsertFinancialWorkflowConfig,
   upsertFinancialWorkflowSchedule,
 } from "./financialWorkflowDb";
@@ -419,6 +425,49 @@ async function executeFinancialShadowTest(input: ShadowTestInput) {
   };
 }
 
+/**
+ * Candidate evidence is permitted only when both AP-owned integrations pass
+ * their own current GET-only readiness checks. Each check is separately
+ * audit-logged without retaining credentials or response bodies.
+ */
+async function requireFinancialCandidateTestReadiness(actorId: number) {
+  const [xero, vtiger] = await Promise.all([
+    testFinancialXeroConnection(),
+    testVtigerFinancialConnection(),
+  ]);
+  await Promise.all([
+    createFinancialIntegrationAudit({
+      integration: "xero",
+      action: "candidate_test_get_only_readiness",
+      outcome: xero.outcome,
+      tenantName: xero.organisationName,
+      tenantId: xero.tenantId,
+      details: { expectedTenantLabel: xero.expectedTenantLabel, readOnly: true },
+      actorId,
+      checkedAt: xero.checkedAt,
+    }),
+    createFinancialIntegrationAudit({
+      integration: "vtiger",
+      action: "candidate_test_get_only_readiness",
+      outcome: vtiger.outcome,
+      details: { message: vtiger.message, readOnly: true },
+      actorId,
+      checkedAt: vtiger.checkedAt,
+    }),
+  ]);
+  if (xero.outcome !== "passed" || vtiger.outcome !== "passed") {
+    const blockers = [
+      xero.outcome !== "passed" ? `Xero: ${xero.message}` : null,
+      vtiger.outcome !== "passed" ? `VTiger: ${vtiger.message}` : null,
+    ].filter(Boolean).join(" ");
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: `Candidate shadow tests remain blocked until both AP-owned read-only checks pass. ${blockers}`,
+    });
+  }
+  return { xero, vtiger };
+}
+
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
   // ─── Financial trigger migration — phase-one shadow mode ───────────────────
@@ -445,6 +494,8 @@ export const appRouter = router({
       .query(({ input }) => getFinancialShadowTests(input?.limit ?? 250)),
     candidateDiscoveries: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
       .query(({ input }) => getFinancialCandidateDiscoveries(input?.limit ?? 100)),
+    candidateRoster: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
+      .query(({ input }) => getFinancialCandidateRoster(input?.limit ?? 50)),
     integrationAudits: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
       .query(({ input }) => getFinancialIntegrationAudits(input?.limit ?? 100)),
     vtigerReadStatus: adminProcedure.query(() => getVtigerFinancialConnectionStatus()),
@@ -502,6 +553,56 @@ export const appRouter = router({
       });
       return { ...result, discoveryId, xeroWritePermitted: false as const };
     }),
+    saveCandidateRosterEntry: adminProcedure.input(z.object({
+      sourceCategory: z.enum(["deal", "container_control"]),
+      businessNumber: z.string().trim().min(1).max(128),
+      workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
+      branch: z.string().trim().min(1).max(120),
+      businessNote: z.string().trim().max(10_000).nullable().optional(),
+      ownerId: z.number().int().positive().nullable().optional(),
+      reviewerId: z.number().int().positive().nullable().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const rosterEntryId = await upsertFinancialCandidateRosterEntry({ ...input, createdBy: ctx.user.id });
+      return { rosterEntryId, mode: "shadow" as const, xeroWritePermitted: false as const };
+    }),
+    markCandidateRosterNeedsData: adminProcedure.input(z.object({
+      rosterEntryId: z.number().int().positive(),
+      message: z.string().trim().min(8).max(10_000),
+    })).mutation(async ({ input }) => {
+      const roster = await getFinancialCandidateRosterEntry(input.rosterEntryId);
+      if (!roster) throw new TRPCError({ code: "NOT_FOUND", message: "Candidate roster entry was not found." });
+      await markFinancialCandidateRosterNeedsData({ id: roster.id, message: input.message });
+      return { status: "needs_data" as const, xeroWritePermitted: false as const };
+    }),
+    resolveCandidateRosterEntry: adminProcedure.input(z.object({ rosterEntryId: z.number().int().positive() }))
+      .mutation(async ({ input, ctx }) => {
+        const roster = await getFinancialCandidateRosterEntry(input.rosterEntryId);
+        if (!roster) throw new TRPCError({ code: "NOT_FOUND", message: "Candidate roster entry was not found." });
+        const config = await getFinancialWorkflowConfig();
+        const result = await findExactFinancialCandidate({
+          sourceCategory: roster.sourceCategory as FinancialCandidateCategory,
+          businessNumber: roster.businessNumber,
+          configuration: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_CANDIDATE_FINDER_CONFIG_KEY)?.configValue,
+        });
+        const discoveryId = await createFinancialCandidateDiscovery({
+          sourceCategory: roster.sourceCategory,
+          businessNumber: result.businessNumber,
+          workflowType: roster.workflowType,
+          outcome: result.outcome,
+          candidateRecordIds: result.candidates.map((candidate) => candidate.recordId),
+          sourceRefreshedAt: result.candidates[0]?.sourceRefreshedAt ?? null,
+          message: `Roster ${roster.id}: ${result.message}`,
+          initiatedBy: ctx.user.id,
+        });
+        await updateFinancialCandidateRosterDiscovery({
+          id: roster.id,
+          discoveryStatus: result.outcome,
+          candidateRecordId: result.candidates[0]?.recordId ?? null,
+          latestDiscoveryId: discoveryId,
+          message: result.message,
+        });
+        return { ...result, rosterEntryId: roster.id, discoveryId, xeroWritePermitted: false as const };
+      }),
     historicalImportPreview: adminProcedure.input(z.object({
       references: z.array(z.string().trim().min(1).max(128)).min(1).max(50),
     })).mutation(async ({ input }) => ({
@@ -545,6 +646,7 @@ export const appRouter = router({
       });
     }),
     runCandidateShadowTest: adminProcedure.input(z.object({
+      rosterEntryId: z.number().int().positive(),
       sourceCategory: z.enum(["deal", "container_control"]),
       businessNumber: z.string().trim().min(1).max(128),
       candidateRecordId: z.string().trim().regex(/^\d+x\d+$/i),
@@ -552,21 +654,39 @@ export const appRouter = router({
       branch: z.string().trim().min(1).max(120),
       existingDocumentNumbers: z.array(z.string().trim().max(128)).max(200).optional(),
     })).mutation(async ({ input, ctx }) => {
+      const roster = await getFinancialCandidateRosterEntry(input.rosterEntryId);
+      if (!roster) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Candidate roster entry was not found." });
+      }
+      if (roster.sourceCategory !== input.sourceCategory || roster.businessNumber !== input.businessNumber || roster.workflowType !== input.workflowType || roster.branch !== input.branch) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Candidate roster details have changed. Resolve the roster entry again before running shadow evidence." });
+      }
+      if (roster.discoveryStatus !== "found" || roster.candidateRecordId !== input.candidateRecordId) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Resolve this Candidate Roster entry to one exact VTiger record before running a shadow test." });
+      }
+      await requireFinancialCandidateTestReadiness(ctx.user.id);
       const config = await getFinancialWorkflowConfig();
       const finder = await findExactFinancialCandidate({
         sourceCategory: input.sourceCategory as FinancialCandidateCategory,
         businessNumber: input.businessNumber,
         configuration: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_CANDIDATE_FINDER_CONFIG_KEY)?.configValue,
       });
-      await createFinancialCandidateDiscovery({
+      const revalidationDiscoveryId = await createFinancialCandidateDiscovery({
         sourceCategory: input.sourceCategory,
         businessNumber: finder.businessNumber,
         workflowType: input.workflowType,
         outcome: finder.outcome,
         candidateRecordIds: finder.candidates.map((candidate) => candidate.recordId),
         sourceRefreshedAt: finder.candidates[0]?.sourceRefreshedAt ?? null,
-        message: `Evidence revalidation: ${finder.message}`,
+        message: `Candidate test revalidation: ${finder.message}`,
         initiatedBy: ctx.user.id,
+      });
+      await updateFinancialCandidateRosterDiscovery({
+        id: roster.id,
+        discoveryStatus: finder.outcome,
+        candidateRecordId: finder.candidates[0]?.recordId ?? null,
+        latestDiscoveryId: revalidationDiscoveryId,
+        message: finder.message,
       });
       if (finder.outcome !== "found" || finder.candidates[0]?.recordId !== input.candidateRecordId) {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The selected VTiger candidate is no longer an exact, unique match. Run Candidate Finder again before creating evidence." });
@@ -595,6 +715,7 @@ export const appRouter = router({
         createdBy: ctx.user.id,
         idempotencySalt: `phase16:${input.sourceCategory}:${input.businessNumber}:${input.candidateRecordId}:${Date.now()}`,
       });
+      await linkFinancialCandidateRosterShadowTest(roster.id, result.testId);
       return { ...result, candidate: matchedCandidate, expectedFactsSource: "active_ap_rules" as const };
     }),
     reviewShadowTest: adminProcedure.input(z.object({

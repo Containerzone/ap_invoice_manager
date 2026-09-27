@@ -15,6 +15,7 @@ export type FinancialXeroConnectionStatus = {
   tenantName: string | null;
   tenantIdHint: string | null;
   tenantId: string | null;
+  expiresAt: Date | null;
   scopeConfigured: boolean;
   readOnlyGuard: true;
 };
@@ -68,7 +69,7 @@ function tenantHint(tenantId: string | null | undefined): string | null {
 
 function connectionBase(token: Awaited<ReturnType<typeof getXeroToken>>): FinancialXeroConnectionStatus {
   if (!token) return {
-    configured: false, tokenState: "missing", tenantName: null, tenantIdHint: null, tenantId: null, scopeConfigured: false, readOnlyGuard: true,
+    configured: false, tokenState: "missing", tenantName: null, tenantIdHint: null, tenantId: null, expiresAt: null, scopeConfigured: false, readOnlyGuard: true,
   };
   const millis = token.expiresAt.getTime() - Date.now();
   return {
@@ -77,6 +78,7 @@ function connectionBase(token: Awaited<ReturnType<typeof getXeroToken>>): Financ
     tenantName: token.tenantName ?? null,
     tenantIdHint: tenantHint(token.tenantId),
     tenantId: token.tenantId ?? null,
+    expiresAt: token.expiresAt,
     scopeConfigured: Boolean(token.scope?.includes("accounting.invoices")),
     readOnlyGuard: true,
   };

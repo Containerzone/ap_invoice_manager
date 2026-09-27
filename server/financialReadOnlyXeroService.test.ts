@@ -48,6 +48,7 @@ describe("financial read-only Xero service", () => {
       .mockResolvedValueOnce({ data: [{ tenantName: "ContainerZone Test" }] });
     const result = await testFinancialXeroConnection();
     expect(result).toMatchObject({ outcome: "passed", readOnlyGuard: true, organisationName: "ContainerZone Test" });
+    expect(result.expiresAt).toBeInstanceOf(Date);
     expect(mockGet).toHaveBeenCalledTimes(2);
     noMutationAssertions();
   });

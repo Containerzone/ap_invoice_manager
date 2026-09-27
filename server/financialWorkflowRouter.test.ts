@@ -33,6 +33,8 @@ vi.mock("./financialWorkflowDb", () => ({
   createFinancialIntegrationAudit: vi.fn().mockResolvedValue(44),
   createFinancialShadowTest: vi.fn().mockResolvedValue(901),
   getFinancialCandidateDiscoveries: vi.fn().mockResolvedValue([]),
+  getFinancialCandidateRoster: vi.fn().mockResolvedValue([]),
+  getFinancialCandidateRosterEntry: vi.fn().mockResolvedValue(undefined),
   getFinancialIntegrationAudits: vi.fn().mockResolvedValue([]),
   getFinancialShadowTestById: vi.fn().mockResolvedValue({ id: 901, reviewStatus: "pending", actualResult: { reviewEligible: true } }),
   getFinancialShadowTests: vi.fn().mockResolvedValue([]),
@@ -42,13 +44,17 @@ vi.mock("./financialWorkflowDb", () => ({
   getFinancialWorkflowSchedules: vi.fn().mockResolvedValue([]),
   resolveFinancialWorkflowException: vi.fn().mockResolvedValue(undefined),
   reviewFinancialShadowTest: vi.fn().mockResolvedValue(undefined),
+  upsertFinancialCandidateRosterEntry: vi.fn().mockResolvedValue(71),
+  updateFinancialCandidateRosterDiscovery: vi.fn().mockResolvedValue(undefined),
+  markFinancialCandidateRosterNeedsData: vi.fn().mockResolvedValue(undefined),
+  linkFinancialCandidateRosterShadowTest: vi.fn().mockResolvedValue(undefined),
   upsertFinancialWorkflowConfig: vi.fn().mockResolvedValue(undefined),
   upsertFinancialWorkflowSchedule: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./vtigerFinancialReadService", () => ({
   getVtigerFinancialConnectionStatus: vi.fn().mockReturnValue({ configured: true, missing: [] }),
-  testVtigerFinancialConnection: vi.fn().mockResolvedValue({ configured: true, missing: [], outcome: "passed" }),
+  testVtigerFinancialConnection: vi.fn().mockResolvedValue({ configured: true, missing: [], outcome: "passed", message: "VTiger read-only access passed", checkedAt: new Date() }),
   retrieveCurrentVtigerFinancialRecord: vi.fn().mockResolvedValue({ customerOrganisationName: "Current customer", modifiedtime: "2026-09-25 12:00:00" }),
 }));
 
@@ -63,7 +69,7 @@ vi.mock("./vtigerFinancialCandidateService", () => ({
 
 vi.mock("./financialReadOnlyXeroService", () => ({
   getFinancialXeroConnectionStatus: vi.fn().mockResolvedValue({ configured: true, tokenState: "valid" }),
-  testFinancialXeroConnection: vi.fn().mockResolvedValue({ outcome: "passed" }),
+  testFinancialXeroConnection: vi.fn().mockResolvedValue({ outcome: "passed", message: "Xero read-only access passed", tenantId: "tenant-1", organisationName: "CONTAINERZONE", expectedTenantLabel: "CONTAINERZONE", checkedAt: new Date() }),
   preflightFinancialXeroIntents: vi.fn().mockResolvedValue([]),
   previewHistoricalXeroReferences: vi.fn().mockResolvedValue([]),
 }));
@@ -146,6 +152,46 @@ describe("financial operations tRPC safeguards", () => {
     expect(createFinancialCandidateDiscovery).toHaveBeenCalledWith(expect.objectContaining({
       businessNumber: "D702903", candidateRecordIds: ["4x702903"], initiatedBy: 1,
     }));
+  });
+
+  it("allows only an administrator to add one explicit Candidate Roster entry", async () => {
+    const { appRouter } = await import("./routers");
+    const { upsertFinancialCandidateRosterEntry } = await import("./financialWorkflowDb");
+    const input = {
+      sourceCategory: "container_control" as const,
+      businessNumber: "CC-2001",
+      workflowType: "recurring_for_hire" as const,
+      branch: "Initial For Hire",
+      businessNote: "Known current candidate",
+    };
+    await expect(appRouter.createCaller(context("user")).financialOperations.saveCandidateRosterEntry(input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(appRouter.createCaller(context("admin")).financialOperations.saveCandidateRosterEntry(input)).resolves.toMatchObject({ rosterEntryId: 71, xeroWritePermitted: false });
+    expect(upsertFinancialCandidateRosterEntry).toHaveBeenCalledWith(expect.objectContaining({ ...input, createdBy: 1 }));
+  });
+
+  it("resolves only the exact named Candidate Roster reference and stores no live writer result", async () => {
+    const { appRouter } = await import("./routers");
+    const { getFinancialCandidateRosterEntry, updateFinancialCandidateRosterDiscovery } = await import("./financialWorkflowDb");
+    vi.mocked(getFinancialCandidateRosterEntry).mockResolvedValueOnce({
+      id: 71, sourceCategory: "container_control", businessNumber: "CC-2001", workflowType: "container_control_acquisition", branch: "Initial For Hire", createdBy: 1,
+    } as any);
+    const result = await appRouter.createCaller(context("admin")).financialOperations.resolveCandidateRosterEntry({ rosterEntryId: 71 });
+    expect(result).toMatchObject({ rosterEntryId: 71, outcome: "found", xeroWritePermitted: false });
+    expect(updateFinancialCandidateRosterDiscovery).toHaveBeenCalledWith(expect.objectContaining({ id: 71, discoveryStatus: "found", candidateRecordId: "4x702903" }));
+  });
+
+  it("blocks candidate shadow execution when either AP-owned read-only integration is unavailable", async () => {
+    const { appRouter } = await import("./routers");
+    const { testVtigerFinancialConnection } = await import("./vtigerFinancialReadService");
+    const { createFinancialIntegrationAudit, getFinancialCandidateRosterEntry } = await import("./financialWorkflowDb");
+    vi.mocked(getFinancialCandidateRosterEntry).mockResolvedValueOnce({
+      id: 71, sourceCategory: "deal", businessNumber: "D702903", workflowType: "main_customer_invoice", branch: "Main invoice", discoveryStatus: "found", candidateRecordId: "4x702903",
+    } as any);
+    vi.mocked(testVtigerFinancialConnection).mockResolvedValueOnce({ configured: true, missing: [], outcome: "failed", message: "VTiger access key is invalid", checkedAt: new Date() } as any);
+    await expect(appRouter.createCaller(context("admin")).financialOperations.runCandidateShadowTest({
+      rosterEntryId: 71, sourceCategory: "deal", businessNumber: "D702903", candidateRecordId: "4x702903", workflowType: "main_customer_invoice", branch: "Main invoice",
+    })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(createFinancialIntegrationAudit).toHaveBeenCalledWith(expect.objectContaining({ integration: "vtiger", action: "candidate_test_get_only_readiness", outcome: "failed" }));
   });
 
   it("allows only an administrator to confirm or reject recorded shadow evidence", async () => {

@@ -4,6 +4,7 @@ import {
   financialDocumentIntents,
   financialDocuments,
   financialCandidateDiscoveries,
+  financialCandidateRoster,
   financialIntegrationAudits,
   financialShadowTests,
   financialWorkflowConfig,
@@ -17,6 +18,7 @@ import {
   workflowSchedules,
   type FinancialWorkflowConfig,
   type FinancialCandidateDiscovery,
+  type FinancialCandidateRoster,
   type FinancialIntegrationAudit,
   type FinancialShadowTest,
   type FinancialWorkflowException,
@@ -471,6 +473,109 @@ export async function getFinancialCandidateDiscoveries(limit = 100): Promise<Fin
   return db.select().from(financialCandidateDiscoveries)
     .orderBy(desc(financialCandidateDiscoveries.createdAt))
     .limit(limit);
+}
+
+export type CandidateRosterStatus = "draft" | "found" | "not_found" | "ambiguous" | "blocked" | "needs_data";
+
+export async function getFinancialCandidateRoster(limit = 100): Promise<FinancialCandidateRoster[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialCandidateRoster)
+    .orderBy(desc(financialCandidateRoster.updatedAt), desc(financialCandidateRoster.id))
+    .limit(limit);
+}
+
+export async function getFinancialCandidateRosterEntry(id: number): Promise<FinancialCandidateRoster | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(financialCandidateRoster).where(eq(financialCandidateRoster.id, id)).limit(1))[0];
+}
+
+/**
+ * Adds or deliberately re-plans one named candidate. Updating a business
+ * reference resets its discovery state, so an old exact match cannot be reused
+ * for a changed workflow branch.
+ */
+export async function upsertFinancialCandidateRosterEntry(input: {
+  sourceCategory: "deal" | "container_control";
+  businessNumber: string;
+  workflowType: string;
+  branch: string;
+  businessNote?: string | null;
+  ownerId?: number | null;
+  reviewerId?: number | null;
+  createdBy: number;
+}): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const existing = (await db.select().from(financialCandidateRoster).where(and(
+    eq(financialCandidateRoster.sourceCategory, input.sourceCategory),
+    eq(financialCandidateRoster.businessNumber, input.businessNumber),
+  )).limit(1))[0];
+  const values = {
+    workflowType: input.workflowType,
+    branch: input.branch,
+    businessNote: input.businessNote?.trim() || null,
+    ownerId: input.ownerId ?? null,
+    reviewerId: input.reviewerId ?? null,
+    discoveryStatus: "draft" as const,
+    candidateRecordId: null,
+    latestDiscoveryId: null,
+    latestShadowTestId: null,
+    lastDiscoveryMessage: null,
+    lastResolvedAt: null,
+    updatedAt: new Date(),
+  };
+  if (existing) {
+    await db.update(financialCandidateRoster).set(values).where(eq(financialCandidateRoster.id, existing.id));
+    return existing.id;
+  }
+  const result = await db.insert(financialCandidateRoster).values({
+    sourceCategory: input.sourceCategory,
+    businessNumber: input.businessNumber,
+    createdBy: input.createdBy,
+    ...values,
+  });
+  return Number((result[0] as any).insertId);
+}
+
+export async function updateFinancialCandidateRosterDiscovery(input: {
+  id: number;
+  discoveryStatus: Exclude<CandidateRosterStatus, "draft" | "needs_data">;
+  candidateRecordId?: string | null;
+  latestDiscoveryId: number;
+  message: string;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(financialCandidateRoster).set({
+    discoveryStatus: input.discoveryStatus,
+    candidateRecordId: input.discoveryStatus === "found" ? input.candidateRecordId ?? null : null,
+    latestDiscoveryId: input.latestDiscoveryId,
+    latestShadowTestId: null,
+    lastDiscoveryMessage: input.message,
+    lastResolvedAt: new Date(),
+    updatedAt: new Date(),
+  }).where(eq(financialCandidateRoster.id, input.id));
+}
+
+export async function markFinancialCandidateRosterNeedsData(input: { id: number; message: string }): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(financialCandidateRoster).set({
+    discoveryStatus: "needs_data",
+    candidateRecordId: null,
+    latestShadowTestId: null,
+    lastDiscoveryMessage: input.message.trim(),
+    updatedAt: new Date(),
+  }).where(eq(financialCandidateRoster.id, input.id));
+}
+
+export async function linkFinancialCandidateRosterShadowTest(id: number, shadowTestId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(financialCandidateRoster).set({ latestShadowTestId: shadowTestId, updatedAt: new Date() })
+    .where(eq(financialCandidateRoster.id, id));
 }
 
 export async function createFinancialIntegrationAudit(input: {

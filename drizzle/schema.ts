@@ -756,6 +756,38 @@ export type FinancialCandidateDiscovery = typeof financialCandidateDiscoveries.$
 export type InsertFinancialCandidateDiscovery = typeof financialCandidateDiscoveries.$inferInsert;
 
 /**
+ * A deliberately small, administrator-entered list of named records that may
+ * be used for Phase 1.7 shadow validation. It is never populated by a VTiger
+ * enumeration or historical import, and it contains no raw CRM payload.
+ */
+export const financialCandidateRoster = mysqlTable("financial_candidate_roster", {
+  id: int("id").autoincrement().primaryKey(),
+  sourceCategory: mysqlEnum("sourceCategory", ["deal", "container_control"] as const).notNull(),
+  businessNumber: varchar("businessNumber", { length: 128 }).notNull(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  branch: varchar("branch", { length: 120 }).notNull(),
+  businessNote: text("businessNote"),
+  ownerId: int("ownerId"),
+  reviewerId: int("reviewerId"),
+  discoveryStatus: mysqlEnum("discoveryStatus", ["draft", "found", "not_found", "ambiguous", "blocked", "needs_data"] as const)
+    .default("draft")
+    .notNull(),
+  candidateRecordId: varchar("candidateRecordId", { length: 128 }),
+  latestDiscoveryId: int("latestDiscoveryId"),
+  latestShadowTestId: int("latestShadowTestId"),
+  lastDiscoveryMessage: text("lastDiscoveryMessage"),
+  lastResolvedAt: timestamp("lastResolvedAt"),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  candidateRosterReferenceUnique: uniqueIndex("financial_candidate_roster_reference_unique").on(table.sourceCategory, table.businessNumber),
+}));
+
+export type FinancialCandidateRoster = typeof financialCandidateRoster.$inferSelect;
+export type InsertFinancialCandidateRoster = typeof financialCandidateRoster.$inferInsert;
+
+/**
  * Contains non-secret AP integration outcomes, such as a completed GET-only
  * Xero tenant check or an OAuth reconnect. Credentials and raw responses are
  * never stored here.

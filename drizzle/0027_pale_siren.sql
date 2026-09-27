@@ -1,0 +1,21 @@
+CREATE TABLE `financial_candidate_roster` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`sourceCategory` enum('deal','container_control') NOT NULL,
+	`businessNumber` varchar(128) NOT NULL,
+	`workflowType` varchar(80) NOT NULL,
+	`branch` varchar(120) NOT NULL,
+	`businessNote` text,
+	`ownerId` int,
+	`reviewerId` int,
+	`discoveryStatus` enum('draft','found','not_found','ambiguous','blocked','needs_data') NOT NULL DEFAULT 'draft',
+	`candidateRecordId` varchar(128),
+	`latestDiscoveryId` int,
+	`latestShadowTestId` int,
+	`lastDiscoveryMessage` text,
+	`lastResolvedAt` timestamp,
+	`createdBy` int NOT NULL,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `financial_candidate_roster_id` PRIMARY KEY(`id`),
+	CONSTRAINT `financial_candidate_roster_reference_unique` UNIQUE(`sourceCategory`,`businessNumber`)
+);
