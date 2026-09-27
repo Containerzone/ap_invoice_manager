@@ -482,3 +482,10 @@
 - [x] Record shadow test #30001 as `needs_data` for **Initial Container Control — For Hire**. No named current For Hire Container Control has been supplied and VTiger's AP read-only login cannot resolve one safely. No external query or mutation was performed for this record.
 - [ ] Required AP/IT gate: securely renew the AP Management VTiger **read-only** access key/session and reply `done`. Because the AP Xero token is expiring soon, reauthenticate AP Management through Settings → Xero Integration if Financial Operations reports it expired; do not copy credentials from Operations or alter any workflow/URL/schedule.
 - [ ] After both checks pass, enter one named current **For Hire Container Control** in Candidate Roster, resolve it exactly, run the reviewer-held Initial For Hire shadow comparison, and have an AP administrator confirm or reject it with a meaningful comment. No live cutover follows.
+
+## VTiger Form-Login Correction (Session 26)
+- [x] Verified the documented VTiger webservice contract: `GET getchallenge`, `POST application/x-www-form-urlencoded login` with `MD5(challengeToken + accessKey)`, then GET-only exact record queries.
+- [x] Replaced the invalid GET login transport in both financial connection and candidate readers with the documented form-login session exchange; the login POST has no CRM/Xero record-write capability.
+- [x] Revalidated the unchanged AP Management credential: challenge plus form login passed, and exact Deal `D702903` lookup uniquely retrieved VTiger record `5x486152` through the metadata-verified `Potentials.potential_no` field. No external financial or CRM record changed.
+- [x] Narrowed the default Deal query projection to metadata-verified fields, preventing unavailable custom fields from rejecting otherwise valid exact queries.
+- [ ] Next controlled step: an AP administrator must explicitly add/approve a named current **For Hire Container Control** in Candidate Roster before the first Initial For Hire shadow comparison. The retrieved Deal D702903 is discovery evidence only and has not been treated as a For Hire candidate.

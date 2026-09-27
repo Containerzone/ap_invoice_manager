@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));
-vi.mock("axios", () => ({ default: { get: mockGet } }));
+const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
+vi.mock("axios", () => ({ default: { get: mockGet, post: mockPost } }));
 
 import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
 
@@ -12,9 +12,8 @@ function configuredEnvironment() {
 }
 
 function successfulSession() {
-  mockGet
-    .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge" } } })
-    .mockResolvedValueOnce({ data: { success: true, result: { sessionName: "session" } } });
+  mockGet.mockResolvedValueOnce({ data: { success: true, result: { token: "challenge" } } });
+  mockPost.mockResolvedValueOnce({ data: { success: true, result: { sessionName: "session" } } });
 }
 
 describe("exact VTiger financial candidate finder", () => {
@@ -29,7 +28,7 @@ describe("exact VTiger financial candidate finder", () => {
     delete process.env.VTIGER_ACCESS_KEY;
   });
 
-  it("uses only read-only GETs and finds one exact named deal", async () => {
+  it("uses a GET challenge, form-POST login and exact read query for one named deal", async () => {
     successfulSession();
     mockGet.mockResolvedValueOnce({ data: { success: true, result: [{ id: "4x702903", potentials_no: "D702903", accountname: "ContainerZone Customer", modifiedtime: "2026-09-26 09:00:00" }] } });
     const result = await findExactFinancialCandidate({
@@ -39,8 +38,10 @@ describe("exact VTiger financial candidate finder", () => {
     });
     expect(result).toMatchObject({ outcome: "found", businessNumber: "D702903" });
     expect(result.candidates[0]).toMatchObject({ recordId: "4x702903", matchedField: "potentials_no", sourceCategory: "deal" });
-    expect(mockGet).toHaveBeenCalledTimes(3);
-    const query = mockGet.mock.calls[2]?.[1]?.params?.query as string;
+    expect(mockGet).toHaveBeenCalledTimes(2);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockPost.mock.calls[0]?.[1]).toContain("operation=login");
+    const query = mockGet.mock.calls[1]?.[1]?.params?.query as string;
     expect(query).toContain("FROM Potentials WHERE potentials_no = 'D702903'");
     expect(query).not.toContain("LIMIT");
   });
@@ -79,7 +80,7 @@ describe("exact VTiger financial candidate finder", () => {
       businessNumber: "D702903' OR id != ''",
       configuration: { deal: [{ module: "Potentials", businessNumberFields: ["potentials_no"], selectFields: ["id"] }] },
     });
-    const query = mockGet.mock.calls[2]?.[1]?.params?.query as string;
+    const query = mockGet.mock.calls[1]?.[1]?.params?.query as string;
     expect(query).toContain("potentials_no = 'D702903\\'");
     expect(query).not.toContain("WHERE potentials_no = 'D702903' OR");
     expect((query.match(/WHERE/g) ?? [])).toHaveLength(1);

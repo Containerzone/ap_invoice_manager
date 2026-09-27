@@ -38,7 +38,11 @@ export const DEFAULT_FINANCIAL_CANDIDATE_FINDER_CONFIG: FinancialCandidateFinder
   deal: [{
     module: "Potentials",
     businessNumberFields: ["potentials_no", "potential_no", "cf_deal_number", "deal_number"],
-    selectFields: ["id", "potentials_no", "potential_no", "cf_deal_number", "accountname", "cf_container_control", "modifiedtime"],
+    // Verified against this VTiger instance's Potentials metadata. Keep the
+    // default projection deliberately narrow: a single unavailable custom
+    // field makes VTiger reject the whole exact query, even when the matching
+    // business-number field itself is valid.
+    selectFields: ["id", "potential_no", "potentialname", "modifiedtime"],
   }],
   container_control: [{
     module: "ContainerControl",
@@ -108,15 +112,25 @@ async function request<T>(params: Record<string, string>): Promise<T> {
   return response.data.result as T;
 }
 
+/** VTiger requires form-urlencoded POST transport for session login only. */
+async function login<T>(params: Record<string, string>): Promise<T> {
+  const response = await axios.post(endpoint(), new URLSearchParams(params).toString(), {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    timeout: 20_000,
+  });
+  if (!response.data?.success) throw new Error(response.data?.error?.message ?? "VTiger login request failed");
+  return response.data.result as T;
+}
+
 async function readOnlySession(): Promise<string> {
   const { username, accessKey } = config();
   if (!username || !accessKey || !config().url) throw new Error("VTiger is not configured for AP-side candidate discovery.");
   const challenge = await request<{ token?: string }>({ operation: "getchallenge", username });
   if (!challenge?.token) throw new Error("VTiger challenge did not return a token.");
   const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
-  const login = await request<{ sessionName?: string }>({ operation: "login", username, accessKey: accessKeyHash });
-  if (!login?.sessionName) throw new Error("VTiger read-only login did not return a session.");
-  return login.sessionName;
+  const session = await login<{ sessionName?: string }>({ operation: "login", username, accessKey: accessKeyHash });
+  if (!session?.sessionName) throw new Error("VTiger read-only login did not return a session.");
+  return session.sessionName;
 }
 
 function sourceRefreshedAt(row: Record<string, unknown>): Date | null {
@@ -138,7 +152,8 @@ function messageFor(error: unknown): string {
 
 /**
  * Finds at most two exact matches for one named Deal or Container Control. It
- * issues GET challenge/login/query calls only and never enumerates a module.
+ * issues a GET challenge, a form-POST login and GET exact-query calls only. It
+ * never enumerates a module or writes a CRM record.
  */
 export async function findExactFinancialCandidate(input: {
   sourceCategory: FinancialCandidateCategory;
@@ -190,7 +205,7 @@ export async function findExactFinancialCandidate(input: {
     if (result.length === 0 && successfulQueries === 0) return { outcome: "blocked", sourceCategory: input.sourceCategory, businessNumber, candidates: [], message: `VTiger rejected every configured exact candidate alias (${queryProblems.join(", ") || "none"}). Review AP-side candidate finder field configuration.` };
     if (result.length === 0) return { outcome: "not_found", sourceCategory: input.sourceCategory, businessNumber, candidates: [], message: "No exact VTiger candidate matched this business number in the configured AP-side fields." };
     if (result.length > 1) return { outcome: "ambiguous", sourceCategory: input.sourceCategory, businessNumber, candidates: result, message: "More than one exact VTiger record matched. Select the correct record before creating shadow evidence." };
-    return { outcome: "found", sourceCategory: input.sourceCategory, businessNumber, candidates: result, message: "Exact VTiger candidate found through AP Management's GET-only lookup." };
+    return { outcome: "found", sourceCategory: input.sourceCategory, businessNumber, candidates: result, message: "Exact VTiger candidate found through AP Management's read-only lookup." };
   } catch (error) {
     return { outcome: "blocked", sourceCategory: input.sourceCategory, businessNumber, candidates: [], message: messageFor(error) };
   }

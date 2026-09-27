@@ -47,6 +47,20 @@ async function vtigerRequest<T>(params: Record<string, string>): Promise<T> {
   return response.data.result as T;
 }
 
+/**
+ * VTiger's documented login endpoint requires form-urlencoded POST data. This
+ * authenticates a short-lived session only; it does not create or alter a CRM
+ * record, workflow URL or schedule.
+ */
+async function vtigerLogin<T>(params: Record<string, string>): Promise<T> {
+  const response = await axios.post(endpoint(), new URLSearchParams(params).toString(), {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    timeout: 20_000,
+  });
+  if (!response.data?.success) throw new Error(response.data?.error?.message ?? "VTiger login request failed");
+  return response.data.result as T;
+}
+
 function safeMessage(error: unknown): string {
   const response = (error as any)?.response;
   if (response?.status === 401 || response?.status === 403) return "VTiger rejected the configured AP Management credentials.";
@@ -55,10 +69,11 @@ function safeMessage(error: unknown): string {
 }
 
 /**
- * Verifies the configured credential through VTiger's GET-only challenge/login
- * exchange. A challenge only proves that the username is recognised; a login is
- * required before reporting the AP read credential as healthy. It never creates
- * a record, changes a workflow URL or invokes any VTiger mutation.
+ * Verifies the configured credential through VTiger's documented GET challenge
+ * plus form-POST login exchange. A challenge only proves that the username is
+ * recognised; a login is required before reporting the AP read credential as
+ * healthy. It never creates a record, changes a workflow URL or invokes a CRM
+ * mutation.
  */
 export async function testVtigerFinancialConnection(): Promise<VtigerFinancialConnectionTest> {
   const status = getVtigerFinancialConnectionStatus();
@@ -69,17 +84,17 @@ export async function testVtigerFinancialConnection(): Promise<VtigerFinancialCo
     const challenge = await vtigerRequest<{ token?: string }>({ operation: "getchallenge", username });
     if (!challenge?.token) throw new Error("VTiger challenge did not return a usable temporary token.");
     const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
-    const login = await vtigerRequest<{ sessionName?: string }>({ operation: "login", username, accessKey: accessKeyHash });
+    const login = await vtigerLogin<{ sessionName?: string }>({ operation: "login", username, accessKey: accessKeyHash });
     if (!login?.sessionName) throw new Error("VTiger read-only login did not return a usable session.");
-    return { ...status, outcome: "passed", checkedAt, message: "Read-only VTiger challenge and login passed. No CRM record, workflow URL or schedule was changed." };
+    return { ...status, outcome: "passed", checkedAt, message: "Read-only VTiger challenge and documented form-login passed. No CRM record, workflow URL or schedule was changed." };
   } catch (error) {
     return { ...status, outcome: "failed", checkedAt, message: safeMessage(error) };
   }
 }
 
 /**
- * Retrieves the current VTiger record using the standard challenge/login/read
- * API. It only performs GET operations and establishes no workflow or Xero side
+ * Retrieves the current VTiger record using the standard GET challenge,
+ * form-POST login and GET retrieve API. It establishes no workflow or Xero side
  * effect. The session token is held in memory for this request only.
  */
 export async function retrieveCurrentVtigerFinancialRecord(recordId: string): Promise<Record<string, unknown>> {
@@ -90,6 +105,6 @@ export async function retrieveCurrentVtigerFinancialRecord(recordId: string): Pr
 
   const challenge = await vtigerRequest<{ token: string }>({ operation: "getchallenge", username });
   const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
-  const login = await vtigerRequest<{ sessionName: string }>({ operation: "login", username, accessKey: accessKeyHash });
+  const login = await vtigerLogin<{ sessionName: string }>({ operation: "login", username, accessKey: accessKeyHash });
   return vtigerRequest<Record<string, unknown>>({ operation: "retrieve", id: recordId.trim(), sessionName: login.sessionName });
 }
