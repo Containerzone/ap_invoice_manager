@@ -489,3 +489,10 @@
 - [x] Revalidated the unchanged AP Management credential: challenge plus form login passed, and exact Deal `D702903` lookup uniquely retrieved VTiger record `5x486152` through the metadata-verified `Potentials.potential_no` field. No external financial or CRM record changed.
 - [x] Narrowed the default Deal query projection to metadata-verified fields, preventing unavailable custom fields from rejecting otherwise valid exact queries.
 - [ ] Next controlled step: an AP administrator must explicitly add/approve a named current **For Hire Container Control** in Candidate Roster before the first Initial For Hire shadow comparison. The retrieved Deal D702903 is discovery evidence only and has not been treated as a For Hire candidate.
+
+## Financial Operations Parent Navigation (Session 27)
+- [x] Keep **Financial Operations** as the single sidebar parent workspace; no new routes, browser tabs, schedules, or financial actions were introduced.
+- [x] Consolidate every existing financial tab into four ordered in-workspace parent areas: **1. Dashboard**, **2. Document Operations**, **3. Review & Evidence**, and **4. Controls**.
+- [x] Preserve all existing child screens and admin-only boundaries: staff retain their permitted Overview/PO/Invoices/Runs/Exceptions/Schedules views, while Candidate Roster, Shadow Test Register, Historical Preview and Automation Settings remain administrator-only.
+- [x] Add tested navigation metadata so child coverage is complete and no child tab can be duplicated or incorrectly exposed to staff.
+- [x] Validate TypeScript, the full 41-file / 240-test regression suite and production build. **SHADOW ONLY — no financial writes possible.**
