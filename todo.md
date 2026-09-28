@@ -517,3 +517,10 @@
 
 - [x] Corrected the Financial Operations dashboard so it distinguishes **trigger evaluations** from existing evidence-only activity. It now exposes Shadow Evidence, Exact Candidate Lookups, Release Manifests and Integration Checks separately from Trigger Runs and Proposed Documents.
 - [x] Verified the current AP ledger: 0 workflow runs, 0 proposed documents, 0 exceptions, **15 shadow tests**, **5 candidate lookups**, **1 release manifest**, and **13 integration checks**. Zero trigger/document values are therefore accurate; the evidence is now visible rather than hidden behind those unrelated metrics.
+
+## Financial Xero Readiness Refresh — 28 September 2026
+
+- [x] Corrected the Financial Operations read-only gate to use the existing AP OAuth refresh path when Xero's normal 30-minute access token has expired. The token refresh is identity-only; all subsequent accounting verification/preflight requests remain GET-only.
+- [x] Confirmed no dedicated Xero token-renewal Heartbeat exists in this project. The existing core Xero service already refreshes tokens on demand, but the Financial Operations gate had intentionally bypassed it; the bypass has now been removed.
+- [x] Performed a fresh safe authentication refresh and GET-only tenant check: the expected `CONTAINERZONE` tenant passed. No Xero accounting document, VTiger record, legacy writer, workflow URL or schedule was changed.
+- [ ] Publish this correction, refresh the all-family manifest, then complete the remaining source-level, reviewer, legacy-writer and current-document gates before any write activation request.

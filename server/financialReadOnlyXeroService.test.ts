@@ -17,8 +17,13 @@ vi.mock("./xeroRequestManager", () => ({
   XERO_CACHE_TTL: { invoiceSearch: 1 },
   runCachedXeroGet: mockRunCached,
 }));
+vi.mock("./xeroService", () => ({
+  EXPECTED_AP_XERO_TENANT_LABEL: "CONTAINERZONE",
+  getXeroReadAuthWithRefresh: vi.fn(),
+}));
 
 import { getXeroToken } from "./db";
+import { getXeroReadAuthWithRefresh } from "./xeroService";
 import {
   preflightFinancialXeroIntents,
   previewHistoricalXeroReferences,
@@ -39,10 +44,11 @@ describe("financial read-only Xero service", () => {
       tenantId: "tenant-1", tenantName: "ContainerZone Test", accessToken: "secret", refreshToken: "refresh",
       expiresAt: new Date(Date.now() + 60 * 60_000), scope: "accounting.invoices accounting.contacts",
     } as any);
+    vi.mocked(getXeroReadAuthWithRefresh).mockResolvedValue({ token: "secret", tenantId: "tenant-1" });
     mockRunCached.mockImplementation(async (_auth: unknown, _key: string, _ttl: number, operation: () => Promise<any>) => (await operation()).data);
   });
 
-  it("tests Xero connection using GET-only requests and never refreshes or mutates", async () => {
+  it("tests Xero connection using GET-only accounting requests and never mutates financial data", async () => {
     mockGet
       .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
       .mockResolvedValueOnce({ data: [{ tenantName: "ContainerZone Test" }] });
@@ -50,6 +56,24 @@ describe("financial read-only Xero service", () => {
     expect(result).toMatchObject({ outcome: "passed", readOnlyGuard: true, organisationName: "ContainerZone Test" });
     expect(result.expiresAt).toBeInstanceOf(Date);
     expect(mockGet).toHaveBeenCalledTimes(2);
+    noMutationAssertions();
+  });
+
+  it("refreshes only OAuth authentication before the accounting GET checks when the Xero access token has expired", async () => {
+    const refreshedExpiry = new Date(Date.now() + 60 * 60_000);
+    vi.mocked(getXeroToken)
+      .mockResolvedValueOnce({ tenantId: "tenant-1", tenantName: "ContainerZone Test", accessToken: "expired", refreshToken: "refresh", expiresAt: new Date(Date.now() - 1_000), scope: "accounting.invoices accounting.contacts" } as any)
+      .mockResolvedValueOnce({ tenantId: "tenant-1", tenantName: "ContainerZone Test", accessToken: "renewed", refreshToken: "rotated", expiresAt: refreshedExpiry, scope: "accounting.invoices accounting.contacts" } as any);
+    vi.mocked(getXeroReadAuthWithRefresh).mockResolvedValue({ token: "renewed", tenantId: "tenant-1" });
+    mockGet
+      .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
+      .mockResolvedValueOnce({ data: [{ tenantName: "ContainerZone Test" }] });
+
+    const result = await testFinancialXeroConnection();
+
+    expect(result).toMatchObject({ outcome: "passed", tokenState: "valid" });
+    expect(result.expiresAt?.getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
+    expect(getXeroReadAuthWithRefresh).toHaveBeenCalledTimes(1);
     noMutationAssertions();
   });
 

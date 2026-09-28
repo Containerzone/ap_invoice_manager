@@ -2,7 +2,7 @@ import axios from "axios";
 import { getXeroToken } from "./db";
 import { runCachedXeroGet, XERO_CACHE_TTL, type XeroRequestAuth } from "./xeroRequestManager";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
-import { EXPECTED_AP_XERO_TENANT_LABEL } from "./xeroService";
+import { EXPECTED_AP_XERO_TENANT_LABEL, getXeroReadAuthWithRefresh } from "./xeroService";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const XERO_IDENTITY_BASE = "https://api.xero.com/connections";
@@ -84,14 +84,18 @@ function connectionBase(token: Awaited<ReturnType<typeof getXeroToken>>): Financ
   };
 }
 
-/** Returns only an already-valid token. Financial shadow validation never refreshes via POST. */
+/**
+ * Returns AP authentication for subsequent accounting GETs. Xero access tokens
+ * normally last 30 minutes, so an expired session is renewed through the OAuth
+ * token endpoint before this function performs any accounting request. The
+ * refresh is identity-only; all Xero accounting work in this module remains GET.
+ */
 async function readOnlyAuth(): Promise<ReadOnlyAuth> {
-  const token = await getXeroToken();
-  if (!token) throw new Error("Xero is not connected in AP Management");
-  if (token.expiresAt <= new Date(Date.now() + 60_000)) {
-    throw new Error("AP Management's Xero token is expired or near expiry; re-authenticate before read-only validation");
-  }
-  return { token: token.accessToken, tenantId: token.tenantId, tenantName: token.tenantName ?? null };
+  const stored = await getXeroToken();
+  if (!stored) throw new Error("Xero is not connected in AP Management");
+  const auth = await getXeroReadAuthWithRefresh();
+  const current = await getXeroToken();
+  return { token: auth.token, tenantId: auth.tenantId, tenantName: current?.tenantName ?? stored.tenantName ?? null };
 }
 
 /**
@@ -118,14 +122,18 @@ export async function getFinancialXeroConnectionStatus(): Promise<FinancialXeroC
 
 /** Runs only GET connection/organisation reads; it never refreshes a token or changes Xero state. */
 export async function testFinancialXeroConnection(): Promise<FinancialXeroConnectionTest> {
-  const token = await getXeroToken();
-  const base = connectionBase(token);
+  let token = await getXeroToken();
+  let base = connectionBase(token);
   const checkedAt = new Date();
-  if (!token || base.tokenState === "expired") {
+  if (!token) {
     return { ...base, outcome: "blocked", organisationName: null, expectedTenantLabel: EXPECTED_AP_TENANT_LABEL, checkedAt, message: "AP Management has no usable Xero token for a read-only test." };
   }
   try {
     const auth = await readOnlyAuth();
+    // Refresh the non-secret status after an identity-only OAuth refresh so the
+    // UI records the actual access-token expiry used by the GET verification.
+    token = await getXeroToken();
+    base = connectionBase(token);
     const [organisation, connections] = await Promise.all([
       xeroRead<any>(auth, "organisation", `${XERO_API_BASE}/Organisation`),
       // The identity endpoint is also a GET. It confirms the stored AP token is

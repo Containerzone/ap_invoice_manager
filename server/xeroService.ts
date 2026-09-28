@@ -182,6 +182,23 @@ async function getValidAccessToken(clientId: string, clientSecret: string): Prom
   }
 }
 
+/**
+ * Obtains an AP Xero access token for a subsequent accounting GET. If the
+ * short-lived access token has expired, it refreshes only the OAuth session and
+ * persists the rotated token; it does not call an accounting write endpoint.
+ *
+ * This keeps read-only preflight/checks usable after the normal 30-minute Xero
+ * access-token lifetime without granting a financial writer any capability.
+ */
+export async function getXeroReadAuthWithRefresh(): Promise<{ token: string; tenantId: string }> {
+  const clientId = process.env.XERO_CLIENT_ID;
+  const clientSecret = process.env.XERO_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error("Xero credentials are not configured for AP Management.");
+  }
+  return getValidAccessToken(clientId, clientSecret);
+}
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
