@@ -115,6 +115,10 @@ import {
   updateFinancialCandidateRosterDiscovery,
   markFinancialCandidateRosterNeedsData,
   linkFinancialCandidateRosterShadowTest,
+  getFinancialReleaseManifest,
+  getFinancialReleaseManifests,
+  prepareAllFinancialReleaseManifest,
+  recordFinancialReleaseLegacyInventory,
   upsertFinancialWorkflowConfig,
   upsertFinancialWorkflowSchedule,
 } from "./financialWorkflowDb";
@@ -507,6 +511,14 @@ export const appRouter = router({
       .query(({ input }) => getFinancialCutoverPacks(input?.limit ?? 100)),
     cutoverAudits: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
       .query(({ input }) => getFinancialCutoverAudits(input?.limit ?? 100)),
+    releaseManifests: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
+      .query(({ input }) => getFinancialReleaseManifests(input?.limit ?? 25)),
+    releaseManifest: adminProcedure.input(z.object({ manifestId: z.number().int().positive() }))
+      .query(async ({ input }) => {
+        const manifest = await getFinancialReleaseManifest(input.manifestId);
+        if (!manifest) throw new TRPCError({ code: "NOT_FOUND", message: "Financial release manifest was not found." });
+        return manifest;
+      }),
     vtigerReadStatus: adminProcedure.query(() => getVtigerFinancialConnectionStatus()),
     automationSettings: adminProcedure.query(async () => {
       const [config, schedules, xero, vtiger] = await Promise.all([
@@ -539,6 +551,35 @@ export const appRouter = router({
       await createFinancialIntegrationAudit({ integration: "xero", action: "get_only_tenant_check", outcome: result.outcome, tenantName: result.organisationName, tenantId: result.tenantId, details: { expectedTenantLabel: result.expectedTenantLabel, readOnly: true }, actorId: ctx.user.id, checkedAt: result.checkedAt });
       return result;
     }),
+    prepareAllFamilyReleaseManifest: adminProcedure.input(z.object({
+      maintenanceWindow: z.string().trim().max(255).nullable().optional(),
+      releaseOwner: z.string().trim().max(255).nullable().optional(),
+    }).optional()).mutation(async ({ input, ctx }) => {
+      const manifest = await prepareAllFinancialReleaseManifest({
+        preparedBy: ctx.user.id,
+        maintenanceWindow: input?.maintenanceWindow ?? null,
+        releaseOwner: input?.releaseOwner ?? null,
+      });
+      return {
+        ...manifest,
+        mode: "release_preparation_only" as const,
+        xeroWritePermitted: false as const,
+        schedulesChanged: false as const,
+        sourceSystemsChanged: false as const,
+      };
+    }),
+    recordReleaseLegacyInventory: adminProcedure.input(z.object({
+      manifestId: z.number().int().positive(),
+      familyId: z.number().int().positive(),
+      legacyWriterIdentifier: z.string().trim().min(3).max(500),
+      legacyWriterOwner: z.string().trim().min(2).max(255),
+      legacyDisableAction: z.string().trim().min(8).max(10_000),
+    })).mutation(async ({ input, ctx }) => ({
+      family: await recordFinancialReleaseLegacyInventory({ ...input, actorId: ctx.user.id }),
+      mode: "release_preparation_only" as const,
+      xeroWritePermitted: false as const,
+      sourceSystemsChanged: false as const,
+    })),
     prepareDisabledCutoverPack: adminProcedure.input(z.object({
       shadowTestId: z.number().int().positive(),
       legacyWriterIdentifier: z.string().trim().min(3).max(500).nullable().optional(),

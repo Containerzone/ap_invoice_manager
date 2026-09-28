@@ -9,6 +9,7 @@ import { registerVtigerWebhook } from "../webhookRoutes";
 import { registerMicrosoftGraphWebhook } from "../microsoftGraphWebhook";
 import { registerInvoicePdfProxy } from "../invoicePdfProxy";
 import { registerFinancialWorkflowShadowWebhook } from "../financialWorkflowWebhook";
+import { registerDisabledFinancialReleaseEndpoint } from "../financialReleaseEndpoint";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -44,6 +45,7 @@ async function startServer() {
   registerMicrosoftGraphWebhook(app);
   registerInvoicePdfProxy(app);
   registerFinancialWorkflowShadowWebhook(app);
+  registerDisabledFinancialReleaseEndpoint(app);
   // tRPC API
   app.use(
     "/api/trpc",

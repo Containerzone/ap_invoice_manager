@@ -9,6 +9,9 @@ import {
   financialCandidateDiscoveries,
   financialCandidateRoster,
   financialIntegrationAudits,
+  financialReleaseAudits,
+  financialReleaseFamilies,
+  financialReleaseManifests,
   financialShadowTests,
   financialWorkflowConfig,
   financialWorkflowConfigAudits,
@@ -25,6 +28,9 @@ import {
   type FinancialCandidateDiscovery,
   type FinancialCandidateRoster,
   type FinancialIntegrationAudit,
+  type FinancialReleaseAudit,
+  type FinancialReleaseFamily,
+  type FinancialReleaseManifest,
   type FinancialShadowTest,
   type FinancialWorkflowException,
   type FinancialWorkflowRun,
@@ -32,6 +38,21 @@ import {
 import { getDb } from "./db";
 import { FINANCIAL_WORKFLOW_TYPES, type FinancialWorkflowEvaluation, type FinancialWorkflowInput } from "./financialWorkflowEngine";
 import { FINANCIAL_WRITER_IMPLEMENTATION_VERSION } from "./financialProductionWriter";
+import {
+  FINANCIAL_AUTOMATION_RULE_CONFIG_KEY,
+  resolveFinancialAutomationRules,
+} from "./financialAutomationRules";
+import {
+  FINANCIAL_RELEASE_FAMILIES,
+  frozenRuleVersion,
+  releaseAuthenticationDescription,
+  releaseEndpointIdentifier,
+  releaseFamilyStatus,
+  releaseRollbackPlan,
+} from "./financialReleaseManifest";
+import { testFinancialXeroConnection } from "./financialReadOnlyXeroService";
+import { testVtigerFinancialConnection } from "./vtigerFinancialReadService";
+import { randomUUID } from "node:crypto";
 
 export type PersistedFinancialEvaluation = {
   runId: number;
@@ -811,4 +832,294 @@ export async function getFinancialCutoverAudits(limit = 200) {
   return db.select().from(financialCutoverAudits)
     .orderBy(desc(financialCutoverAudits.createdAt), desc(financialCutoverAudits.id))
     .limit(limit);
+}
+
+
+export type FinancialReleaseManifestDetail = {
+  manifest: FinancialReleaseManifest;
+  families: FinancialReleaseFamily[];
+  audits: FinancialReleaseAudit[];
+};
+
+const RELEASE_DRAFT_ONLY_RESTRICTION = "AP Management may only propose Xero Draft documents. Any non-Draft collision or amendment path must stop, create a local exception and remain outside the release.";
+
+function safeIntegrationReadiness(value: {
+  outcome: string;
+  checkedAt: Date;
+  message: string;
+  organisationName?: string | null;
+  expectedTenantLabel?: string;
+  tokenState?: string;
+  configured?: boolean;
+  missing?: string[];
+}) {
+  return {
+    outcome: value.outcome,
+    checkedAt: value.checkedAt,
+    message: value.message,
+    organisationName: value.organisationName ?? null,
+    expectedTenantLabel: value.expectedTenantLabel ?? null,
+    tokenState: value.tokenState ?? null,
+    configured: value.configured ?? null,
+    missing: value.missing ?? [],
+    readOnly: true,
+  };
+}
+
+export async function getFinancialReleaseManifest(manifestId: number): Promise<FinancialReleaseManifestDetail | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const manifest = (await db.select().from(financialReleaseManifests)
+    .where(eq(financialReleaseManifests.id, manifestId)).limit(1))[0];
+  if (!manifest) return undefined;
+  const [families, audits] = await Promise.all([
+    db.select().from(financialReleaseFamilies)
+      .where(eq(financialReleaseFamilies.manifestId, manifest.id))
+      .orderBy(financialReleaseFamilies.workflowType, financialReleaseFamilies.id),
+    db.select().from(financialReleaseAudits)
+      .where(eq(financialReleaseAudits.manifestId, manifest.id))
+      .orderBy(desc(financialReleaseAudits.createdAt), desc(financialReleaseAudits.id)),
+  ]);
+  return { manifest, families, audits };
+}
+
+export async function getFinancialReleaseManifests(limit = 25): Promise<FinancialReleaseManifestDetail[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const manifests = await db.select().from(financialReleaseManifests)
+    .orderBy(desc(financialReleaseManifests.preparedAt), desc(financialReleaseManifests.id))
+    .limit(limit);
+  return (await Promise.all(manifests.map((manifest) => getFinancialReleaseManifest(manifest.id)))).filter(Boolean) as FinancialReleaseManifestDetail[];
+}
+
+/**
+ * Freezes an all-family release manifest using current AP-owned evidence only.
+ * It invokes GET-only integration health checks and writes AP database audit rows
+ * only. It cannot call a financial writer, update a source record, or schedule a
+ * recurring task.
+ */
+export async function prepareAllFinancialReleaseManifest(input: {
+  preparedBy: number;
+  maintenanceWindow?: string | null;
+  releaseOwner?: string | null;
+}): Promise<FinancialReleaseManifestDetail> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  const [config, xero, vtiger, allTests, roster] = await Promise.all([
+    getFinancialWorkflowConfig(),
+    testFinancialXeroConnection(),
+    testVtigerFinancialConnection(),
+    db.select().from(financialShadowTests).orderBy(desc(financialShadowTests.testedAt), desc(financialShadowTests.id)),
+    db.select().from(financialCandidateRoster),
+  ]);
+  const rules = resolveFinancialAutomationRules(
+    config.find((entry) => entry.configKey === FINANCIAL_AUTOMATION_RULE_CONFIG_KEY)?.configValue,
+  );
+
+  await Promise.all([
+    createFinancialIntegrationAudit({
+      integration: "xero",
+      action: "all_family_release_get_only_readiness",
+      outcome: xero.outcome,
+      tenantName: xero.organisationName,
+      tenantId: xero.tenantId,
+      details: { expectedTenantLabel: xero.expectedTenantLabel, readOnly: true, releasePreparation: true },
+      actorId: input.preparedBy,
+      checkedAt: xero.checkedAt,
+    }),
+    createFinancialIntegrationAudit({
+      integration: "vtiger",
+      action: "all_family_release_read_only_readiness",
+      outcome: vtiger.outcome,
+      details: { message: vtiger.message, readOnly: true, releasePreparation: true },
+      actorId: input.preparedBy,
+      checkedAt: vtiger.checkedAt,
+    }),
+  ]);
+
+  const confirmedTests = new Map<string, FinancialShadowTest>();
+  for (const family of FINANCIAL_RELEASE_FAMILIES) {
+    const exact = allTests.find((test) =>
+      test.workflowType === family.workflowType
+      && test.branch === family.branch
+      && test.status === "passed"
+      && test.reviewStatus === "confirmed",
+    );
+    if (exact) confirmedTests.set(family.familyKey, exact);
+  }
+
+  const confirmedIntentRows: Array<[string, Array<Record<string, unknown>>]> = await Promise.all(Array.from(confirmedTests.entries()).map(async ([familyKey, test]) => {
+    if (!test.workflowRunId) return [familyKey, []];
+    const intents = await db.select().from(financialDocumentIntents)
+      .where(eq(financialDocumentIntents.workflowRunId, test.workflowRunId));
+    return [familyKey, intents.map((intent) => ({
+      id: intent.id,
+      documentFamily: intent.documentFamily,
+      documentType: intent.documentType,
+      proposedAction: intent.proposedAction,
+      proposedDocumentNumber: intent.proposedDocumentNumber,
+      reference: intent.reference,
+      partyName: intent.partyName,
+      accountCode: intent.accountCode,
+      gstTreatment: intent.gstTreatment,
+      subtotal: intent.subtotal,
+      taxAmount: intent.taxAmount,
+      total: intent.total,
+      issueDate: intent.issueDate,
+      dueDate: intent.dueDate,
+      lineItems: intent.lineItems,
+      validationStatus: intent.validationStatus,
+    }))];
+  }));
+  const intentManifest = new Map<string, Array<Record<string, unknown>>>(confirmedIntentRows);
+
+  const familyDrafts = FINANCIAL_RELEASE_FAMILIES.map((definition) => {
+    const test = confirmedTests.get(definition.familyKey) ?? null;
+    const rosterEntry = test
+      ? roster.find((entry) => entry.latestShadowTestId === test.id) ?? null
+      : null;
+    const currentDocuments = intentManifest.get(definition.familyKey) ?? [];
+    const eligibility = releaseFamilyStatus({
+      confirmedShadowTestId: test?.id ?? null,
+      xeroOutcome: xero.outcome,
+      vtigerOutcome: vtiger.outcome,
+      hasLegacyWriterInventory: false,
+      hasCurrentDocumentManifest: currentDocuments.length > 0,
+    });
+    return { definition, test, rosterEntry, currentDocuments, eligibility };
+  });
+
+  const includedFamilyCount = familyDrafts.filter((entry) => entry.eligibility.status === "included").length;
+  const heldFamilyCount = familyDrafts.filter((entry) => entry.eligibility.status === "held").length;
+  const excludedFamilyCount = familyDrafts.filter((entry) => entry.eligibility.status === "excluded").length;
+  const releaseId = `AFO-REL-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8).toUpperCase()}`;
+  const currentDocumentManifest = familyDrafts.flatMap((entry) => entry.currentDocuments.map((document) => ({
+    familyKey: entry.definition.familyKey,
+    workflowType: entry.definition.workflowType,
+    branch: entry.definition.branch,
+    sourceRecordNumber: entry.test?.sourceRecordNumber ?? null,
+    document,
+  })));
+  const manifestStatus = includedFamilyCount === FINANCIAL_RELEASE_FAMILIES.length
+    ? "awaiting_approval"
+    : "preparation" as const;
+
+  const manifestInsert = await db.insert(financialReleaseManifests).values({
+    releaseId,
+    status: manifestStatus,
+    implementationVersion: FINANCIAL_WRITER_IMPLEMENTATION_VERSION,
+    frozenRuleVersion: frozenRuleVersion(rules),
+    frozenRules: rules as any,
+    xeroReadiness: safeIntegrationReadiness(xero) as any,
+    vtigerReadiness: safeIntegrationReadiness(vtiger) as any,
+    maintenanceWindow: input.maintenanceWindow?.trim() || null,
+    releaseOwner: input.releaseOwner?.trim() || null,
+    currentDocumentManifest: currentDocumentManifest as any,
+    includedFamilyCount,
+    heldFamilyCount,
+    excludedFamilyCount,
+    preparedBy: input.preparedBy,
+    preparedAt: new Date(),
+  });
+  const manifestId = Number((manifestInsert[0] as any).insertId);
+
+  for (const entry of familyDrafts) {
+    const result = await db.insert(financialReleaseFamilies).values({
+      manifestId,
+      familyKey: entry.definition.familyKey,
+      workflowType: entry.definition.workflowType,
+      displayName: entry.definition.displayName,
+      branch: entry.definition.branch,
+      releaseStatus: entry.eligibility.status,
+      statusReason: entry.eligibility.reason,
+      expectedReferencePattern: entry.definition.expectedReferencePattern,
+      partyAndAccountRules: entry.definition.partyAndAccountRules(rules) as any,
+      calculationRules: entry.definition.calculationRules(rules) as any,
+      draftOnlyRestriction: RELEASE_DRAFT_ONLY_RESTRICTION,
+      firstExpectedTrigger: entry.definition.firstExpectedTrigger,
+      apEndpointIdentifier: releaseEndpointIdentifier(entry.definition.familyKey),
+      apAuthentication: releaseAuthenticationDescription(),
+      apScheduleDefinition: entry.definition.apScheduleDefinition ?? null,
+      shadowTestId: entry.test?.id ?? null,
+      candidateRosterEntryId: entry.rosterEntry?.id ?? null,
+      sourceRecordNumber: entry.test?.sourceRecordNumber ?? null,
+      sourcePreflightAt: entry.test?.sourceRefreshedAt ?? null,
+      xeroPreflight: entry.test?.xeroPreflight ?? null,
+      currentDocumentSummary: entry.currentDocuments as any,
+      legacyWriterIdentifier: null,
+      legacyWriterOwner: null,
+      legacyDisableAction: null,
+      conditionPayloadContract: entry.definition.conditionPayloadContract,
+      rollbackPlan: releaseRollbackPlan(),
+    });
+    const familyId = Number((result[0] as any).insertId);
+    await db.insert(financialReleaseAudits).values({
+      manifestId,
+      familyId,
+      action: "release_family_prepared",
+      outcome: entry.eligibility.status === "included" ? "prepared" : "blocked",
+      details: {
+        releaseStatus: entry.eligibility.status,
+        statusReason: entry.eligibility.reason,
+        xeroOutcome: xero.outcome,
+        vtigerOutcome: vtiger.outcome,
+        confirmedShadowTestId: entry.test?.id ?? null,
+        currentDocumentCount: entry.currentDocuments.length,
+        liveWriterEnabled: false,
+      } as any,
+      actorId: input.preparedBy,
+    });
+  }
+  await db.insert(financialReleaseAudits).values({
+    manifestId,
+    familyId: null,
+    action: "all_family_release_manifest_prepared",
+    outcome: includedFamilyCount === FINANCIAL_RELEASE_FAMILIES.length ? "prepared" : "blocked",
+    details: {
+      implementationVersion: FINANCIAL_WRITER_IMPLEMENTATION_VERSION,
+      frozenRuleVersion: frozenRuleVersion(rules),
+      familyCounts: { included: includedFamilyCount, held: heldFamilyCount, excluded: excludedFamilyCount },
+      xeroOutcome: xero.outcome,
+      vtigerOutcome: vtiger.outcome,
+      liveWriterEnabled: false,
+      schedulesChanged: false,
+    } as any,
+    actorId: input.preparedBy,
+  });
+  return (await getFinancialReleaseManifest(manifestId))!;
+}
+
+/** Records non-secret legacy writer inventory only. It cannot alter external systems or family eligibility. */
+export async function recordFinancialReleaseLegacyInventory(input: {
+  manifestId: number;
+  familyId: number;
+  legacyWriterIdentifier: string;
+  legacyWriterOwner: string;
+  legacyDisableAction: string;
+  actorId: number;
+}): Promise<FinancialReleaseFamily> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const family = (await db.select().from(financialReleaseFamilies).where(and(
+    eq(financialReleaseFamilies.id, input.familyId),
+    eq(financialReleaseFamilies.manifestId, input.manifestId),
+  )).limit(1))[0];
+  if (!family) throw new Error("Release family was not found in this manifest");
+  const values = {
+    legacyWriterIdentifier: input.legacyWriterIdentifier.trim(),
+    legacyWriterOwner: input.legacyWriterOwner.trim(),
+    legacyDisableAction: input.legacyDisableAction.trim(),
+    updatedAt: new Date(),
+  };
+  await db.update(financialReleaseFamilies).set(values).where(eq(financialReleaseFamilies.id, family.id));
+  await db.insert(financialReleaseAudits).values({
+    manifestId: input.manifestId,
+    familyId: family.id,
+    action: "legacy_writer_inventory_recorded",
+    outcome: "updated",
+    details: { liveWriterEnabled: false, fieldsRecorded: ["legacyWriterIdentifier", "legacyWriterOwner", "legacyDisableAction"] } as any,
+    actorId: input.actorId,
+  });
+  return { ...family, ...values };
 }

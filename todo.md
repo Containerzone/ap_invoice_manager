@@ -504,3 +504,11 @@
 - [x] Permit cutover-pack preparation only from a clean, administrator-confirmed shadow test with linked run/intents. Pack preparation writes local evidence only; it does not grant approval, enable a family, register a schedule, disable Operations or send a Xero request.
 - [x] Validate the migration tables, TypeScript, 42 test files / 245 tests, production build and a no-transport audit. **No live financial route, Xero write transport or schedule-enable action exists.**
 - [ ] Future gate: complete a named, confirmed family shadow test, document the exact existing writer/schedule identifier, then request a new document-specific approval containing the exact Draft Xero action, party, amount, reference and rollback choice. The system remains disabled until a later separately approved implementation.
+
+## All Financial Operations Release Preparation — 28 September 2026
+
+- [x] Added an auditable all-family release manifest, family matrix and local release audit ledger for all 14 required financial families.
+- [x] Added the admin-only **Financial Operations → Controls → All-Family Release** workbench for fresh no-write readiness manifests, CSV export and local legacy-writer inventory documentation.
+- [x] Registered an authenticated AP release endpoint identifier that is explicitly **server-disabled** and returns no-write `503`; no financial writer, source setting or schedule can be enabled by this release.
+- [x] Prepared release manifest `AFO-REL-20260928165956-26A1EE83`: **0 included / 0 held / 14 excluded**. Current GET-only Xero readiness is blocked due to the expired AP token; VTiger authenticated read-only readiness passed. No named reviewer-confirmed shadow evidence, complete current-document manifest or legacy-writer inventory exists for any family.
+- [ ] Re-authenticate AP Management Xero, confirm the expected CONTAINERZONE tenant with a fresh GET-only check, then complete exact candidate/shadow/preflight/legacy-handoff evidence for each family before requesting a document-specific final activation approval.

@@ -889,3 +889,89 @@ export const financialCutoverAudits = mysqlTable("financial_cutover_audits", {
 
 export type FinancialCutoverAudit = typeof financialCutoverAudits.$inferSelect;
 export type InsertFinancialCutoverAudit = typeof financialCutoverAudits.$inferInsert;
+
+// ─── All Financial Operations Go-Live Release Preparation ───────────────────
+//
+// These records are strictly planning and evidence artefacts. They preserve a
+// frozen all-family release manifest without enabling an AP writer, changing an
+// Operations/VTiger configuration, or authorising a Xero transport.
+
+export const financialReleaseManifests = mysqlTable("financial_release_manifests", {
+  id: int("id").autoincrement().primaryKey(),
+  releaseId: varchar("releaseId", { length: 96 }).notNull(),
+  status: mysqlEnum("status", ["preparation", "awaiting_approval", "approved", "superseded"] as const)
+    .default("preparation")
+    .notNull(),
+  implementationVersion: varchar("implementationVersion", { length: 128 }).notNull(),
+  frozenRuleVersion: varchar("frozenRuleVersion", { length: 128 }).notNull(),
+  frozenRules: json("frozenRules").notNull(),
+  xeroReadiness: json("xeroReadiness").notNull(),
+  vtigerReadiness: json("vtigerReadiness").notNull(),
+  maintenanceWindow: varchar("maintenanceWindow", { length: 255 }),
+  releaseOwner: varchar("releaseOwner", { length: 255 }),
+  currentDocumentManifest: json("currentDocumentManifest").notNull(),
+  includedFamilyCount: int("includedFamilyCount").default(0).notNull(),
+  heldFamilyCount: int("heldFamilyCount").default(0).notNull(),
+  excludedFamilyCount: int("excludedFamilyCount").default(0).notNull(),
+  preparedBy: int("preparedBy").notNull(),
+  preparedAt: timestamp("preparedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  financialReleaseManifestReleaseUnique: uniqueIndex("financial_release_manifest_release_unique").on(table.releaseId),
+}));
+
+export type FinancialReleaseManifest = typeof financialReleaseManifests.$inferSelect;
+export type InsertFinancialReleaseManifest = typeof financialReleaseManifests.$inferInsert;
+
+export const financialReleaseFamilies = mysqlTable("financial_release_families", {
+  id: int("id").autoincrement().primaryKey(),
+  manifestId: int("manifestId").notNull(),
+  familyKey: varchar("familyKey", { length: 96 }).notNull(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  displayName: varchar("displayName", { length: 255 }).notNull(),
+  branch: varchar("branch", { length: 160 }).notNull(),
+  releaseStatus: mysqlEnum("releaseStatus", ["included", "held", "excluded"] as const).default("excluded").notNull(),
+  statusReason: text("statusReason").notNull(),
+  expectedReferencePattern: varchar("expectedReferencePattern", { length: 255 }).notNull(),
+  partyAndAccountRules: json("partyAndAccountRules").notNull(),
+  calculationRules: json("calculationRules").notNull(),
+  draftOnlyRestriction: text("draftOnlyRestriction").notNull(),
+  firstExpectedTrigger: varchar("firstExpectedTrigger", { length: 500 }).notNull(),
+  apEndpointIdentifier: varchar("apEndpointIdentifier", { length: 500 }).notNull(),
+  apAuthentication: varchar("apAuthentication", { length: 500 }).notNull(),
+  apScheduleDefinition: varchar("apScheduleDefinition", { length: 500 }),
+  shadowTestId: int("shadowTestId"),
+  candidateRosterEntryId: int("candidateRosterEntryId"),
+  sourceRecordNumber: varchar("sourceRecordNumber", { length: 128 }),
+  sourcePreflightAt: timestamp("sourcePreflightAt"),
+  xeroPreflight: json("xeroPreflight"),
+  currentDocumentSummary: json("currentDocumentSummary"),
+  legacyWriterIdentifier: varchar("legacyWriterIdentifier", { length: 500 }),
+  legacyWriterOwner: varchar("legacyWriterOwner", { length: 255 }),
+  legacyDisableAction: text("legacyDisableAction"),
+  conditionPayloadContract: text("conditionPayloadContract").notNull(),
+  rollbackPlan: text("rollbackPlan").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  financialReleaseFamilyUnique: uniqueIndex("financial_release_family_unique").on(table.manifestId, table.familyKey),
+}));
+
+export type FinancialReleaseFamily = typeof financialReleaseFamilies.$inferSelect;
+export type InsertFinancialReleaseFamily = typeof financialReleaseFamilies.$inferInsert;
+
+/** Append-only audit for manifest preparation and non-secret legacy inventory updates. */
+export const financialReleaseAudits = mysqlTable("financial_release_audits", {
+  id: int("id").autoincrement().primaryKey(),
+  manifestId: int("manifestId").notNull(),
+  familyId: int("familyId"),
+  action: varchar("action", { length: 100 }).notNull(),
+  outcome: mysqlEnum("outcome", ["prepared", "updated", "blocked", "exported"] as const).notNull(),
+  details: json("details"),
+  actorId: int("actorId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FinancialReleaseAudit = typeof financialReleaseAudits.$inferSelect;
+export type InsertFinancialReleaseAudit = typeof financialReleaseAudits.$inferInsert;

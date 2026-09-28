@@ -52,6 +52,12 @@ vi.mock("./financialWorkflowDb", () => ({
   updateFinancialCandidateRosterDiscovery: vi.fn().mockResolvedValue(undefined),
   markFinancialCandidateRosterNeedsData: vi.fn().mockResolvedValue(undefined),
   linkFinancialCandidateRosterShadowTest: vi.fn().mockResolvedValue(undefined),
+  getFinancialReleaseManifest: vi.fn().mockResolvedValue(undefined),
+  getFinancialReleaseManifests: vi.fn().mockResolvedValue([]),
+  prepareAllFinancialReleaseManifest: vi.fn().mockResolvedValue({
+    manifest: { id: 88, releaseId: "AFO-REL-TEST" }, families: [], audits: [],
+  }),
+  recordFinancialReleaseLegacyInventory: vi.fn().mockResolvedValue({ id: 99, legacyWriterIdentifier: "legacy-workflow" }),
   upsertFinancialWorkflowConfig: vi.fn().mockResolvedValue(undefined),
   upsertFinancialWorkflowSchedule: vi.fn().mockResolvedValue(undefined),
 }));
@@ -246,5 +252,34 @@ describe("financial operations tRPC safeguards", () => {
     } as any);
     await expect(appRouter.createCaller(context("admin")).financialOperations.prepareDisabledCutoverPack({ shadowTestId: 902 }))
       .rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+
+  it("allows only an administrator to prepare an all-family release manifest with no writer enablement", async () => {
+    const { appRouter } = await import("./routers");
+    const { prepareAllFinancialReleaseManifest } = await import("./financialWorkflowDb");
+    await expect(appRouter.createCaller(context("user")).financialOperations.prepareAllFamilyReleaseManifest({}))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(appRouter.createCaller(context("admin")).financialOperations.prepareAllFamilyReleaseManifest({
+      maintenanceWindow: "Deferred pending all release gates", releaseOwner: "AP owner",
+    })).resolves.toMatchObject({
+      mode: "release_preparation_only", xeroWritePermitted: false, schedulesChanged: false, sourceSystemsChanged: false,
+    });
+    expect(prepareAllFinancialReleaseManifest).toHaveBeenCalledWith(expect.objectContaining({
+      preparedBy: 1, maintenanceWindow: "Deferred pending all release gates", releaseOwner: "AP owner",
+    }));
+  });
+
+  it("records legacy writer inventory locally without an external writer action", async () => {
+    const { appRouter } = await import("./routers");
+    const { recordFinancialReleaseLegacyInventory } = await import("./financialWorkflowDb");
+    const input = {
+      manifestId: 88, familyId: 99, legacyWriterIdentifier: "Operations workflow: legacy-hire", legacyWriterOwner: "IT owner",
+      legacyDisableAction: "Disable only after the separate release approval is recorded.",
+    };
+    await expect(appRouter.createCaller(context("user")).financialOperations.recordReleaseLegacyInventory(input))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(appRouter.createCaller(context("admin")).financialOperations.recordReleaseLegacyInventory(input))
+      .resolves.toMatchObject({ mode: "release_preparation_only", xeroWritePermitted: false, sourceSystemsChanged: false });
+    expect(recordFinancialReleaseLegacyInventory).toHaveBeenCalledWith(expect.objectContaining({ ...input, actorId: 1 }));
   });
 });
