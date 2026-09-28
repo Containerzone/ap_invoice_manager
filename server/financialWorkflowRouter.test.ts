@@ -26,7 +26,19 @@ vi.mock("./financialWorkflowDb", () => ({
   getFinancialDocumentIntents: vi.fn().mockResolvedValue([]),
   getFinancialDocuments: vi.fn().mockResolvedValue([]),
   getFinancialExceptionComments: vi.fn().mockResolvedValue([]),
-  getFinancialOperationsDashboard: vi.fn().mockResolvedValue({ runsToday: 0 }),
+  getFinancialOperationsDashboard: vi.fn().mockResolvedValue({
+    runsToday: 0,
+    proposedDocuments: 0,
+    confirmedDraftDocuments: 0,
+    failedOrHeld: 0,
+    openExceptions: 0,
+    shadowEvidence: 15,
+    candidateLookups: 5,
+    releaseManifests: 1,
+    integrationChecks: 13,
+    nextRecurringHire: null,
+    nextStorage: null,
+  }),
   getFinancialWorkflowConfig: vi.fn().mockResolvedValue([]),
   getFinancialWorkflowConfigAudits: vi.fn().mockResolvedValue([]),
   createFinancialCandidateDiscovery: vi.fn().mockResolvedValue(33),
@@ -97,6 +109,19 @@ function context(role: "admin" | "user"): TrpcContext {
 
 describe("financial operations tRPC safeguards", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("keeps evidence-only records visible when no trigger evaluation has run", async () => {
+    const { appRouter } = await import("./routers");
+    const result = await appRouter.createCaller(context("admin")).financialOperations.dashboard();
+    expect(result).toMatchObject({
+      runsToday: 0,
+      proposedDocuments: 0,
+      shadowEvidence: 15,
+      candidateLookups: 5,
+      releaseManifests: 1,
+      integrationChecks: 13,
+    });
+  });
 
   it("permits an admin dry run and returns an explicit no-write result", async () => {
     const { appRouter } = await import("./routers");

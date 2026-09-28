@@ -640,14 +640,30 @@ export async function getFinancialIntegrationAudits(limit = 100): Promise<Financ
 
 export async function getFinancialOperationsDashboard() {
   const db = await getDb();
-  if (!db) return { runsToday: 0, proposedDocuments: 0, confirmedDraftDocuments: 0, failedOrHeld: 0, openExceptions: 0, nextRecurringHire: null, nextStorage: null };
+  if (!db) return {
+    runsToday: 0,
+    proposedDocuments: 0,
+    confirmedDraftDocuments: 0,
+    failedOrHeld: 0,
+    openExceptions: 0,
+    shadowEvidence: 0,
+    candidateLookups: 0,
+    releaseManifests: 0,
+    integrationChecks: 0,
+    nextRecurringHire: null,
+    nextStorage: null,
+  };
   const midnightUtc = new Date();
   midnightUtc.setUTCHours(0, 0, 0, 0);
-  const [runsToday, proposedDocuments, failedOrHeld, openExceptions, schedules] = await Promise.all([
+  const [runsToday, proposedDocuments, failedOrHeld, openExceptions, shadowEvidence, candidateLookups, releaseManifests, integrationChecks, schedules] = await Promise.all([
     db.select({ count: sql<number>`count(*)` }).from(financialWorkflowRuns).where(gte(financialWorkflowRuns.createdAt, midnightUtc)),
     db.select({ count: sql<number>`count(*)` }).from(financialDocumentIntents),
     db.select({ count: sql<number>`count(*)` }).from(financialWorkflowRuns).where(sql`${financialWorkflowRuns.status} IN ('failed', 'held')`),
     db.select({ count: sql<number>`count(*)` }).from(financialWorkflowExceptions).where(eq(financialWorkflowExceptions.status, "open")),
+    db.select({ count: sql<number>`count(*)` }).from(financialShadowTests),
+    db.select({ count: sql<number>`count(*)` }).from(financialCandidateDiscoveries),
+    db.select({ count: sql<number>`count(*)` }).from(financialReleaseManifests),
+    db.select({ count: sql<number>`count(*)` }).from(financialIntegrationAudits),
     db.select().from(workflowSchedules),
   ]);
   const scheduleFor = (type: string) => schedules.find((item) => item.workflowType === type)?.nextRunAt ?? null;
@@ -657,6 +673,13 @@ export async function getFinancialOperationsDashboard() {
     confirmedDraftDocuments: 0, // phase one never writes or confirms Xero drafts
     failedOrHeld: Number(failedOrHeld[0]?.count ?? 0),
     openExceptions: Number(openExceptions[0]?.count ?? 0),
+    // Evidence is deliberately independent from trigger evaluations: candidate
+    // lookups, validation tests, manifest preparation and integration checks do
+    // not create a trigger run or an intended Xero document.
+    shadowEvidence: Number(shadowEvidence[0]?.count ?? 0),
+    candidateLookups: Number(candidateLookups[0]?.count ?? 0),
+    releaseManifests: Number(releaseManifests[0]?.count ?? 0),
+    integrationChecks: Number(integrationChecks[0]?.count ?? 0),
     nextRecurringHire: scheduleFor("recurring_for_hire"),
     nextStorage: scheduleFor("recurring_storage"),
   };

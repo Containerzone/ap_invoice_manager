@@ -512,3 +512,8 @@
 - [x] Registered an authenticated AP release endpoint identifier that is explicitly **server-disabled** and returns no-write `503`; no financial writer, source setting or schedule can be enabled by this release.
 - [x] Prepared release manifest `AFO-REL-20260928165956-26A1EE83`: **0 included / 0 held / 14 excluded**. Current GET-only Xero readiness is blocked due to the expired AP token; VTiger authenticated read-only readiness passed. No named reviewer-confirmed shadow evidence, complete current-document manifest or legacy-writer inventory exists for any family.
 - [ ] Re-authenticate AP Management Xero, confirm the expected CONTAINERZONE tenant with a fresh GET-only check, then complete exact candidate/shadow/preflight/legacy-handoff evidence for each family before requesting a document-specific final activation approval.
+
+## Financial Dashboard Evidence Metrics — 28 September 2026
+
+- [x] Corrected the Financial Operations dashboard so it distinguishes **trigger evaluations** from existing evidence-only activity. It now exposes Shadow Evidence, Exact Candidate Lookups, Release Manifests and Integration Checks separately from Trigger Runs and Proposed Documents.
+- [x] Verified the current AP ledger: 0 workflow runs, 0 proposed documents, 0 exceptions, **15 shadow tests**, **5 candidate lookups**, **1 release manifest**, and **13 integration checks**. Zero trigger/document values are therefore accurate; the evidence is now visible rather than hidden behind those unrelated metrics.
