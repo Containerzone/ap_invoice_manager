@@ -100,3 +100,35 @@ The following work is deliberately outside this preparation release:
 - A source audit found **no POST/PUT/PATCH/DELETE transport** in the new release-manifest, disabled-release-endpoint, persistence or disabled-writer modules.
 
 Build-only warnings about CSS import ordering and JavaScript chunk size were reported by Vite; they do not affect the release writer lock or the test result.
+
+
+## Guarded all-family writer preparation addendum — 29 September 2026
+
+The AP Xero read gate was corrected to use the existing OAuth refresh path and a fresh **GET-only** check now verifies the expected `CONTAINERZONE` tenant. This does **not** authorise an accounting write.
+
+A complete **Draft-only Xero transport** has now been prepared for both supported Xero document families:
+
+| Capability | Prepared behavior | Current state |
+|---|---|---|
+| Create Purchase Order Draft | Deterministic idempotency key; `POST /PurchaseOrders`; Xero response must return the same PO number in `DRAFT` state | **Disabled** |
+| Create Customer Invoice Draft | Deterministic idempotency key; `POST /Invoices` with `ACCREC`; response must return the same invoice number in `DRAFT` state | **Disabled** |
+| Update existing Draft | `PUT` only after exact Xero ID, document number and `DRAFT` status preflight match | **Disabled** |
+| Gateway resiliency | One 502/503/504 retry only, retaining the same idempotency key; an uncertain final response is placed in a local reconciliation-required state | **Prepared / not routable** |
+| Execution audit | Immutable local execution record before send, then submitted/succeeded/failed/reconciliation state | **Prepared / empty** |
+| Event and recurring triggers | Per-family endpoint/cadence definitions exist only as configuration; no incoming writer route and no Heartbeat job is registered | **Disabled** |
+
+### Current hard locks
+
+1. `FINANCIAL_LIVE_WRITES_ENABLED` is **not set** in the deployment environment.
+2. No tRPC procedure, webhook or scheduled handler invokes the writer coordinator.
+3. Every future invocation must separately prove: global shadow mode is off, the family is enabled, the all-family manifest is approved, its cutover pack is approved, a fresh current-document preflight passes, legacy-writer handoff is complete, and an approval reference is supplied.
+4. The response verifier accepts only an exact Xero **Draft** result. It does not authorise a non-Draft creation, approval, payment, void, deletion or amendment.
+
+The future approval inputs requested from the business are therefore still required: exact legacy-writer handoffs, storage GST decisions where relevant, approved schedule/event details, and a document-specific approval naming the source, counterparty, amount and Draft number(s). No Xero financial document, external automation or schedule was changed in this addendum.
+
+### Updated validation
+
+- `npx tsc --noEmit` — passed
+- `pnpm test` — **45 test files, 261 tests passed**
+- `pnpm build` — passed
+- New tests prove Draft-only payload construction, exact Draft-target updates, deterministic idempotency, default environment locking, shadow/family/manifest/cutover/preflight/legacy/approval gate rejection, and 5xx reconciliation classification.

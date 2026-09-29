@@ -96,6 +96,7 @@ import {
   getFinancialWorkflowRunDetail,
   getFinancialWorkflowRuns,
   getFinancialWorkflowSchedules,
+  getFinancialWriterExecutions,
   createFinancialShadowTest,
   createFinancialCandidateDiscovery,
   createDisabledFinancialCutoverPack,
@@ -122,6 +123,8 @@ import {
   upsertFinancialWorkflowConfig,
   upsertFinancialWorkflowSchedule,
 } from "./financialWorkflowDb";
+import { FINANCIAL_WRITER_IMPLEMENTATION_VERSION, isFinancialLiveWriteEnvironmentEnabled } from "./financialProductionWriter";
+import { DISABLED_FINANCIAL_WRITER_SCHEDULES } from "./financialWriterSchedules";
 import { getVtigerFinancialConnectionStatus, retrieveCurrentVtigerFinancialRecord, testVtigerFinancialConnection } from "./vtigerFinancialReadService";
 import { findExactFinancialCandidate, getFinancialCandidateFinderConfig, type FinancialCandidateCategory } from "./vtigerFinancialCandidateService";
 import { getFinancialXeroConnectionStatus, preflightFinancialXeroIntents, previewHistoricalXeroReferences, testFinancialXeroConnection } from "./financialReadOnlyXeroService";
@@ -513,6 +516,8 @@ export const appRouter = router({
       .query(({ input }) => getFinancialCutoverAudits(input?.limit ?? 100)),
     releaseManifests: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
       .query(({ input }) => getFinancialReleaseManifests(input?.limit ?? 25)),
+    writerExecutions: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getFinancialWriterExecutions(input?.limit ?? 50)),
     releaseManifest: adminProcedure.input(z.object({ manifestId: z.number().int().positive() }))
       .query(async ({ input }) => {
         const manifest = await getFinancialReleaseManifest(input.manifestId);
@@ -529,9 +534,17 @@ export const appRouter = router({
       ]);
       const rules = resolveFinancialAutomationRules(config.find((entry) => entry.configKey === FINANCIAL_AUTOMATION_RULE_CONFIG_KEY)?.configValue);
       return {
-        mode: "SHADOW / NO WRITE" as const,
+        mode: "GUARDED DRAFT WRITER PREPARED / DISABLED" as const,
         xeroWritePermitted: false as const,
         xeroWriteMethodsCalled: [] as string[],
+        writer: {
+          implementationVersion: FINANCIAL_WRITER_IMPLEMENTATION_VERSION,
+          environmentLock: isFinancialLiveWriteEnvironmentEnabled() ? "configured_but_unroutable" : "active",
+          invocationRouteRegistered: false,
+          schedulerRegistered: false,
+          documentPolicy: "Draft-only after future document-specific approval",
+          disabledScheduleDefinitions: DISABLED_FINANCIAL_WRITER_SCHEDULES,
+        },
         vtiger,
         xero,
         webhook: getFinancialShadowWebhookStatus(),

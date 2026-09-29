@@ -211,6 +211,13 @@
       "when": 1790614205255,
       "tag": "0029_light_nekra",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "5",
+      "when": 1790659776540,
+      "tag": "0030_heavy_daredevil",
+      "breakpoints": true
     }
   ]
 }

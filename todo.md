@@ -524,3 +524,13 @@
 - [x] Confirmed no dedicated Xero token-renewal Heartbeat exists in this project. The existing core Xero service already refreshes tokens on demand, but the Financial Operations gate had intentionally bypassed it; the bypass has now been removed.
 - [x] Performed a fresh safe authentication refresh and GET-only tenant check: the expected `CONTAINERZONE` tenant passed. No Xero accounting document, VTiger record, legacy writer, workflow URL or schedule was changed.
 - [ ] Publish this correction, refresh the all-family manifest, then complete the remaining source-level, reviewer, legacy-writer and current-document gates before any write activation request.
+
+## Guarded All-Family Live Writer Preparation — 29 September 2026
+
+- [x] Prepared a real Xero **Draft-only** writer for Purchase Orders and ACCREC customer invoices, including deterministic idempotency keys, one retained-key 502/503/504 retry and exact Draft response verification.
+- [x] Prepared existing-Draft updates only after an exact Xero ID, number and `DRAFT` preflight match. Non-Draft amendments, approvals, payments, voids and deletions are not implemented.
+- [x] Applied migration `0030_heavy_daredevil.sql` for the append-only writer execution ledger with prepared/submitted/succeeded/failed/reconciliation-required states.
+- [x] Added a guarded execution coordinator and disabled per-family event/schedule definitions. No tRPC procedure, webhook route or Heartbeat job invokes the coordinator; no financial writer is registered in production.
+- [x] Updated Financial Operations → Automation Settings to show **Guarded Draft Writer Prepared / Disabled**, its environment lock and lack of a route/scheduler. The all-family release report records the exact gates and required future inputs.
+- [x] TypeScript, full tests (45 files / 261 tests) and production build passed.
+- [ ] Await exact legacy writer handoffs, storage GST choices, schedule/event details and a document-specific approval before any route, deployment flag or schedule can be activated.

@@ -13,6 +13,7 @@ import {
   financialReleaseFamilies,
   financialReleaseManifests,
   financialShadowTests,
+  financialWriterExecutions,
   financialWorkflowConfig,
   financialWorkflowConfigAudits,
   financialWorkflowExceptionComments,
@@ -32,12 +33,17 @@ import {
   type FinancialReleaseFamily,
   type FinancialReleaseManifest,
   type FinancialShadowTest,
+  type FinancialWriterExecution,
   type FinancialWorkflowException,
   type FinancialWorkflowRun,
 } from "../drizzle/schema";
 import { getDb } from "./db";
 import { FINANCIAL_WORKFLOW_TYPES, type FinancialWorkflowEvaluation, type FinancialWorkflowInput } from "./financialWorkflowEngine";
-import { FINANCIAL_WRITER_IMPLEMENTATION_VERSION } from "./financialProductionWriter";
+import {
+  FINANCIAL_WRITER_IMPLEMENTATION_VERSION,
+  type FinancialDraftPayload,
+  type FinancialDraftWriteResult,
+} from "./financialProductionWriter";
 import {
   FINANCIAL_AUTOMATION_RULE_CONFIG_KEY,
   resolveFinancialAutomationRules,
@@ -1145,4 +1151,137 @@ export async function recordFinancialReleaseLegacyInventory(input: {
     actorId: input.actorId,
   });
   return { ...family, ...values };
+}
+
+
+// ─── Guarded Financial Writer Execution Ledger ───────────────────────────────
+
+export type FinancialWriterExecutionInput = {
+  workflowRunId?: number | null;
+  documentIntentId?: number | null;
+  releaseManifestId?: number | null;
+  releaseFamilyId?: number | null;
+  cutoverPackId?: number | null;
+  workflowType: string;
+  proposedAction: "create_draft" | "update_draft";
+  payload: FinancialDraftPayload;
+  approvalReference: string | null;
+  preparedBy: number;
+};
+
+function writerPayloadFingerprint(payload: FinancialDraftPayload): string {
+  return `${payload.idempotencyKey.slice(0, 24)}:${payload.method}:${payload.endpoint}`;
+}
+
+function safeWriterPayloadSummary(payload: FinancialDraftPayload): Record<string, unknown> {
+  const documents = Array.isArray((payload.body as any).PurchaseOrders)
+    ? (payload.body as any).PurchaseOrders
+    : Array.isArray((payload.body as any).Invoices)
+      ? (payload.body as any).Invoices
+      : [];
+  const document = documents[0] ?? {};
+  return {
+    documentFamily: payload.documentFamily,
+    documentNumber: payload.documentNumber,
+    method: payload.method,
+    endpoint: payload.endpoint,
+    targetXeroDocumentId: payload.expectedXeroDocumentId,
+    lineCount: Array.isArray(document.LineItems) ? document.LineItems.length : 0,
+    lineAmountTypes: document.LineAmountTypes ?? null,
+    reference: document.Reference ?? null,
+  };
+}
+
+/**
+ * Records a writer attempt before any possible Xero transport. A duplicate
+ * idempotency key returns its prior record instead of allowing a second write.
+ */
+export async function prepareFinancialWriterExecution(input: FinancialWriterExecutionInput): Promise<{
+  execution: FinancialWriterExecution;
+  duplicate: boolean;
+}> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const existing = (await db.select().from(financialWriterExecutions)
+    .where(eq(financialWriterExecutions.idempotencyKey, input.payload.idempotencyKey)).limit(1))[0];
+  if (existing) return { execution: existing, duplicate: true };
+
+  const executionKey = `FWX-${randomUUID().replace(/-/g, "").slice(0, 24).toUpperCase()}`;
+  await db.insert(financialWriterExecutions).values({
+    executionKey,
+    workflowRunId: input.workflowRunId ?? null,
+    documentIntentId: input.documentIntentId ?? null,
+    releaseManifestId: input.releaseManifestId ?? null,
+    releaseFamilyId: input.releaseFamilyId ?? null,
+    cutoverPackId: input.cutoverPackId ?? null,
+    workflowType: input.workflowType,
+    documentFamily: input.payload.documentFamily,
+    proposedAction: input.proposedAction,
+    proposedDocumentNumber: input.payload.documentNumber,
+    targetXeroDocumentId: input.payload.expectedXeroDocumentId,
+    endpoint: input.payload.endpoint,
+    method: input.payload.method,
+    idempotencyKey: input.payload.idempotencyKey,
+    payloadFingerprint: writerPayloadFingerprint(input.payload),
+    status: "prepared",
+    approvalReference: input.approvalReference?.trim() || null,
+    safePayloadSummary: safeWriterPayloadSummary(input.payload) as any,
+    preparedBy: input.preparedBy,
+  });
+  const execution = (await db.select().from(financialWriterExecutions)
+    .where(eq(financialWriterExecutions.executionKey, executionKey)).limit(1))[0];
+  if (!execution) throw new Error("Failed to record guarded financial writer execution");
+  return { execution, duplicate: false };
+}
+
+export async function markFinancialWriterExecutionSubmitted(executionId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(financialWriterExecutions).set({
+    status: "submitted",
+    submittedAt: new Date(),
+  }).where(eq(financialWriterExecutions.id, executionId));
+}
+
+export async function markFinancialWriterExecutionSucceeded(
+  executionId: number,
+  result: FinancialDraftWriteResult,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(financialWriterExecutions).set({
+    status: "succeeded",
+    xeroDocumentId: result.xeroDocumentId,
+    xeroDocumentStatus: result.status,
+    xeroResponseSummary: {
+      documentNumber: result.documentNumber,
+      endpoint: result.endpoint,
+      idempotencyKey: result.idempotencyKey,
+    } as any,
+    completedAt: new Date(),
+  }).where(eq(financialWriterExecutions.id, executionId));
+}
+
+/** A timeout or uncertain result deliberately asks for reconciliation, never a blind retry. */
+export async function markFinancialWriterExecutionFailed(
+  executionId: number,
+  error: unknown,
+  uncertainOutcome = false,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const message = error instanceof Error ? error.message : String(error);
+  await db.update(financialWriterExecutions).set({
+    status: uncertainOutcome ? "reconciliation_required" : "failed",
+    errorMessage: message.slice(0, 6000),
+    completedAt: new Date(),
+  }).where(eq(financialWriterExecutions.id, executionId));
+}
+
+export async function getFinancialWriterExecutions(limit = 50): Promise<FinancialWriterExecution[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialWriterExecutions)
+    .orderBy(desc(financialWriterExecutions.createdAt), desc(financialWriterExecutions.id))
+    .limit(Math.max(1, Math.min(limit, 200)));
 }

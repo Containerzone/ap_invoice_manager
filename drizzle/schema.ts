@@ -975,3 +975,50 @@ export const financialReleaseAudits = mysqlTable("financial_release_audits", {
 
 export type FinancialReleaseAudit = typeof financialReleaseAudits.$inferSelect;
 export type InsertFinancialReleaseAudit = typeof financialReleaseAudits.$inferInsert;
+
+// ─── Guarded Financial Writer Execution Ledger ───────────────────────────────
+//
+// This ledger is additive and records any future Draft-only writer attempt. The
+// writer remains environment-locked and there is intentionally no current route
+// or schedule that invokes it. A future approved cutover must create an audit
+// trail before and after a Xero request, allowing safe reconciliation of a
+// gateway timeout without guessing whether a financial document was created.
+
+export const financialWriterExecutions = mysqlTable("financial_writer_executions", {
+  id: int("id").autoincrement().primaryKey(),
+  executionKey: varchar("executionKey", { length: 128 }).notNull(),
+  workflowRunId: int("workflowRunId"),
+  documentIntentId: int("documentIntentId"),
+  releaseManifestId: int("releaseManifestId"),
+  releaseFamilyId: int("releaseFamilyId"),
+  cutoverPackId: int("cutoverPackId"),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  documentFamily: mysqlEnum("documentFamily", ["purchase_order", "customer_invoice"] as const).notNull(),
+  proposedAction: mysqlEnum("proposedAction", ["create_draft", "update_draft"] as const).notNull(),
+  proposedDocumentNumber: varchar("proposedDocumentNumber", { length: 128 }).notNull(),
+  targetXeroDocumentId: varchar("targetXeroDocumentId", { length: 128 }),
+  endpoint: varchar("endpoint", { length: 500 }).notNull(),
+  method: mysqlEnum("method", ["POST", "PUT"] as const).notNull(),
+  idempotencyKey: varchar("idempotencyKey", { length: 128 }).notNull(),
+  payloadFingerprint: varchar("payloadFingerprint", { length: 128 }).notNull(),
+  status: mysqlEnum("status", ["prepared", "blocked", "submitted", "succeeded", "failed", "reconciliation_required"] as const)
+    .default("prepared")
+    .notNull(),
+  approvalReference: varchar("approvalReference", { length: 255 }),
+  safePayloadSummary: json("safePayloadSummary"),
+  xeroDocumentId: varchar("xeroDocumentId", { length: 128 }),
+  xeroDocumentStatus: varchar("xeroDocumentStatus", { length: 64 }),
+  xeroResponseSummary: json("xeroResponseSummary"),
+  errorMessage: text("errorMessage"),
+  preparedBy: int("preparedBy"),
+  submittedAt: timestamp("submittedAt"),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  financialWriterExecutionKeyUnique: uniqueIndex("financial_writer_execution_key_unique").on(table.executionKey),
+  financialWriterIdempotencyUnique: uniqueIndex("financial_writer_execution_idempotency_unique").on(table.idempotencyKey),
+}));
+
+export type FinancialWriterExecution = typeof financialWriterExecutions.$inferSelect;
+export type InsertFinancialWriterExecution = typeof financialWriterExecutions.$inferInsert;
