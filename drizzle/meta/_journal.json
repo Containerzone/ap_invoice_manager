@@ -218,6 +218,13 @@
       "when": 1790659776540,
       "tag": "0030_heavy_daredevil",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "5",
+      "when": 1790687072767,
+      "tag": "0031_regular_firelord",
+      "breakpoints": true
     }
   ]
 }

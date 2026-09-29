@@ -148,6 +148,21 @@ describe("financial operations tRPC safeguards", () => {
     await expect(caller.financialOperations.saveDisabledSchedule({ workflowType: "recurring_for_hire", enabled: true as never })).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 
+  it("allows only an administrator to pause AP webhook proposal processing", async () => {
+    const { appRouter } = await import("./routers");
+    const { upsertFinancialWorkflowConfig } = await import("./financialWorkflowDb");
+    await expect(appRouter.createCaller(context("user")).financialOperations.setWebhookPause({ routeKey: "global", paused: true }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(appRouter.createCaller(context("admin")).financialOperations.setWebhookPause({ routeKey: "main-customer-invoice", paused: true }))
+      .resolves.toMatchObject({ mode: "proposal_only", xeroWritePermitted: false, sourceSystemsChanged: false, schedulesChanged: false });
+    expect(upsertFinancialWorkflowConfig).toHaveBeenCalledWith(
+      "financial-automation.webhook-controls",
+      expect.objectContaining({ familyPaused: expect.objectContaining({ "main-customer-invoice": true }) }),
+      expect.any(String),
+      1,
+    );
+  });
+
   it("supports a read-only administrator-triggered re-evaluation of a current VTiger record", async () => {
     const { appRouter } = await import("./routers");
     const { retrieveCurrentVtigerFinancialRecord } = await import("./vtigerFinancialReadService");

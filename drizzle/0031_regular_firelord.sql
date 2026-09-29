@@ -1,0 +1,22 @@
+CREATE TABLE `financial_webhook_events` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`eventId` varchar(160) NOT NULL,
+	`routeKey` varchar(100) NOT NULL,
+	`workflowType` varchar(80) NOT NULL,
+	`sourceSystem` varchar(40) NOT NULL DEFAULT 'vtiger',
+	`sourceEntityType` varchar(80) NOT NULL,
+	`sourceRecordId` varchar(128) NOT NULL,
+	`sourceRecordNumber` varchar(128),
+	`sourceChangedAt` timestamp,
+	`payloadFingerprint` varchar(128) NOT NULL,
+	`status` enum('received','proposed','held','paused','duplicate','rejected','failed') NOT NULL DEFAULT 'received',
+	`workflowRunId` int,
+	`safeSummary` json,
+	`errorMessage` text,
+	`receivedAt` timestamp NOT NULL DEFAULT (now()),
+	`processedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `financial_webhook_events_id` PRIMARY KEY(`id`),
+	CONSTRAINT `financial_webhook_event_unique` UNIQUE(`eventId`)
+);

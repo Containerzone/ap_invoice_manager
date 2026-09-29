@@ -143,6 +143,13 @@ import {
   type ShadowExpectedResult,
 } from "./financialShadowValidation";
 import { getFinancialShadowWebhookStatus } from "./financialWorkflowWebhook";
+import { getFinancialProposalWebhookStatus } from "./financialProposalWebhook";
+import {
+  FINANCIAL_AP_WEBHOOK_ROUTES,
+  FINANCIAL_WEBHOOK_CONTROL_CONFIG_KEY,
+  resolveFinancialWebhookControls,
+} from "./financialWebhookContracts";
+import { getFinancialWebhookEvents } from "./financialWebhookEventDb";
 import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray } from "drizzle-orm";
@@ -518,6 +525,26 @@ export const appRouter = router({
       .query(({ input }) => getFinancialReleaseManifests(input?.limit ?? 25)),
     writerExecutions: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getFinancialWriterExecutions(input?.limit ?? 50)),
+    webhookEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
+      .query(({ input }) => getFinancialWebhookEvents(input?.limit ?? 100)),
+    webhookControls: adminProcedure.query(async () => {
+      const config = await getFinancialWorkflowConfig();
+      const controls = resolveFinancialWebhookControls(
+        config.find((entry) => entry.configKey === FINANCIAL_WEBHOOK_CONTROL_CONFIG_KEY)?.configValue,
+      );
+      return {
+        controls,
+        routes: FINANCIAL_AP_WEBHOOK_ROUTES.map((route) => ({
+          key: route.key,
+          displayName: route.displayName,
+          workflowType: route.workflowType,
+          schedule: route.schedule,
+          paused: controls.globalPaused || controls.familyPaused[route.key] === true,
+        })),
+        mode: "proposal_only" as const,
+        xeroWritePermitted: false as const,
+      };
+    }),
     releaseManifest: adminProcedure.input(z.object({ manifestId: z.number().int().positive() }))
       .query(async ({ input }) => {
         const manifest = await getFinancialReleaseManifest(input.manifestId);
@@ -548,10 +575,46 @@ export const appRouter = router({
         vtiger,
         xero,
         webhook: getFinancialShadowWebhookStatus(),
+        shadowTestWebhook: getFinancialShadowWebhookStatus(),
+        proposalWebhook: getFinancialProposalWebhookStatus(),
         rules,
         sourceMapping: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY)?.configValue ?? {},
         candidateFinder: getFinancialCandidateFinderConfig(config.find((entry) => entry.configKey === FINANCIAL_VTIGER_CANDIDATE_FINDER_CONFIG_KEY)?.configValue),
         schedules: schedules.filter((schedule) => ["recurring_for_hire", "recurring_storage"].includes(schedule.workflowType)),
+      };
+    }),
+    setWebhookPause: adminProcedure.input(z.object({
+      routeKey: z.string().trim().min(1).max(100).refine(
+        (value) => value === "global" || FINANCIAL_AP_WEBHOOK_ROUTES.some((route) => route.key === value),
+        "Select the global control or a known AP webhook route.",
+      ),
+      paused: z.boolean(),
+    })).mutation(async ({ input, ctx }) => {
+      const config = await getFinancialWorkflowConfig();
+      const controls = resolveFinancialWebhookControls(
+        config.find((entry) => entry.configKey === FINANCIAL_WEBHOOK_CONTROL_CONFIG_KEY)?.configValue,
+      );
+      const nextControls = {
+        ...controls,
+        familyPaused: { ...controls.familyPaused },
+      };
+      if (input.routeKey === "global") {
+        nextControls.globalPaused = input.paused;
+      } else {
+        nextControls.familyPaused[input.routeKey as keyof typeof nextControls.familyPaused] = input.paused;
+      }
+      await upsertFinancialWorkflowConfig(
+        FINANCIAL_WEBHOOK_CONTROL_CONFIG_KEY,
+        nextControls,
+        "AP-only financial webhook pause controls. This setting stops proposal processing only; it cannot enable writes, schedules or source-system changes.",
+        ctx.user.id,
+      );
+      return {
+        controls: nextControls,
+        mode: "proposal_only" as const,
+        xeroWritePermitted: false as const,
+        sourceSystemsChanged: false as const,
+        schedulesChanged: false as const,
       };
     }),
     testVtigerConnection: adminProcedure.mutation(async ({ ctx }) => {

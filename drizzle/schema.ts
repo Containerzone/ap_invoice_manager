@@ -1022,3 +1022,38 @@ export const financialWriterExecutions = mysqlTable("financial_writer_executions
 
 export type FinancialWriterExecution = typeof financialWriterExecutions.$inferSelect;
 export type InsertFinancialWriterExecution = typeof financialWriterExecutions.$inferInsert;
+
+// ─── AP Financial Webhook Interface — Proposal-Only Audit ────────────────────
+//
+// These events are received by AP Management only. They are deliberately
+// separate from VTiger configuration and Xero document tables: an event can
+// record a proposal, pause, duplicate or failure outcome, but cannot authorise
+// a financial write.
+
+export const financialWebhookEvents = mysqlTable("financial_webhook_events", {
+  id: int("id").autoincrement().primaryKey(),
+  eventId: varchar("eventId", { length: 160 }).notNull(),
+  routeKey: varchar("routeKey", { length: 100 }).notNull(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  sourceSystem: varchar("sourceSystem", { length: 40 }).default("vtiger").notNull(),
+  sourceEntityType: varchar("sourceEntityType", { length: 80 }).notNull(),
+  sourceRecordId: varchar("sourceRecordId", { length: 128 }).notNull(),
+  sourceRecordNumber: varchar("sourceRecordNumber", { length: 128 }),
+  sourceChangedAt: timestamp("sourceChangedAt"),
+  payloadFingerprint: varchar("payloadFingerprint", { length: 128 }).notNull(),
+  status: mysqlEnum("status", ["received", "proposed", "held", "paused", "duplicate", "rejected", "failed"] as const)
+    .default("received")
+    .notNull(),
+  workflowRunId: int("workflowRunId"),
+  safeSummary: json("safeSummary"),
+  errorMessage: text("errorMessage"),
+  receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+  processedAt: timestamp("processedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  financialWebhookEventUnique: uniqueIndex("financial_webhook_event_unique").on(table.eventId),
+}));
+
+export type FinancialWebhookEvent = typeof financialWebhookEvents.$inferSelect;
+export type InsertFinancialWebhookEvent = typeof financialWebhookEvents.$inferInsert;

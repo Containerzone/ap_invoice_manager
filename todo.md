@@ -534,3 +534,15 @@
 - [x] Updated Financial Operations → Automation Settings to show **Guarded Draft Writer Prepared / Disabled**, its environment lock and lack of a route/scheduler. The all-family release report records the exact gates and required future inputs.
 - [x] TypeScript, full tests (45 files / 261 tests) and production build passed.
 - [ ] Await exact legacy writer handoffs, storage GST choices, schedule/event details and a document-specific approval before any route, deployment flag or schedule can be activated.
+
+## AP-Only Financial Webhook Interface — 29 September 2026
+
+- [x] Added **12 fixed AP-owned proposal routes** covering Container Control acquisition, recurring hire/storage definitions, origin/destination storage activation, storage finalisation, main/deposit/final-weight/extra-hire customer billing, and warranty reconciliation.
+- [x] Added authenticated, versioned envelope validation (`apiVersion: 2026-09-29`, `mode: proposal | dry_run`, `sourceSystem: VTiger`) and unique external `eventId` idempotency. No route accepts a live-write mode.
+- [x] Added persistent `financial_webhook_events` audit evidence with safe summaries, proposal/held/paused/duplicate/rejected/failed states, and a database uniqueness constraint on external event ID.
+- [x] Added automatic operational failure reporting for held or failed authenticated proposal events; alert content contains only safe route/source context, never credentials or raw payloads.
+- [x] Added **Financial Operations → Controls → AP Webhook Interface** with route inventory, secret-configured indicator, fixed contract guidance, latest audit events, global/per-route proposal pause controls, and clear write/schedule/source-system locks.
+- [x] Kept the existing shadow endpoint, legacy VTiger configuration, external CRM workflows, Xero documents, and Heartbeat schedules unchanged. The new routes are **not configured into VTiger** and intentionally return HTTP 503 until the private AP webhook secret is set after future approval.
+- [x] Applied migration `0031_regular_firelord.sql`; TypeScript, 48 Vitest files / 271 tests, and production build pass. Focused endpoint validation confirmed an unconfigured route returns 503 rather than accepting traffic.
+
+**Deferred by design:** setting the private webhook secret; providing any route to VTiger; enabling a recurring schedule; enabling the guarded writer; and document-specific Xero write approvals. Each needs an explicit later approval and the legacy-writer/schedule handoff details.

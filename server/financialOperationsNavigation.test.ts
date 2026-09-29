@@ -27,6 +27,7 @@ describe("Financial Operations parent navigation", () => {
       "history-preview",
       "schedules",
       "configuration",
+      "webhook-interface",
       "cutover-centre",
       "release-readiness",
     ]);
@@ -45,5 +46,7 @@ describe("Financial Operations parent navigation", () => {
     expect(isFinancialOperationsTabAvailable(controls.tabs[2]!, true)).toBe(true);
     expect(isFinancialOperationsTabAvailable(controls.tabs[3]!, false)).toBe(false);
     expect(isFinancialOperationsTabAvailable(controls.tabs[3]!, true)).toBe(true);
+    expect(isFinancialOperationsTabAvailable(controls.tabs[4]!, false)).toBe(false);
+    expect(isFinancialOperationsTabAvailable(controls.tabs[4]!, true)).toBe(true);
   });
 });
