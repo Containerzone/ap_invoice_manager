@@ -556,3 +556,11 @@
 - [x] Kept all 14 family evaluators under the one Financial Operations parent workspace; proposal webhooks remain configuration-gated and proposal-only, while recurring schedules remain disabled.
 - [x] Ran TypeScript, full regression suite and production build: 51 test files / 278 tests pass.
 - [ ] No live Xero writer route, schedule or webhook has been registered. Activation remains pending the exact named-document payload, current source/preflight evidence, legacy-writer handoff, GST decision and explicit final document-specific approval.
+
+## Canonical Guarded Financial Execution (2026-09-30)
+- [x] Replaced the former financial shadow webhook registration and dormant release route with the canonical AP event routes only.
+- [x] Added dry-run versus non-dry event handling, immutable document approval consumption, current VTiger/Xero revalidation, correct-tenant verification, exact contact IDs, deterministic idempotency, Draft-only writes, immediate Xero read-back and execution-ledger binding.
+- [x] Hold, audit and alert every non-dry event without an exact single-use approval or any failed release/preflight gate; no accounting write occurs in those paths.
+- [x] Added server-only document-specific VTiger follow-up planning, durable post-success action claims and bounded retry handler. No financial Heartbeat job has been created or enabled.
+- [x] Added Australia/Sydney first-calendar-day guard for future recurring storage schedules; all recurring source selection remains disabled until separately configured.
+- [x] Validated 55 test files / 297 tests, TypeScript and production build. Production financial execution remains deployment- and gate-controlled; no real Xero accounting document was created during implementation.

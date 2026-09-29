@@ -567,7 +567,7 @@ export const financialPostSuccessActions = mysqlTable("financial_post_success_ac
   sourceRecordId: varchar("sourceRecordId", { length: 128 }).notNull(),
   payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
   safePayloadSummary: json("safePayloadSummary").notNull(),
-  status: mysqlEnum("status", ["pending", "succeeded", "failed", "reconciliation_required"] as const)
+  status: mysqlEnum("status", ["pending", "running", "succeeded", "failed", "reconciliation_required"] as const)
     .default("pending")
     .notNull(),
   vtigerRecordId: varchar("vtigerRecordId", { length: 128 }),

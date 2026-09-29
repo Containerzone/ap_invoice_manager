@@ -29,9 +29,9 @@ export type FinancialWebhookRoute = {
 };
 
 /**
- * All routes are AP-owned proposal interfaces. They are registered disabled for
- * financial writes and must never be pasted into VTiger until the matching
- * family has a separately approved external handoff.
+ * All routes are AP-owned, authenticated financial interfaces. They retain
+ * proposal-only operation by default and must not be pasted into VTiger until
+ * the matching family has a separately approved external handoff.
  */
 export const FINANCIAL_AP_WEBHOOK_ROUTES: readonly FinancialWebhookRoute[] = [
   {
@@ -154,7 +154,12 @@ export function getFinancialWebhookRoute(key: string | undefined): FinancialWebh
 
 export type FinancialWebhookEnvelope = {
   apiVersion: "2026-09-29";
-  mode: "proposal" | "dry_run";
+  /** Normalized request intent: proposal/dry-run means no write; execution is gate-protected. */
+  mode: "proposal" | "dry_run" | "execution";
+  /** Explicit compatibility flag. Omitted/false requests gate-protected execution. */
+  dryRun: boolean;
+  /** Required for an execution request; binds the event to one exact approval. */
+  executionApprovalId?: number;
   eventId: string;
   eventType: string;
   sourceSystem: "VTiger";
@@ -189,6 +194,8 @@ export function parseFinancialWebhookEnvelope(value: unknown): FinancialWebhookE
   if (!isRecord(value)) return { error: "JSON body is required." };
   const apiVersion = value.apiVersion;
   const mode = value.mode;
+  const requestedDryRun = value.dryRun;
+  const executionApprovalId = value.executionApprovalId;
   const eventId = safeText(value.eventId, 160);
   const eventType = safeText(value.eventType, 100);
   const sourceSystem = value.sourceSystem;
@@ -198,14 +205,27 @@ export function parseFinancialWebhookEnvelope(value: unknown): FinancialWebhookE
   const sourceChangedAt = value.sourceChangedAt === undefined ? undefined : safeText(value.sourceChangedAt, 64);
   const data = value.data;
   if (apiVersion !== "2026-09-29") return { error: "apiVersion must be 2026-09-29." };
-  if (mode !== "proposal" && mode !== "dry_run") return { error: "mode must be proposal or dry_run; live mode is not supported." };
+  if (mode !== undefined && mode !== "proposal" && mode !== "dry_run") return { error: "mode may only be proposal or dry_run; live mode is not supported." };
+  if (requestedDryRun !== undefined && typeof requestedDryRun !== "boolean") return { error: "dryRun must be a boolean when provided." };
+  const dryRun = mode === "proposal" || mode === "dry_run" || requestedDryRun === true;
+  if ((mode === "proposal" || mode === "dry_run") && requestedDryRun === false) {
+    return { error: "mode=proposal/dry_run cannot be combined with dryRun=false." };
+  }
+  if (!dryRun && executionApprovalId !== undefined && (!Number.isInteger(executionApprovalId) || Number(executionApprovalId) <= 0)) {
+    return { error: "executionApprovalId must be a positive integer when supplied for a non-dry execution request." };
+  }
+  if (dryRun && executionApprovalId !== undefined) {
+    return { error: "executionApprovalId is only accepted when dryRun is false or omitted." };
+  }
   if (!eventId || !eventType || sourceSystem !== "VTiger" || !sourceEntityType || !sourceRecordId || !isRecord(data)) {
     return { error: "eventId, eventType, sourceSystem=VTiger, sourceEntityType, sourceRecordId and data are required." };
   }
   if (sourceChangedAt && Number.isNaN(new Date(sourceChangedAt).getTime())) return { error: "sourceChangedAt must be a valid ISO timestamp when provided." };
   return {
     apiVersion,
-    mode,
+    mode: dryRun ? (mode === "dry_run" ? "dry_run" : "proposal") : "execution",
+    dryRun,
+    executionApprovalId: dryRun || executionApprovalId === undefined ? undefined : Number(executionApprovalId),
     eventId,
     eventType,
     sourceSystem,

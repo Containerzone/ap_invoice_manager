@@ -128,6 +128,19 @@ async function xeroRead<T>(auth: ReadOnlyAuth, cacheKey: string, url: string, pa
   );
 }
 
+/**
+ * Proves the accounting tenant immediately before a proposal can become
+ * execution-eligible. OAuth connection selection is also guarded elsewhere,
+ * but the financial preflight never relies on a stored tenant label alone.
+ */
+async function assertExpectedFinancialTenant(auth: ReadOnlyAuth): Promise<void> {
+  const organisation = await xeroRead<any>(auth, "execution-tenant", `${XERO_API_BASE}/Organisation`);
+  const organisationName = String(organisation?.Organisations?.[0]?.Name ?? "").trim();
+  if (!organisationName.toUpperCase().includes(EXPECTED_AP_TENANT_LABEL)) {
+    throw new Error(`Connected Xero organisation does not match the expected AP tenant label ${EXPECTED_AP_TENANT_LABEL}.`);
+  }
+}
+
 export async function getFinancialXeroConnectionStatus(): Promise<FinancialXeroConnectionStatus> {
   return connectionBase(await getXeroToken());
 }
@@ -245,6 +258,7 @@ async function preflightDocument(auth: ReadOnlyAuth, result: FinancialXeroPrefli
 export async function preflightFinancialXeroIntents(intents: ProposedFinancialDocument[]): Promise<FinancialXeroPreflight[]> {
   if (intents.length > MAX_FINANCIAL_PREFLIGHTS) throw new Error("Too many proposed documents for a single read-only Xero preflight");
   const auth = await readOnlyAuth();
+  await assertExpectedFinancialTenant(auth);
   const results: FinancialXeroPreflight[] = [];
   for (const intent of intents) {
     const result = initialPreflight(intent);

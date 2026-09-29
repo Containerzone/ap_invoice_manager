@@ -1,29 +1,35 @@
-import { FINANCIAL_RELEASE_FAMILIES } from "./financialReleaseManifest";
-
 export type DisabledFinancialWriterSchedule = {
-  workflowType: string;
-  familyKey: string;
+  workflowType: "recurring_for_hire" | "recurring_storage";
+  familyKey: "recurring_for_hire" | "recurring_storage";
   endpointPath: string;
-  cadence: string | null;
-  state: "details_required" | "event_driven_only";
+  cadence: string;
+  state: "details_required";
   reason: string;
 };
 
 /**
- * Documentation/configuration only. This array neither creates a Heartbeat job
- * nor registers an in-process timer. Explicit schedule details and a separate
- * document-specific approval are still required before a future activation.
+ * Managed-schedule definitions only. This array neither creates a Heartbeat
+ * job nor registers an in-process timer. The two exact AP endpoints are kept
+ * disabled until a document-specific cutover grants one family at a time.
  */
-export const DISABLED_FINANCIAL_WRITER_SCHEDULES: readonly DisabledFinancialWriterSchedule[] = FINANCIAL_RELEASE_FAMILIES.map((family) => ({
-  workflowType: family.workflowType,
-  familyKey: family.familyKey,
-  endpointPath: `/api/scheduled/financial-writer/${family.familyKey}`,
-  cadence: family.apScheduleDefinition ?? null,
-  state: family.apScheduleDefinition ? "details_required" : "event_driven_only",
-  reason: family.apScheduleDefinition
-    ? "No Heartbeat job exists. The business owner must provide the approved cadence and document-specific activation approval."
-    : "This family is event-driven. No scheduled writer should be created.",
-}));
+export const DISABLED_FINANCIAL_WRITER_SCHEDULES: readonly DisabledFinancialWriterSchedule[] = [
+  {
+    workflowType: "recurring_for_hire",
+    familyKey: "recurring_for_hire",
+    endpointPath: "/api/scheduled/financial-writer/recurring_for_hire",
+    cadence: "0 0 0 1 * *",
+    state: "details_required",
+    reason: "No Heartbeat job exists. Sydney-date source selection, one-family cutover and an exact single-use approval are required before activation.",
+  },
+  {
+    workflowType: "recurring_storage",
+    familyKey: "recurring_storage",
+    endpointPath: "/api/scheduled/financial-writer/recurring_storage",
+    cadence: "0 5 13 * * *",
+    state: "details_required",
+    reason: "No Heartbeat job exists. The handler would run daily but may process only the first Sydney calendar day after one-family cutover and exact approval.",
+  },
+] as const;
 
 export function getDisabledFinancialWriterSchedule(
   workflowType: string,

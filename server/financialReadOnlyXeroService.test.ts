@@ -89,6 +89,7 @@ describe("financial read-only Xero service", () => {
 
   it("preflights only GET candidate, contact and item reads and records an existing PO", async () => {
     mockGet
+      .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
       .mockResolvedValueOnce({ data: { PurchaseOrders: [{ PurchaseOrderID: "po-1", PurchaseOrderNumber: "H1860", Status: "DRAFT", Contact: { Name: "Hire Supplier" } }] } })
       .mockResolvedValueOnce({ data: { Contacts: [{ ContactID: "contact-hire", Name: "Hire Supplier" }] } })
       .mockResolvedValueOnce({ data: { Items: [{ Description: "Native HC 20 E", PurchaseDetails: { UnitPrice: 8 }, SalesDetails: { UnitPrice: 0 } }] } });
@@ -101,6 +102,12 @@ describe("financial read-only Xero service", () => {
     expect(result).toMatchObject({ duplicateState: "found", xeroDocumentId: "po-1", status: "DRAFT", partyName: "Hire Supplier" });
     expect(result?.itemChecks[0]).toMatchObject({ itemCode: "HC 20 E", found: true, purchaseUnitPrice: 8, nativeDescription: "Native HC 20 E" });
     expect(result?.contactCheck).toMatchObject({ found: true, contactId: "contact-hire" });
+    noMutationAssertions();
+  });
+
+  it("blocks execution eligibility when the preflight tenant is not ContainerZone", async () => {
+    mockGet.mockResolvedValueOnce({ data: { Organisations: [{ Name: "Different Organisation" }] } });
+    await expect(preflightFinancialXeroIntents([])).rejects.toThrow(/expected AP tenant/i);
     noMutationAssertions();
   });
 

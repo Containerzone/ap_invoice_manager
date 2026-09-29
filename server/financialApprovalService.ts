@@ -1,5 +1,10 @@
 import { TRPCError } from "@trpc/server";
-import { getFinancialWorkflowConfig, getFinancialDocumentIntentDetail, createFinancialExecutionApproval } from "./financialWorkflowDb";
+import {
+  getFinancialWorkflowConfig,
+  getFinancialDocumentIntentDetail,
+  createFinancialExecutionApproval,
+  getFinancialExecutionApproval,
+} from "./financialWorkflowDb";
 import { FINANCIAL_AUTOMATION_RULE_CONFIG_KEY, FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY, resolveFinancialAutomationRules } from "./financialAutomationRules";
 import { evaluateFinancialWorkflow, type FinancialWorkflowType, type ProposedFinancialDocument } from "./financialWorkflowEngine";
 import { mapVtigerFinancialSource } from "./financialShadowValidation";
@@ -15,6 +20,13 @@ import {
 
 const APPROVAL_EXPIRY_MS = 20 * 60_000;
 
+type ApprovalHashReference = {
+  sourceSnapshotHash: string;
+  rulesSnapshotHash: string;
+  proposalHash: string;
+  xeroPreflightHash: string;
+};
+
 export type FinancialApprovalPreview = {
   intentId: number;
   workflowRunId: number;
@@ -29,6 +41,16 @@ export type FinancialApprovalPreview = {
   preflight: FinancialXeroPreflight;
   approvalEligible: boolean;
   blockers: string[];
+};
+
+export type RevalidatedFinancialExecution = {
+  preview: FinancialApprovalPreview;
+  document: ProposedFinancialDocument;
+  sourceRecordId: string | null;
+  /** Internal current source facts, used only for AP-owned post-success planning. */
+  sourceData: Record<string, unknown>;
+  workflowIdempotencyKey: string;
+  matchesApproval: boolean;
 };
 
 function blocker(message: string): never {
@@ -49,8 +71,22 @@ function eligiblePreflight(document: ProposedFinancialDocument, preflight: Finan
   return blockers;
 }
 
-async function refreshExactProposal(intentId: number): Promise<FinancialApprovalPreview> {
-  const detail = await getFinancialDocumentIntentDetail(intentId);
+/**
+ * Re-fetches the exact current VTiger source, re-evaluates AP rules and performs
+ * the limited GET-only Xero preflight. The provided reference decides which
+ * immutable snapshot must still match; no external write can occur here.
+ */
+async function refreshExactProposal(input: {
+  intentId: number;
+  expected: ApprovalHashReference;
+}): Promise<{
+  preview: FinancialApprovalPreview;
+  document: ProposedFinancialDocument;
+  sourceRecordId: string | null;
+  sourceData: Record<string, unknown>;
+  workflowIdempotencyKey: string;
+}> {
+  const detail = await getFinancialDocumentIntentDetail(input.intentId);
   if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Financial proposal intent was not found." });
   const { intent, run } = detail;
   if (!run.sourceRecordId || !/^\d+x\d+$/i.test(run.sourceRecordId)) blocker("A live approval requires an exact VTiger source-record ID from a current read.");
@@ -96,37 +132,73 @@ async function refreshExactProposal(intentId: number): Promise<FinancialApproval
     rulesHash: currentRulesHash,
     proposalHashValue: currentProposalHash,
     preflightHash: currentPreflightHash,
-    approval: {
-      sourceSnapshotHash: intent.sourceSnapshotHash,
-      rulesSnapshotHash: intent.rulesSnapshotHash,
-      proposalHash: intent.proposalHash,
-      xeroPreflightHash: intent.xeroPreflightHash,
-    },
+    approval: input.expected,
   });
   const blockers = [
     ...changed.map((value) => `Approval invalidated because ${value} changed.`),
     ...eligiblePreflight(currentDocument, preflight),
   ];
   return {
-    intentId,
-    workflowRunId: run.id,
-    workflowType: run.workflowType,
-    proposedDocumentNumber: currentDocument.proposedDocumentNumber!,
-    documentFamily: currentDocument.documentFamily,
-    proposedAction: currentDocument.proposedAction as "create_draft" | "update_draft",
-    sourceSnapshotHash: currentSourceHash,
-    rulesSnapshotHash: currentRulesHash,
-    proposalHash: currentProposalHash,
-    xeroPreflightHash: currentPreflightHash,
-    preflight,
-    approvalEligible: blockers.length === 0,
-    blockers,
+    preview: {
+      intentId: input.intentId,
+      workflowRunId: run.id,
+      workflowType: run.workflowType,
+      proposedDocumentNumber: currentDocument.proposedDocumentNumber!,
+      documentFamily: currentDocument.documentFamily,
+      proposedAction: currentDocument.proposedAction as "create_draft" | "update_draft",
+      sourceSnapshotHash: currentSourceHash,
+      rulesSnapshotHash: currentRulesHash,
+      proposalHash: currentProposalHash,
+      xeroPreflightHash: currentPreflightHash,
+      preflight,
+      approvalEligible: blockers.length === 0,
+      blockers,
+    },
+    document: currentDocument,
+    sourceRecordId: run.sourceRecordId,
+    sourceData: currentSourceData,
+    workflowIdempotencyKey: run.idempotencyKey,
   };
 }
 
 /** Shows the exact freshly sourced document state to an administrator without writing. */
 export async function previewFinancialExecutionApproval(intentId: number): Promise<FinancialApprovalPreview> {
-  return refreshExactProposal(intentId);
+  const detail = await getFinancialDocumentIntentDetail(intentId);
+  if (!detail?.intent.sourceSnapshotHash || !detail.intent.rulesSnapshotHash || !detail.intent.proposalHash || !detail.intent.xeroPreflightHash) {
+    blocker("This proposal predates immutable approval evidence. Refresh it from the current VTiger source and create a new proposal.");
+  }
+  const refreshed = await refreshExactProposal({
+    intentId,
+    expected: {
+      sourceSnapshotHash: detail.intent.sourceSnapshotHash,
+      rulesSnapshotHash: detail.intent.rulesSnapshotHash,
+      proposalHash: detail.intent.proposalHash,
+      xeroPreflightHash: detail.intent.xeroPreflightHash,
+    },
+  });
+  return refreshed.preview;
+}
+
+/**
+ * Revalidates a previously approved immutable proposal immediately before a
+ * guarded writer command. It does not write or consume the approval.
+ */
+export async function revalidateApprovedFinancialExecution(approvalId: number): Promise<RevalidatedFinancialExecution> {
+  const approval = await getFinancialExecutionApproval(approvalId);
+  if (!approval) throw new TRPCError({ code: "NOT_FOUND", message: "Financial execution approval was not found." });
+  const refreshed = await refreshExactProposal({
+    intentId: approval.documentIntentId,
+    expected: {
+      sourceSnapshotHash: approval.sourceSnapshotHash,
+      rulesSnapshotHash: approval.rulesSnapshotHash,
+      proposalHash: approval.proposalHash,
+      xeroPreflightHash: approval.xeroPreflightHash,
+    },
+  });
+  return {
+    ...refreshed,
+    matchesApproval: refreshed.preview.approvalEligible,
+  };
 }
 
 /**
@@ -142,7 +214,7 @@ export async function approveFinancialExecution(input: {
   acknowledgement: string;
   actorId: number;
 }) {
-  const preview = await refreshExactProposal(input.intentId);
+  const preview = await previewFinancialExecutionApproval(input.intentId);
   if (!preview.approvalEligible) blocker(`This financial proposal cannot be approved. ${preview.blockers.join(" ")}`);
   const detail = await getFinancialDocumentIntentDetail(input.intentId);
   if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Financial proposal intent was not found." });

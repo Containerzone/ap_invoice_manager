@@ -16,6 +16,11 @@ vi.mock("./financialProposalWebhookService", () => ({
 vi.mock("./financialWebhookEventDb", () => ({
   createFinancialWebhookEvent: vi.fn().mockResolvedValue({ event: { workflowRunId: 81 }, duplicate: false }),
   getFinancialWebhookEventByEventId: vi.fn().mockResolvedValue(undefined),
+  updateFinancialWebhookEventOutcome: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("./financialLiveExecutionService", () => ({
+  executeApprovedFinancialDraft: vi.fn(),
 }));
 
 vi.mock("./workflowAlertService", () => ({ reportWorkflowFailureSafely: vi.fn() }));
@@ -71,6 +76,7 @@ describe("AP financial proposal webhook", () => {
   });
 
   it("records a proposal result without a Xero write or schedule change", async () => {
+    const { executeApprovedFinancialDraft } = await import("./financialLiveExecutionService");
     const res = response();
     await handler({ header: () => "proposal-secret", body: payload }, res);
     expect(res.body).toEqual({
@@ -84,6 +90,72 @@ describe("AP financial proposal webhook", () => {
         sourceSystemsChanged: false,
         routeKey: "main-customer-invoice",
         workflowRunId: 81,
+      }),
+    });
+    expect(executeApprovedFinancialDraft).not.toHaveBeenCalled();
+  });
+
+  it("holds a non-dry event before Xero when the guarded execution gate is disabled", async () => {
+    const { executeApprovedFinancialDraft } = await import("./financialLiveExecutionService");
+    const { FinancialWriteDisabledError } = await import("./financialProductionWriter");
+    const { updateFinancialWebhookEventOutcome } = await import("./financialWebhookEventDb");
+    vi.mocked(executeApprovedFinancialDraft).mockRejectedValueOnce(new FinancialWriteDisabledError("the FINANCIAL_LIVE_WRITES_ENABLED deployment lock is not enabled"));
+    const res = response();
+    await handler({
+      header: () => "proposal-secret",
+      body: { ...payload, eventId: "evt-execution-held", mode: undefined, dryRun: false, executionApprovalId: 71 },
+    }, res);
+    expect(res.body).toEqual({
+      status: 202,
+      payload: expect.objectContaining({ mode: "held", status: "held", financialWritePermitted: false, xeroWriteMethodsCalled: [] }),
+    });
+    expect(executeApprovedFinancialDraft).toHaveBeenCalledWith(expect.objectContaining({
+      approvalId: 71,
+      expectedWorkflowType: "main_customer_invoice",
+      expectedSourceRecordId: "4x1",
+    }));
+    expect(updateFinancialWebhookEventOutcome).toHaveBeenCalledWith(expect.objectContaining({ eventId: "evt-execution-held", status: "held" }));
+  });
+
+  it("records and alerts a held event when non-dry execution has no document-specific approval", async () => {
+    const { executeApprovedFinancialDraft } = await import("./financialLiveExecutionService");
+    const { updateFinancialWebhookEventOutcome } = await import("./financialWebhookEventDb");
+    const res = response();
+    await handler({
+      header: () => "proposal-secret",
+      body: { ...payload, eventId: "evt-missing-approval", mode: undefined, dryRun: false },
+    }, res);
+    expect(res.body).toEqual({
+      status: 202,
+      payload: expect.objectContaining({ mode: "held", status: "held", financialWritePermitted: false }),
+    });
+    expect(executeApprovedFinancialDraft).not.toHaveBeenCalled();
+    expect(updateFinancialWebhookEventOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: "evt-missing-approval",
+      status: "held",
+      errorMessage: expect.stringContaining("did not name an exact"),
+    }));
+  });
+
+  it("can report a verified guarded Draft execution without exposing a browser or tRPC writer", async () => {
+    const { executeApprovedFinancialDraft } = await import("./financialLiveExecutionService");
+    vi.mocked(executeApprovedFinancialDraft).mockResolvedValueOnce({
+      mode: "active_execution",
+      approvalId: 71,
+      outcome: { outcome: "succeeded", executionId: 501, result: { xeroDocumentId: "xero-501" } },
+      postSuccess: { attempted: true, actionId: 91, outcome: "succeeded" },
+    } as any);
+    const res = response();
+    await handler({
+      header: () => "proposal-secret",
+      body: { ...payload, eventId: "evt-execution-success", mode: undefined, dryRun: false, executionApprovalId: 71 },
+    }, res);
+    expect(res.body).toEqual({
+      status: 200,
+      payload: expect.objectContaining({
+        mode: "draft_execution",
+        status: "succeeded",
+        execution: expect.objectContaining({ executionId: 501, postSuccess: "succeeded" }),
       }),
     });
   });

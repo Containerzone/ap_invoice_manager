@@ -145,10 +145,10 @@ import {
   sourceRefreshTimeFromVtiger,
   type ShadowExpectedResult,
 } from "./financialShadowValidation";
-import { getFinancialShadowWebhookStatus } from "./financialWorkflowWebhook";
 import { xeroPreflightHash } from "./financialProposalIntegrity";
 import { getFinancialProposalWebhookStatus } from "./financialProposalWebhook";
 import { approveFinancialExecution, previewFinancialExecutionApproval } from "./financialApprovalService";
+import { getFinancialExecutionGateState, isFinancialGlobalShadowModeEnabled } from "./financialLiveExecutionService";
 import {
   FINANCIAL_AP_WEBHOOK_ROUTES,
   FINANCIAL_WEBHOOK_CONTROL_CONFIG_KEY,
@@ -541,6 +541,8 @@ export const appRouter = router({
       .query(({ input }) => getFinancialWriterExecutions(input?.limit ?? 50)),
     executionApprovals: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getFinancialExecutionApprovals(input?.limit ?? 50)),
+    executionGateState: adminProcedure.input(z.object({ approvalId: z.number().int().positive() }))
+      .query(({ input }) => getFinancialExecutionGateState(input.approvalId)),
     postSuccessActions: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getFinancialPostSuccessActions(input?.limit ?? 50)),
     webhookEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
@@ -579,21 +581,21 @@ export const appRouter = router({
       ]);
       const rules = resolveFinancialAutomationRules(config.find((entry) => entry.configKey === FINANCIAL_AUTOMATION_RULE_CONFIG_KEY)?.configValue);
       return {
-        mode: "GUARDED DRAFT WRITER PREPARED / DISABLED" as const,
+        mode: isFinancialGlobalShadowModeEnabled() ? "GUARDED DRAFT WRITER PREPARED / DISABLED" as const : "GUARDED DRAFT WRITER AWAITING RELEASE GATES" as const,
         xeroWritePermitted: false as const,
         xeroWriteMethodsCalled: [] as string[],
         writer: {
           implementationVersion: FINANCIAL_WRITER_IMPLEMENTATION_VERSION,
-          environmentLock: isFinancialLiveWriteEnvironmentEnabled() ? "configured_but_unroutable" : "active",
-          invocationRouteRegistered: false,
+          environmentLock: isFinancialLiveWriteEnvironmentEnabled() ? "armed_but_blocked_by_release_gates" : "active",
+          globalShadowMode: isFinancialGlobalShadowModeEnabled(),
+          invocationRouteRegistered: true,
           schedulerRegistered: false,
-          documentPolicy: "Draft-only after future document-specific approval",
+          documentPolicy: "Draft-only after a fresh source/preflight, single-use document approval, approved family/manifest/cutover gates, and exact contact ID",
           disabledScheduleDefinitions: DISABLED_FINANCIAL_WRITER_SCHEDULES,
         },
         vtiger,
         xero,
-        webhook: getFinancialShadowWebhookStatus(),
-        shadowTestWebhook: getFinancialShadowWebhookStatus(),
+        webhook: getFinancialProposalWebhookStatus(),
         proposalWebhook: getFinancialProposalWebhookStatus(),
         rules,
         sourceMapping: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY)?.configValue ?? {},

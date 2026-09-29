@@ -60,7 +60,7 @@ function titleize(value: string) {
 function copyExample() {
   const example = {
     apiVersion: "2026-09-29",
-    mode: "proposal",
+    dryRun: true,
     eventId: "vtiger-event-unique-id",
     eventType: "container_control.updated",
     sourceSystem: "VTiger",
@@ -71,13 +71,13 @@ function copyExample() {
     data: { containerControlNumber: "CC1860", status: "REQUEST" },
   };
   void navigator.clipboard?.writeText(JSON.stringify(example, null, 2));
-  toast.success("Proposal-only event example copied. Do not configure VTiger until the relevant family is externally approved.");
+  toast.success("Dry-run event example copied. Do not configure VTiger until the relevant family is externally approved.");
 }
 
 /**
- * AP-only readiness view for the fixed financial webhook contract. Every control
- * below pauses or resumes proposal processing only; no control creates a Xero
- * document, registers a scheduler task, or changes VTiger.
+ * AP-only readiness view for the fixed financial webhook contract. Browser
+ * controls only pause/resume event receipt; they cannot approve or execute a
+ * Xero Draft, register a scheduler task, or change VTiger.
  */
 export function FinancialWebhookInterface() {
   const utils = trpc.useUtils();
@@ -107,20 +107,20 @@ export function FinancialWebhookInterface() {
     <Card className="border-sky-200 bg-sky-50/60">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sky-950"><Webhook className="h-5 w-5" />AP Financial Webhook Interface</CardTitle>
-        <p className="mt-1 text-sm text-sky-900">Fixed AP-owned proposal routes are available for integration testing. They authenticate every event, map approved source data into a local proposal, and create audit evidence only.</p>
+        <p className="mt-1 text-sm text-sky-900">Fixed AP-owned routes authenticate every event, map current source data into a local proposal, and create audit evidence. A non-dry event is held unless it names one exact, current, document-bound approval and every server gate passes.</p>
       </CardHeader>
       <CardContent className="grid gap-3 text-sm md:grid-cols-4">
         <div className="rounded-lg border border-sky-200 bg-white/80 p-3"><p className="font-medium">Authentication</p><p className="mt-1 text-xs text-muted-foreground">{webhook?.configured ? "Secret configured privately" : "Secret not configured"}</p><Badge className={`mt-2 ${statusTone(webhook?.configured ? "ready" : "not_configured")}`}>{webhook?.configured ? "Configured" : "Not configured"}</Badge></div>
-        <div className="rounded-lg border border-sky-200 bg-white/80 p-3"><p className="font-medium">Xero boundary</p><p className="mt-1 text-xs text-muted-foreground">All routes return proposal evidence only.</p><Badge className="mt-2 border-red-200 bg-red-50 text-red-800">Writes disabled</Badge></div>
+        <div className="rounded-lg border border-sky-200 bg-white/80 p-3"><p className="font-medium">Xero boundary</p><p className="mt-1 text-xs text-muted-foreground">Only a non-dry event with its exact single-use approval can reach the server-only Draft transport.</p><Badge className="mt-2 border-red-200 bg-red-50 text-red-800">Gate enforced</Badge></div>
         <div className="rounded-lg border border-sky-200 bg-white/80 p-3"><p className="font-medium">Schedule boundary</p><p className="mt-1 text-xs text-muted-foreground">Recurring routes are definitions only.</p><Badge className="mt-2 border-amber-200 bg-amber-50 text-amber-800">No tasks registered</Badge></div>
         <div className="rounded-lg border border-sky-200 bg-white/80 p-3"><p className="font-medium">Source mapping</p><p className="mt-1 text-xs text-muted-foreground">{sourceMappingState}</p><Badge variant="outline" className="mt-2">AP configuration</Badge></div>
       </CardContent>
     </Card>
 
     <Card>
-      <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Event contract and global proposal pause</CardTitle><p className="mt-1 text-sm text-muted-foreground">Each external request must send <code className="rounded bg-muted px-1">X-Financial-Webhook-Secret</code> and the versioned event envelope. A global pause stops future local proposals without touching a source workflow.</p></CardHeader>
+      <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Event contract and global pause</CardTitle><p className="mt-1 text-sm text-muted-foreground">Each external request must send <code className="rounded bg-muted px-1">X-Financial-Webhook-Secret</code> and the versioned event envelope. A global pause stops future proposals and execution attempts without touching a source workflow.</p></CardHeader>
       <CardContent className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><Badge variant="outline">apiVersion: 2026-09-29</Badge><Badge variant="outline">mode: proposal / dry_run</Badge><Badge variant="outline">sourceSystem: VTiger</Badge><Badge variant="outline">no credentials returned</Badge></div>
+        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><Badge variant="outline">apiVersion: 2026-09-29</Badge><Badge variant="outline">dryRun: true | executionApprovalId</Badge><Badge variant="outline">sourceSystem: VTiger</Badge><Badge variant="outline">no credentials returned</Badge></div>
         <div className="flex gap-2"><Button size="sm" variant="outline" onClick={copyExample}><Copy className="mr-1 h-3.5 w-3.5" />Copy sample payload</Button><Button size="sm" variant={controls.data?.controls.globalPaused ? "default" : "destructive"} onClick={() => setPaused.mutate({ routeKey: "global", paused: !Boolean(controls.data?.controls.globalPaused) })} disabled={setPaused.isPending}>{controls.data?.controls.globalPaused ? <><PlayCircle className="mr-1 h-3.5 w-3.5" />Resume all proposals</> : <><PauseCircle className="mr-1 h-3.5 w-3.5" />Pause all proposals</>}</Button></div>
       </CardContent>
     </Card>

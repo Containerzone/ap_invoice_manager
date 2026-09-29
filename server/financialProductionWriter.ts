@@ -43,6 +43,8 @@ export type ExistingDraftTarget = {
  * caller is able to form an authorised context.
  */
 export type FinancialWriteAuthorisation = {
+  /** AP-local immutable writer-execution ledger ID, assigned before transport. */
+  executionId?: number | null;
   workflowType: string;
   approvalReference: string | null;
   globalShadowMode: boolean;
@@ -224,7 +226,10 @@ export function prepareFinancialDraftUpdatePayload(
 }
 
 /** Checks every cutover condition immediately before any Xero accounting call. */
-export function assertFinancialDraftWriteAuthorised(context: FinancialWriteAuthorisation): void {
+export function assertFinancialDraftWriteAuthorised(
+  context: FinancialWriteAuthorisation,
+  options: { requireExecutionId?: boolean } = {},
+): void {
   if (!isFinancialLiveWriteEnvironmentEnabled()) {
     throw new FinancialWriteDisabledError("Financial writer environment lock is active. Set no production action until a separately approved release enables it.");
   }
@@ -234,7 +239,11 @@ export function assertFinancialDraftWriteAuthorised(context: FinancialWriteAutho
   if (!context.cutoverPackApproved) throw new FinancialWriteDisabledError("Financial writer rejected the request because its document-specific cutover pack is not approved.");
   if (!context.currentDocumentPreflightPassed) throw new FinancialWriteDisabledError("Financial writer rejected the request because the current Xero Draft preflight is not passing.");
   if (!context.legacyWriterHandoffComplete) throw new FinancialWriteDisabledError("Financial writer rejected the request because the documented legacy writer handoff is incomplete.");
+  if (!context.workflowType.trim()) throw new FinancialWriteDisabledError("Financial writer rejected the request because an AP workflow family is required.");
   if (!context.approvalReference?.trim()) throw new FinancialWriteDisabledError("Financial writer rejected the request because a document-specific approval reference is required.");
+  if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) {
+    throw new FinancialWriteDisabledError("Financial writer rejected the request because an AP execution ledger ID is required.");
+  }
 }
 
 function responseDocument(payload: FinancialDraftPayload, data: any): any {
@@ -264,6 +273,9 @@ export async function executeFinancialDraftWrite(
   context: FinancialWriteAuthorisation,
 ): Promise<FinancialDraftWriteResult> {
   assertFinancialDraftWriteAuthorised(context);
+  if (!/^[a-f0-9]{64}$/i.test(payload.idempotencyKey)) {
+    throw new FinancialWriteDisabledError("Financial writer rejected the request because a deterministic 64-character idempotency key is required.");
+  }
   const auth = await getXeroReadAuthWithRefresh();
   const operation = `${payload.method} financial-draft:${payload.documentFamily}:${payload.documentNumber}`;
   const response = await runXeroRequest<any>(auth, operation, () => {

@@ -13,7 +13,10 @@ import {
 import {
   createFinancialWebhookEvent,
   getFinancialWebhookEventByEventId,
+  updateFinancialWebhookEventOutcome,
 } from "./financialWebhookEventDb";
+import { executeApprovedFinancialDraft } from "./financialLiveExecutionService";
+import { FinancialWriteDisabledError } from "./financialProductionWriter";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
 function secureEquals(left: string, right: string): boolean {
@@ -38,12 +41,16 @@ function safeEventResponse(input: {
   issueCount?: number;
   proposedDocuments?: Array<Record<string, unknown>>;
   duplicate?: boolean;
+  mode?: "proposal_only" | "held" | "draft_execution";
+  financialWritePermitted?: boolean;
+  xeroWriteMethodsCalled?: string[];
+  execution?: Record<string, unknown>;
 }) {
   return {
     accepted: true,
-    mode: "proposal_only" as const,
-    financialWritePermitted: false as const,
-    xeroWriteMethodsCalled: [] as string[],
+    mode: input.mode ?? "proposal_only",
+    financialWritePermitted: input.financialWritePermitted ?? false,
+    xeroWriteMethodsCalled: input.xeroWriteMethodsCalled ?? [],
     schedulesRegistered: false as const,
     sourceSystemsChanged: false as const,
     ...input,
@@ -55,9 +62,10 @@ export function getFinancialProposalWebhookStatus() {
   return {
     configured: Boolean(configuredWebhookSecret()),
     headerName: "X-Financial-Webhook-Secret",
-    mode: "proposal_only" as const,
+    mode: "guarded_execution" as const,
     financialWritePermitted: false as const,
     schedulesRegistered: false as const,
+    endpointPath: FINANCIAL_AP_WEBHOOK_ROUTES[0]?.path ?? null,
     routes: FINANCIAL_AP_WEBHOOK_ROUTES.map((route) => ({
       key: route.key,
       path: route.path,
@@ -69,9 +77,10 @@ export function getFinancialProposalWebhookStatus() {
 }
 
 /**
- * Registers fixed AP-only routes. The handler maps each event into an audited
- * proposal and never calls the guarded financial writer, changes VTiger, or
- * registers a schedule.
+ * Registers fixed AP-only routes. Dry-run requests map each event into an
+ * audited proposal. Execution requests may reach the guarded server-only Draft
+ * coordinator only after the same proposal is revalidated and every release
+ * gate is satisfied; a failed gate returns Held before an external write.
  */
 export function registerFinancialProposalWebhook(app: Express): void {
   for (const route of FINANCIAL_AP_WEBHOOK_ROUTES) {
@@ -146,14 +155,122 @@ export function registerFinancialProposalWebhook(app: Express): void {
             severity: "error",
           });
         }
-        res.status(result.status === "proposed" ? 201 : 202).json(safeEventResponse({
-          eventId: envelope.eventId,
-          routeKey: route.key,
-          status: result.status,
-          workflowRunId: result.workflowRunId,
-          issueCount: result.issueCount,
-          proposedDocuments: result.proposedDocuments,
-        }));
+        if (result.status !== "proposed" || envelope.dryRun) {
+          res.status(result.status === "proposed" ? 201 : 202).json(safeEventResponse({
+            eventId: envelope.eventId,
+            routeKey: route.key,
+            status: result.status,
+            workflowRunId: result.workflowRunId,
+            issueCount: result.issueCount,
+            proposedDocuments: result.proposedDocuments,
+          }));
+          return;
+        }
+
+        if (!envelope.executionApprovalId) {
+          const message = "Financial Draft execution is held because this non-dry event did not name an exact document-specific approval.";
+          await updateFinancialWebhookEventOutcome({
+            eventId: envelope.eventId,
+            status: "held",
+            safeSummary: { ...result.safeSummary, executionState: "held_missing_execution_approval" },
+            errorMessage: message,
+          });
+          reportWorkflowFailureSafely({
+            workflowType: "financial-draft-execution",
+            recordKey: `financial-webhook-execution:${route.key}:${envelope.sourceRecordId}`,
+            title: `Financial Draft execution held — ${route.displayName}`,
+            errorMessage: message,
+            details: { routeKey: route.key, sourceRecordNumber: envelope.sourceRecordNumber ?? null, heldBeforeXero: true },
+            severity: "error",
+          });
+          res.status(202).json(safeEventResponse({
+            eventId: envelope.eventId,
+            routeKey: route.key,
+            status: "held",
+            workflowRunId: result.workflowRunId,
+            issueCount: result.issueCount,
+            proposedDocuments: result.proposedDocuments,
+            mode: "held",
+          }));
+          return;
+        }
+
+        // Non-dry events still do not trust the event body. The coordinator
+        // independently refreshes the exact VTiger source and Xero preflight,
+        // checks all deployment/release gates and consumes the single-use
+        // approval immediately before the Draft-only transport.
+        try {
+          const execution = await executeApprovedFinancialDraft({
+            approvalId: envelope.executionApprovalId!,
+            expectedWorkflowType: route.workflowType,
+            expectedSourceRecordId: envelope.sourceRecordId,
+          });
+          const held = execution.outcome.outcome === "reconciliation_required";
+          const reconciliationError = execution.outcome.outcome === "reconciliation_required"
+            ? execution.outcome.error
+            : null;
+          await updateFinancialWebhookEventOutcome({
+            eventId: envelope.eventId,
+            status: held ? "held" : "proposed",
+            safeSummary: {
+              ...result.safeSummary,
+              executionState: execution.outcome.outcome,
+              executionId: execution.outcome.executionId,
+              postSuccessState: execution.postSuccess.outcome,
+            },
+            errorMessage: reconciliationError,
+          });
+          res.status(held ? 202 : 200).json(safeEventResponse({
+            eventId: envelope.eventId,
+            routeKey: route.key,
+            status: held ? "reconciliation_required" : execution.outcome.outcome,
+            workflowRunId: result.workflowRunId,
+            issueCount: result.issueCount,
+            proposedDocuments: result.proposedDocuments,
+            mode: held ? "held" : "draft_execution",
+            financialWritePermitted: !held,
+            xeroWriteMethodsCalled: held ? [] : ["Draft-only guarded transport"],
+            execution: {
+              executionId: execution.outcome.executionId,
+              outcome: execution.outcome.outcome,
+              postSuccess: execution.postSuccess.outcome,
+            },
+          }));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const held = error instanceof FinancialWriteDisabledError;
+          await updateFinancialWebhookEventOutcome({
+            eventId: envelope.eventId,
+            status: held ? "held" : "failed",
+            safeSummary: {
+              ...result.safeSummary,
+              executionState: held ? "held_before_xero" : "failed_before_completion",
+            },
+            errorMessage: message,
+          }).catch(() => undefined);
+          reportWorkflowFailureSafely({
+            workflowType: "financial-draft-execution",
+            recordKey: `financial-webhook-execution:${route.key}:${envelope.sourceRecordId}`,
+            title: held ? `Financial Draft execution held — ${route.displayName}` : `Financial Draft execution failed — ${route.displayName}`,
+            errorMessage: message,
+            details: {
+              routeKey: route.key,
+              sourceRecordNumber: envelope.sourceRecordNumber ?? null,
+              approvalId: envelope.executionApprovalId,
+              heldBeforeXero: held,
+            },
+            severity: "error",
+          });
+          res.status(held ? 202 : 500).json(safeEventResponse({
+            eventId: envelope.eventId,
+            routeKey: route.key,
+            status: held ? "held" : "failed",
+            workflowRunId: result.workflowRunId,
+            issueCount: result.issueCount,
+            proposedDocuments: result.proposedDocuments,
+            mode: held ? "held" : "draft_execution",
+          }));
+        }
       } catch (error: any) {
         const message = error?.message ?? "Financial proposal evaluation failed.";
         const rejected = /does not accept sourceEntityType|mode must be|apiVersion must be|is required\.$/.test(message);

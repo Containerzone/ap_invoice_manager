@@ -36,6 +36,7 @@ function proposal(overrides: Partial<ProposedFinancialDocument> = {}): ProposedF
 
 function completeAuthorisation(overrides: Partial<Parameters<typeof assertFinancialDraftWriteAuthorised>[0]> = {}) {
   return {
+    executionId: 501,
     workflowType: "container_control_acquisition",
     approvalReference: "APPROVAL-EXAMPLE-ONLY",
     globalShadowMode: false,
@@ -120,6 +121,13 @@ describe("guarded financial production writer", () => {
     expect(() => assertFinancialDraftWriteAuthorised(completeAuthorisation({ currentDocumentPreflightPassed: false }))).toThrow(/preflight/i);
     expect(() => assertFinancialDraftWriteAuthorised(completeAuthorisation({ legacyWriterHandoffComplete: false }))).toThrow(/legacy writer/i);
     expect(() => assertFinancialDraftWriteAuthorised(completeAuthorisation({ approvalReference: null }))).toThrow(/approval reference/i);
+    expect(() => assertFinancialDraftWriteAuthorised(completeAuthorisation({ executionId: null }))).toThrow(/execution ledger ID/i);
+  });
+
+  it("rejects a malformed transport idempotency key before Xero credentials are obtained", async () => {
+    process.env.FINANCIAL_LIVE_WRITES_ENABLED = "true";
+    const payload = { ...prepareFinancialDraftPayload(proposal(), "workflow-key"), idempotencyKey: "not-a-deterministic-key" };
+    await expect(executeFinancialDraftWrite(payload, completeAuthorisation())).rejects.toThrow(/idempotency key/i);
   });
 
   it("never prepares held or pending-GST proposals", () => {

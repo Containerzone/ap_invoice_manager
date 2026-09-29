@@ -15,7 +15,7 @@ describe("AP financial webhook contracts", () => {
     expect(FINANCIAL_AP_WEBHOOK_ROUTES.every((route) => route.schedule === "event" || route.schedule === "future_schedule")).toBe(true);
   });
 
-  it("accepts only the fixed versioned proposal envelope and never a live mode", () => {
+  it("accepts fixed dry-run envelopes and guarded execution requests without a live mode", () => {
     const accepted = parseFinancialWebhookEnvelope({
       apiVersion: "2026-09-29",
       mode: "proposal",
@@ -26,8 +26,20 @@ describe("AP financial webhook contracts", () => {
       sourceRecordId: "4x100",
       data: { customerOrganisationName: "Example Customer" },
     });
-    expect(accepted).toMatchObject({ eventId: "evt-100", mode: "proposal" });
+    expect(accepted).toMatchObject({ eventId: "evt-100", mode: "proposal", dryRun: true });
     expect(parseFinancialWebhookEnvelope({ ...accepted, mode: "live" })).toEqual(expect.objectContaining({ error: expect.stringContaining("proposal or dry_run") }));
+    expect(parseFinancialWebhookEnvelope({
+      ...accepted,
+      mode: undefined,
+      dryRun: false,
+      executionApprovalId: 71,
+    })).toMatchObject({ mode: "execution", dryRun: false, executionApprovalId: 71 });
+    expect(parseFinancialWebhookEnvelope({ ...accepted, mode: undefined, dryRun: false })).toMatchObject({
+      mode: "execution",
+      dryRun: false,
+      executionApprovalId: undefined,
+    });
+    expect(parseFinancialWebhookEnvelope({ ...accepted, mode: undefined, dryRun: false, executionApprovalId: 0 })).toEqual(expect.objectContaining({ error: expect.stringContaining("executionApprovalId") }));
   });
 
   it("resolves only recognised pause controls", () => {

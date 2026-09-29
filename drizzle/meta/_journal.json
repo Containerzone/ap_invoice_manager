@@ -232,6 +232,13 @@
       "when": 1790688907621,
       "tag": "0032_remarkable_forge",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "5",
+      "when": 1790690929472,
+      "tag": "0033_melted_black_bolt",
+      "breakpoints": true
     }
   ]
 }

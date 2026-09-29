@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   extraHireRuns,
   financialCutoverAudits,
@@ -335,6 +335,31 @@ export async function getFinancialWorkflowSchedules() {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(workflowSchedules).orderBy(workflowSchedules.workflowType);
+}
+
+/** Locates a financial schedule only by its Heartbeat task UID. */
+export async function getFinancialWorkflowScheduleByTaskUid(taskUid: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(workflowSchedules)
+    .where(eq(workflowSchedules.taskUid, taskUid)).limit(1))[0];
+}
+
+export async function recordFinancialWorkflowScheduleOutcome(input: {
+  workflowType: string;
+  taskUid: string;
+  outcome: string;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(workflowSchedules).set({
+    lastRunAt: new Date(),
+    lastOutcome: input.outcome.slice(0, 80),
+    updatedAt: new Date(),
+  }).where(and(
+    eq(workflowSchedules.workflowType, input.workflowType),
+    eq(workflowSchedules.taskUid, input.taskUid),
+  ));
 }
 
 /** No task is registered or enabled by this helper; it stores disabled metadata only. */
@@ -770,6 +795,16 @@ export async function getFinancialCutoverControls(): Promise<FinancialCutoverCon
       ? { ...control, persisted: true, globalWriteLock: true as const }
       : newCutoverControl(workflowType);
   });
+}
+
+/** Reads one per-family execution control without creating or changing it. */
+export async function getFinancialCutoverControlForWorkflow(
+  workflowType: string,
+): Promise<FinancialCutoverControl | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(financialCutoverControls)
+    .where(eq(financialCutoverControls.workflowType, workflowType)).limit(1))[0];
 }
 
 export async function getFinancialCutoverPacks(limit = 100): Promise<FinancialCutoverPack[]> {
@@ -1460,4 +1495,83 @@ export async function getFinancialPostSuccessActions(limit = 200): Promise<Finan
   const db = await getDb();
   if (!db) return [];
   return db.select().from(financialPostSuccessActions).orderBy(desc(financialPostSuccessActions.createdAt)).limit(limit);
+}
+
+export async function getFinancialPostSuccessActionById(actionId: number): Promise<FinancialPostSuccessAction | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(financialPostSuccessActions)
+    .where(eq(financialPostSuccessActions.id, actionId)).limit(1))[0];
+}
+
+export async function getFinancialPostSuccessActionsForExecution(executionId: number): Promise<FinancialPostSuccessAction[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialPostSuccessActions)
+    .where(eq(financialPostSuccessActions.executionId, executionId))
+    .orderBy(financialPostSuccessActions.id);
+}
+
+/**
+ * Atomically claims one post-success action. Claiming applies only to AP-local
+ * follow-up work; it is never used to replay a Xero financial write.
+ */
+export async function claimFinancialPostSuccessAction(actionId: number): Promise<FinancialPostSuccessAction | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const result: any = await db.update(financialPostSuccessActions).set({
+    status: "running",
+    attemptCount: sql`${financialPostSuccessActions.attemptCount} + 1`,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(financialPostSuccessActions.id, actionId),
+    inArray(financialPostSuccessActions.status, ["pending", "failed"]),
+  ));
+  const affected = Number(result?.[0]?.affectedRows ?? result?.rowsAffected ?? 0);
+  if (affected !== 1) return undefined;
+  return (await db.select().from(financialPostSuccessActions)
+    .where(eq(financialPostSuccessActions.id, actionId)).limit(1))[0];
+}
+
+export async function markFinancialPostSuccessActionSucceeded(input: {
+  actionId: number;
+  vtigerRecordId?: string | null;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(financialPostSuccessActions).set({
+    status: "succeeded",
+    vtigerRecordId: input.vtigerRecordId ?? null,
+    errorMessage: null,
+    completedAt: new Date(),
+    updatedAt: new Date(),
+  }).where(eq(financialPostSuccessActions.id, input.actionId));
+}
+
+export async function markFinancialPostSuccessActionFailed(input: {
+  actionId: number;
+  error: unknown;
+  reconciliationRequired?: boolean;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const message = input.error instanceof Error ? input.error.message : String(input.error);
+  await db.update(financialPostSuccessActions).set({
+    status: input.reconciliationRequired ? "reconciliation_required" : "failed",
+    errorMessage: message.slice(0, 6000),
+    completedAt: input.reconciliationRequired ? new Date() : null,
+    updatedAt: new Date(),
+  }).where(eq(financialPostSuccessActions.id, input.actionId));
+}
+
+export async function getRetryableFinancialPostSuccessActions(limit = 20): Promise<FinancialPostSuccessAction[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialPostSuccessActions)
+    .where(and(
+      inArray(financialPostSuccessActions.status, ["pending", "failed"]),
+      sql`${financialPostSuccessActions.attemptCount} < 3`,
+    ))
+    .orderBy(financialPostSuccessActions.createdAt)
+    .limit(Math.max(1, Math.min(limit, 50)));
 }

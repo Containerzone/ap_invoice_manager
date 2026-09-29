@@ -72,6 +72,29 @@ export async function createFinancialWebhookEvent(input: CreateFinancialWebhookE
   return { event, duplicate: false };
 }
 
+/**
+ * Records the safe result of a later guarded execution attempt for the same
+ * authenticated event. It never changes the payload fingerprint or event
+ * identity, so a duplicate delivery still remains idempotent.
+ */
+export async function updateFinancialWebhookEventOutcome(input: {
+  eventId: string;
+  status: FinancialWebhookEventStatus;
+  safeSummary?: unknown;
+  errorMessage?: string | null;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(financialWebhookEvents)
+    .set({
+      status: input.status,
+      safeSummary: (input.safeSummary ?? {}) as any,
+      errorMessage: input.errorMessage?.slice(0, 6000) ?? null,
+      processedAt: new Date(),
+    })
+    .where(eq(financialWebhookEvents.eventId, input.eventId));
+}
+
 export async function getFinancialWebhookEvents(limit = 100): Promise<FinancialWebhookEvent[]> {
   const db = await getDb();
   if (!db) return [];

@@ -15,6 +15,7 @@ import {
 } from "./financialWorkflowDb";
 import { readBackFinancialDraft } from "./financialReadOnlyXeroService";
 import { financialSha256 } from "./financialProposalIntegrity";
+import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 
 export type GuardedFinancialWriterCommand = {
   workflowRunId?: number | null;
@@ -30,6 +31,7 @@ export type GuardedFinancialWriterCommand = {
   /** Optional immutable approval consumed immediately before the Xero transport. */
   approvalId?: number | null;
   sourceRecordId?: string | null;
+  postSuccessPlan?: PlannedFinancialPostSuccessAction[];
 };
 
 export type GuardedFinancialWriterOutcome =
@@ -44,15 +46,15 @@ export function financialWriteOutcomeIsUncertain(error: unknown): boolean {
 }
 
 /**
- * Coordinates one strictly Draft-only request. It is deliberately not exposed by
- * a router, webhook or Heartbeat handler in this phase. A future approved route
- * must call this method after constructing the exact authorisation context.
+ * Coordinates one strictly Draft-only request. It is reached only by the
+ * canonical authenticated event handler after document-specific revalidation;
+ * it is deliberately never exported through tRPC or a browser action.
  */
 export async function executeGuardedFinancialWriterCommand(
   command: GuardedFinancialWriterCommand,
 ): Promise<GuardedFinancialWriterOutcome> {
   // Reject before writing any local execution state or making any Xero call.
-  assertFinancialDraftWriteAuthorised(command.authorisation);
+  assertFinancialDraftWriteAuthorised(command.authorisation, { requireExecutionId: false });
 
   const prepared = await prepareFinancialWriterExecution({
     workflowRunId: command.workflowRunId,
@@ -85,7 +87,10 @@ export async function executeGuardedFinancialWriterCommand(
   await markFinancialWriterExecutionSubmitted(prepared.execution.id);
   let transportSucceeded = false;
   try {
-    const result = await executeFinancialDraftWrite(command.payload, command.authorisation);
+    const result = await executeFinancialDraftWrite(command.payload, {
+      ...command.authorisation,
+      executionId: prepared.execution.id,
+    });
     transportSucceeded = true;
     // The transport response alone never proves final success. Re-read the exact
     // Xero ID/number/status before marking the execution successful locally.
@@ -96,19 +101,26 @@ export async function executeGuardedFinancialWriterCommand(
     });
     await markFinancialWriterExecutionSucceeded(prepared.execution.id, result);
     if (command.sourceRecordId) {
-      await createFinancialPostSuccessAction({
-        executionId: prepared.execution.id,
-        workflowType: command.workflowType,
-        actionType: "vtiger_note",
-        sourceRecordId: command.sourceRecordId,
-        payloadHash: financialSha256({ executionId: prepared.execution.id, readBack }),
-        safePayloadSummary: {
-          purpose: "Post-success reconciliation note pending a separately configured VTiger writer",
-          xeroDocumentId: readBack.xeroDocumentId,
-          documentNumber: readBack.documentNumber,
-          status: readBack.status,
-        },
-      });
+      for (const action of command.postSuccessPlan ?? []) {
+        await createFinancialPostSuccessAction({
+          executionId: prepared.execution.id,
+          workflowType: command.workflowType,
+          actionType: action.actionType,
+          sourceRecordId: command.sourceRecordId,
+          payloadHash: financialSha256({
+            executionId: prepared.execution.id,
+            actionType: action.actionType,
+            readBack,
+            action: action.safePayloadSummary,
+          }),
+          safePayloadSummary: {
+            ...action.safePayloadSummary,
+            xeroDocumentId: readBack.xeroDocumentId,
+            documentNumber: readBack.documentNumber,
+            status: readBack.status,
+          },
+        });
+      }
     }
     return { outcome: "succeeded", executionId: prepared.execution.id, result };
   } catch (error) {

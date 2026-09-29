@@ -8,9 +8,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { registerVtigerWebhook } from "../webhookRoutes";
 import { registerMicrosoftGraphWebhook } from "../microsoftGraphWebhook";
 import { registerInvoicePdfProxy } from "../invoicePdfProxy";
-import { registerFinancialWorkflowShadowWebhook } from "../financialWorkflowWebhook";
 import { registerFinancialProposalWebhook } from "../financialProposalWebhook";
-import { registerDisabledFinancialReleaseEndpoint } from "../financialReleaseEndpoint";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -45,9 +43,7 @@ async function startServer() {
   registerVtigerWebhook(app);
   registerMicrosoftGraphWebhook(app);
   registerInvoicePdfProxy(app);
-  registerFinancialWorkflowShadowWebhook(app);
   registerFinancialProposalWebhook(app);
-  registerDisabledFinancialReleaseEndpoint(app);
   // tRPC API
   app.use(
     "/api/trpc",
@@ -58,10 +54,22 @@ async function startServer() {
   );
   // ── Scheduled task handlers (/api/scheduled/*) ─────────────────────────────
   const { archiveCleanupHandler, microsoftSubscriptionRenewalHandler, microsoftInvoiceReconciliationHandler, workflowFailureReconciliationHandler } = await import("../scheduledHandlers");
+  const { financialPostSuccessRetryHandler, financialRecurringProposalHandler } = await import("../financialScheduledHandlers");
   app.post("/api/scheduled/archive-cleanup", archiveCleanupHandler);
   app.post("/api/scheduled/microsoft-subscription-renewal", microsoftSubscriptionRenewalHandler);
   app.post("/api/scheduled/microsoft-invoice-reconciliation", microsoftInvoiceReconciliationHandler);
   app.post("/api/scheduled/workflow-failure-reconciliation", workflowFailureReconciliationHandler);
+  // No Heartbeat job is created by this registration. Each financial handler
+  // additionally rejects any unregistered or disabled AP-owned schedule row.
+  app.post("/api/scheduled/financial-post-success-retry", financialPostSuccessRetryHandler);
+  app.post("/api/scheduled/financial-writer/recurring_for_hire", (req, res) => {
+    (req.params as { workflowType?: string }).workflowType = "recurring_for_hire";
+    return financialRecurringProposalHandler(req, res);
+  });
+  app.post("/api/scheduled/financial-writer/recurring_storage", (req, res) => {
+    (req.params as { workflowType?: string }).workflowType = "recurring_storage";
+    return financialRecurringProposalHandler(req, res);
+  });
 
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {

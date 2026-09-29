@@ -96,6 +96,11 @@ vi.mock("./financialReadOnlyXeroService", () => ({
   previewHistoricalXeroReferences: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("./financialLiveExecutionService", () => ({
+  getFinancialExecutionGateState: vi.fn().mockResolvedValue({ approvalId: 71, gates: { allPassed: false } }),
+  isFinancialGlobalShadowModeEnabled: () => true,
+}));
+
 function context(role: "admin" | "user"): TrpcContext {
   return {
     user: {
@@ -322,4 +327,5 @@ describe("financial operations tRPC safeguards", () => {
       .resolves.toMatchObject({ mode: "release_preparation_only", xeroWritePermitted: false, sourceSystemsChanged: false });
     expect(recordFinancialReleaseLegacyInventory).toHaveBeenCalledWith(expect.objectContaining({ ...input, actorId: 1 }));
   });
+
 });

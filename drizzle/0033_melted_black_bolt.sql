@@ -1,0 +1,1 @@
+ALTER TABLE `financial_post_success_actions` MODIFY COLUMN `status` enum('pending','running','succeeded','failed','reconciliation_required') NOT NULL DEFAULT 'pending';
