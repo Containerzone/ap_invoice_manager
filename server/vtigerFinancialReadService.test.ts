@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
 vi.mock("axios", () => ({ default: { get: mockGet, post: mockPost } }));
 
-import { testVtigerFinancialConnection } from "./vtigerFinancialReadService";
+import { describeVtigerFinancialModule, testVtigerFinancialConnection } from "./vtigerFinancialReadService";
 
 function configuredEnvironment() {
   process.env.VTIGER_URL = "https://vtiger.example.test";
@@ -48,6 +48,16 @@ describe("VTiger financial read-only connection health", () => {
     expect(result).toMatchObject({ configured: true, outcome: "failed" });
     expect(result.message).toContain("Specified token is invalid or expired");
     expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("describes post-success mapping fields with GET-only metadata after session login", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge" } } })
+      .mockResolvedValueOnce({ data: { success: true, result: { name: "Calendar", fields: [{ name: "parent_id" }, { name: "subject" }, { name: "due_date" }] } } });
+    mockPost.mockResolvedValueOnce({ data: { success: true, result: { sessionName: "read-session" } } });
+    await expect(describeVtigerFinancialModule("Calendar")).resolves.toEqual({ name: "Calendar", fields: ["parent_id", "subject", "due_date"] });
+    expect(mockGet.mock.calls[1]?.[1]?.params).toMatchObject({ operation: "describe", elementType: "Calendar", sessionName: "read-session" });
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 });

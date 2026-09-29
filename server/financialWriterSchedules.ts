@@ -3,7 +3,7 @@ export type DisabledFinancialWriterSchedule = {
   familyKey: "recurring_for_hire" | "recurring_storage";
   endpointPath: string;
   cadence: string;
-  state: "details_required";
+  state: "disabled";
   reason: string;
 };
 
@@ -18,16 +18,16 @@ export const DISABLED_FINANCIAL_WRITER_SCHEDULES: readonly DisabledFinancialWrit
     familyKey: "recurring_for_hire",
     endpointPath: "/api/scheduled/financial-writer/recurring_for_hire",
     cadence: "0 0 0 1 * *",
-    state: "details_required",
-    reason: "No Heartbeat job exists. Sydney-date source selection, one-family cutover and an exact single-use approval are required before activation.",
+    state: "disabled",
+    reason: "No Heartbeat job exists. The bounded selector is implemented but disabled; Sydney-date source selection, one-family cutover and an exact single-use approval are required before activation.",
   },
   {
     workflowType: "recurring_storage",
     familyKey: "recurring_storage",
     endpointPath: "/api/scheduled/financial-writer/recurring_storage",
     cadence: "0 5 13 * * *",
-    state: "details_required",
-    reason: "No Heartbeat job exists. The handler would run daily but may process only the first Sydney calendar day after one-family cutover and exact approval.",
+    state: "disabled",
+    reason: "No Heartbeat job exists. The bounded selector is implemented but disabled; the handler may process only the first Sydney calendar day after one-family cutover and exact approval.",
   },
 ] as const;
 

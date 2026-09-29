@@ -145,7 +145,19 @@ import {
   sourceRefreshTimeFromVtiger,
   type ShadowExpectedResult,
 } from "./financialShadowValidation";
-import { xeroPreflightHash } from "./financialProposalIntegrity";
+import { financialSha256, rulesSnapshotHash, sourceSnapshotHash, xeroPreflightHash } from "./financialProposalIntegrity";
+import {
+  discoverCurrentFamilyCandidates,
+  FINANCIAL_CURRENT_CANDIDATE_DISCOVERY_CONFIG_KEY,
+  FINANCIAL_FAMILY_CANDIDATE_PROFILES,
+  type FinancialReleaseFamilyKey,
+} from "./financialCandidateDiscoveryService";
+import {
+  DEFAULT_DISABLED_POST_SUCCESS_MAPPING,
+  FINANCIAL_POST_SUCCESS_MAPPING_CONFIG_KEY,
+  resolveDisabledPostSuccessMapping,
+  validateDisabledPostSuccessMapping,
+} from "./financialPostSuccessReadiness";
 import { getFinancialProposalWebhookStatus } from "./financialProposalWebhook";
 import { approveFinancialExecution, previewFinancialExecutionApproval } from "./financialApprovalService";
 import { getFinancialExecutionGateState, isFinancialGlobalShadowModeEnabled } from "./financialLiveExecutionService";
@@ -168,6 +180,11 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   }
   return next({ ctx });
 });
+
+const financialReleaseFamilyKeySchema = z.string().trim().refine(
+  (value): value is FinancialReleaseFamilyKey => FINANCIAL_FAMILY_CANDIDATE_PROFILES.some((family) => family.familyKey === value),
+  "Select a known financial release family.",
+);
 
 // ─── Staff approval threshold logic ──────────────────────────────────────────
 // Returns true if the staff member can approve the given discrepancy amount
@@ -556,8 +573,12 @@ export const appRouter = router({
         controls,
         routes: FINANCIAL_AP_WEBHOOK_ROUTES.map((route) => ({
           key: route.key,
+          path: route.path,
           displayName: route.displayName,
           workflowType: route.workflowType,
+          sourceEntityTypes: route.sourceEntityTypes,
+          fixedFields: route.fixedFields ?? null,
+          description: route.description,
           schedule: route.schedule,
           paused: controls.globalPaused || controls.familyPaused[route.key] === true,
         })),
@@ -600,8 +621,34 @@ export const appRouter = router({
         rules,
         sourceMapping: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY)?.configValue ?? {},
         candidateFinder: getFinancialCandidateFinderConfig(config.find((entry) => entry.configKey === FINANCIAL_VTIGER_CANDIDATE_FINDER_CONFIG_KEY)?.configValue),
+        postSuccessMapping: resolveDisabledPostSuccessMapping(config.find((entry) => entry.configKey === FINANCIAL_POST_SUCCESS_MAPPING_CONFIG_KEY)?.configValue),
         schedules: schedules.filter((schedule) => ["recurring_for_hire", "recurring_storage"].includes(schedule.workflowType)),
       };
+    }),
+    validateDisabledPostSuccessMapping: adminProcedure.mutation(async ({ ctx }) => {
+      const config = await getFinancialWorkflowConfig();
+      const result = await validateDisabledPostSuccessMapping(config.find((entry) => entry.configKey === FINANCIAL_POST_SUCCESS_MAPPING_CONFIG_KEY)?.configValue);
+      await createFinancialIntegrationAudit({
+        integration: "vtiger",
+        action: "disabled_post_success_mapping_get_metadata",
+        outcome: result.outcome === "passed" ? "passed" : result.outcome === "blocked" ? "blocked" : "failed",
+        details: { readOnly: true, outcome: result.outcome, modules: result.modules.map((module) => ({ module: module.module, missingFields: module.missingFields })), assignedUserConfigured: result.assignedUser.configured },
+        actorId: ctx.user.id,
+      });
+      return { ...result, xeroWritePermitted: false as const, vtigerWritePermitted: false as const };
+    }),
+    saveDisabledPostSuccessMapping: adminProcedure.input(z.object({
+      enabled: z.literal(false).optional(),
+      assignedUserId: z.string().trim().regex(/^\d+x\d+$/i).nullable().optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const configuration = { ...DEFAULT_DISABLED_POST_SUCCESS_MAPPING, assignedUserId: input.assignedUserId ?? null };
+      await upsertFinancialWorkflowConfig(
+        FINANCIAL_POST_SUCCESS_MAPPING_CONFIG_KEY,
+        configuration,
+        "Disabled VTiger post-success mapping readiness. This AP-local configuration cannot create notes/tasks or update Hire End Date.",
+        ctx.user.id,
+      );
+      return { configuration, vtigerWritePermitted: false as const, xeroWritePermitted: false as const };
     }),
     setWebhookPause: adminProcedure.input(z.object({
       routeKey: z.string().trim().min(1).max(100).refine(
@@ -769,7 +816,44 @@ export const appRouter = router({
       });
       return { ...result, discoveryId, xeroWritePermitted: false as const };
     }),
+    discoverFamilyCandidates: adminProcedure.input(z.object({
+      familyKey: financialReleaseFamilyKeySchema,
+    })).mutation(async ({ input, ctx }) => {
+      const familyKey = input.familyKey as FinancialReleaseFamilyKey;
+      const config = await getFinancialWorkflowConfig();
+      const discovery = await discoverCurrentFamilyCandidates({
+        familyKey,
+        discoveryConfig: config.find((entry) => entry.configKey === FINANCIAL_CURRENT_CANDIDATE_DISCOVERY_CONFIG_KEY)?.configValue,
+        sourceMapping: config.find((entry) => entry.configKey === FINANCIAL_VTIGER_SOURCE_MAPPING_CONFIG_KEY)?.configValue as Record<string, unknown> | undefined,
+        rules: resolveFinancialAutomationRules(config.find((entry) => entry.configKey === FINANCIAL_AUTOMATION_RULE_CONFIG_KEY)?.configValue),
+      });
+      const discoveryId = await createFinancialCandidateDiscovery({
+        familyKey: discovery.family.familyKey,
+        sourceCategory: discovery.family.sourceCategory,
+        businessNumber: discovery.candidates[0]?.businessNumber ?? discovery.family.familyKey,
+        workflowType: discovery.family.workflowType,
+        outcome: discovery.outcome,
+        candidateRecordIds: discovery.candidates.map((candidate) => candidate.recordId),
+        candidateSummaries: discovery.candidates.map((candidate) => ({
+          recordId: candidate.recordId,
+          businessNumber: candidate.businessNumber,
+          stageOrStatus: candidate.stageOrStatus,
+          expectedDocumentNumbers: candidate.expectedDocumentNumbers,
+          proposalSummary: candidate.proposalSummary,
+          collisionState: candidate.collisionState,
+          eligibilityReasons: candidate.eligibilityReasons,
+        })),
+        sourceRefreshedAt: discovery.candidates[0]?.sourceRefreshedAt ?? null,
+        sourceSnapshotHash: discovery.sourceSnapshotHash,
+        rulesSnapshotHash: discovery.rulesSnapshotHash,
+        xeroPreflightHash: discovery.xeroPreflightHash,
+        message: discovery.message,
+        initiatedBy: ctx.user.id,
+      });
+      return { ...discovery, discoveryId, xeroWritePermitted: false as const, xeroWriteMethodsCalled: [] as string[] };
+    }),
     saveCandidateRosterEntry: adminProcedure.input(z.object({
+      familyKey: financialReleaseFamilyKeySchema.optional(),
       sourceCategory: z.enum(["deal", "container_control"]),
       businessNumber: z.string().trim().min(1).max(128),
       workflowType: z.enum(FINANCIAL_WORKFLOW_TYPES),
@@ -777,6 +861,7 @@ export const appRouter = router({
       businessNote: z.string().trim().max(10_000).nullable().optional(),
       ownerId: z.number().int().positive().nullable().optional(),
       reviewerId: z.number().int().positive().nullable().optional(),
+      selectedPeriodStart: z.date().nullable().optional(),
     })).mutation(async ({ input, ctx }) => {
       const rosterEntryId = await upsertFinancialCandidateRosterEntry({ ...input, createdBy: ctx.user.id });
       return { rosterEntryId, mode: "shadow" as const, xeroWritePermitted: false as const };
@@ -931,7 +1016,15 @@ export const appRouter = router({
         createdBy: ctx.user.id,
         idempotencySalt: `phase16:${input.sourceCategory}:${input.businessNumber}:${input.candidateRecordId}:${Date.now()}`,
       });
-      await linkFinancialCandidateRosterShadowTest(roster.id, result.testId);
+      await linkFinancialCandidateRosterShadowTest({
+        id: roster.id,
+        shadowTestId: result.testId,
+        sourceSnapshotHash: sourceSnapshotHash(rawSource),
+        rulesSnapshotHash: rulesSnapshotHash(rules),
+        xeroPreflightHash: financialSha256(result.preflight),
+        selectedPeriodStart: (sourceData as Record<string, unknown>).periodStart ? new Date(String((sourceData as Record<string, unknown>).periodStart)) : null,
+        selectedPeriodEnd: (sourceData as Record<string, unknown>).periodEnd ? new Date(String((sourceData as Record<string, unknown>).periodEnd)) : null,
+      });
       return { ...result, candidate: matchedCandidate, expectedFactsSource: "active_ap_rules" as const };
     }),
     reviewShadowTest: adminProcedure.input(z.object({

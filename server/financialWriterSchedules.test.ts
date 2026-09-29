@@ -11,13 +11,13 @@ describe("disabled financial writer schedule definitions", () => {
         workflowType: "recurring_for_hire",
         endpointPath: "/api/scheduled/financial-writer/recurring_for_hire",
         cadence: "0 0 0 1 * *",
-        state: "details_required",
+        state: "disabled",
       }),
       expect.objectContaining({
         workflowType: "recurring_storage",
         endpointPath: "/api/scheduled/financial-writer/recurring_storage",
         cadence: "0 5 13 * * *",
-        state: "details_required",
+        state: "disabled",
       }),
     ]);
   });

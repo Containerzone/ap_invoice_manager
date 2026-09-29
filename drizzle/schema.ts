@@ -631,6 +631,13 @@ export const storageBillingEvents = mysqlTable("storage_billing_events", {
   customerInvoiceDocumentId: int("customerInvoiceDocumentId"),
   jdPurchaseOrderDocumentId: int("jdPurchaseOrderDocumentId"),
   gdPurchaseOrderDocumentId: int("gdPurchaseOrderDocumentId"),
+  /** Execution-only provenance: shadow evaluations may never activate storage recurrence. */
+  provenance: mysqlEnum("provenance", ["unverified_legacy", "verified_execution"] as const)
+    .default("unverified_legacy")
+    .notNull(),
+  activationExecutionId: int("activationExecutionId"),
+  finalisationExecutionId: int("finalisationExecutionId"),
+  verifiedAt: timestamp("verifiedAt"),
   finalisationStatus: mysqlEnum("finalisationStatus", ["open", "pending", "finalised", "held"] as const)
     .default("open")
     .notNull(),
@@ -827,12 +834,17 @@ export type InsertFinancialShadowTest = typeof financialShadowTests.$inferInsert
  */
 export const financialCandidateDiscoveries = mysqlTable("financial_candidate_discoveries", {
   id: int("id").autoincrement().primaryKey(),
-  sourceCategory: mysqlEnum("sourceCategory", ["deal", "container_control"] as const).notNull(),
+  familyKey: varchar("familyKey", { length: 96 }),
+  sourceCategory: mysqlEnum("sourceCategory", ["deal", "container_control", "storage_billing_event"] as const).notNull(),
   businessNumber: varchar("businessNumber", { length: 128 }).notNull(),
   workflowType: varchar("workflowType", { length: 80 }).notNull(),
-  outcome: mysqlEnum("outcome", ["found", "not_found", "ambiguous", "blocked"] as const).notNull(),
+  outcome: mysqlEnum("outcome", ["found", "not_found", "ambiguous", "blocked", "no_current_candidate"] as const).notNull(),
   candidateRecordIds: json("candidateRecordIds"),
+  candidateSummaries: json("candidateSummaries"),
   sourceRefreshedAt: timestamp("sourceRefreshedAt"),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 128 }),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 128 }),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 128 }),
   message: text("message"),
   initiatedBy: int("initiatedBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -848,6 +860,7 @@ export type InsertFinancialCandidateDiscovery = typeof financialCandidateDiscove
  */
 export const financialCandidateRoster = mysqlTable("financial_candidate_roster", {
   id: int("id").autoincrement().primaryKey(),
+  familyKey: varchar("familyKey", { length: 96 }),
   sourceCategory: mysqlEnum("sourceCategory", ["deal", "container_control"] as const).notNull(),
   businessNumber: varchar("businessNumber", { length: 128 }).notNull(),
   workflowType: varchar("workflowType", { length: 80 }).notNull(),
@@ -855,7 +868,7 @@ export const financialCandidateRoster = mysqlTable("financial_candidate_roster",
   businessNote: text("businessNote"),
   ownerId: int("ownerId"),
   reviewerId: int("reviewerId"),
-  discoveryStatus: mysqlEnum("discoveryStatus", ["draft", "found", "not_found", "ambiguous", "blocked", "needs_data"] as const)
+  discoveryStatus: mysqlEnum("discoveryStatus", ["draft", "found", "not_found", "ambiguous", "blocked", "needs_data", "no_current_candidate"] as const)
     .default("draft")
     .notNull(),
   candidateRecordId: varchar("candidateRecordId", { length: 128 }),
@@ -863,11 +876,19 @@ export const financialCandidateRoster = mysqlTable("financial_candidate_roster",
   latestShadowTestId: int("latestShadowTestId"),
   lastDiscoveryMessage: text("lastDiscoveryMessage"),
   lastResolvedAt: timestamp("lastResolvedAt"),
+  selectedPeriodStart: timestamp("selectedPeriodStart"),
+  selectedPeriodEnd: timestamp("selectedPeriodEnd"),
+  evidenceStatus: mysqlEnum("evidenceStatus", ["unverified", "fresh", "stale", "needs_data"] as const)
+    .default("unverified")
+    .notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 128 }),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 128 }),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 128 }),
   createdBy: int("createdBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
-  candidateRosterReferenceUnique: uniqueIndex("financial_candidate_roster_reference_unique").on(table.sourceCategory, table.businessNumber),
+  candidateRosterReferenceUnique: uniqueIndex("financial_candidate_roster_reference_unique").on(table.sourceCategory, table.businessNumber, table.familyKey),
 }));
 
 export type FinancialCandidateRoster = typeof financialCandidateRoster.$inferSelect;
@@ -998,6 +1019,7 @@ export const financialReleaseManifests = mysqlTable("financial_release_manifests
   currentDocumentManifest: json("currentDocumentManifest").notNull(),
   includedFamilyCount: int("includedFamilyCount").default(0).notNull(),
   heldFamilyCount: int("heldFamilyCount").default(0).notNull(),
+  noCurrentCandidateFamilyCount: int("noCurrentCandidateFamilyCount").default(0).notNull(),
   excludedFamilyCount: int("excludedFamilyCount").default(0).notNull(),
   preparedBy: int("preparedBy").notNull(),
   preparedAt: timestamp("preparedAt").defaultNow().notNull(),
@@ -1017,7 +1039,7 @@ export const financialReleaseFamilies = mysqlTable("financial_release_families",
   workflowType: varchar("workflowType", { length: 80 }).notNull(),
   displayName: varchar("displayName", { length: 255 }).notNull(),
   branch: varchar("branch", { length: 160 }).notNull(),
-  releaseStatus: mysqlEnum("releaseStatus", ["included", "held", "excluded"] as const).default("excluded").notNull(),
+  releaseStatus: mysqlEnum("releaseStatus", ["included", "held", "no_current_candidate", "excluded"] as const).default("no_current_candidate").notNull(),
   statusReason: text("statusReason").notNull(),
   expectedReferencePattern: varchar("expectedReferencePattern", { length: 255 }).notNull(),
   partyAndAccountRules: json("partyAndAccountRules").notNull(),
@@ -1031,11 +1053,16 @@ export const financialReleaseFamilies = mysqlTable("financial_release_families",
   candidateRosterEntryId: int("candidateRosterEntryId"),
   sourceRecordNumber: varchar("sourceRecordNumber", { length: 128 }),
   sourcePreflightAt: timestamp("sourcePreflightAt"),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 128 }),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 128 }),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 128 }),
+  evidenceStale: boolean("evidenceStale").default(false).notNull(),
   xeroPreflight: json("xeroPreflight"),
   currentDocumentSummary: json("currentDocumentSummary"),
   legacyWriterIdentifier: varchar("legacyWriterIdentifier", { length: 500 }),
   legacyWriterOwner: varchar("legacyWriterOwner", { length: 255 }),
   legacyDisableAction: text("legacyDisableAction"),
+  postSuccessMappingReadiness: json("postSuccessMappingReadiness"),
   conditionPayloadContract: text("conditionPayloadContract").notNull(),
   rollbackPlan: text("rollbackPlan").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

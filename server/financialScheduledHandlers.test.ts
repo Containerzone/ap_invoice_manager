@@ -53,12 +53,12 @@ describe("inactive financial scheduled handlers", () => {
     expect(mocks.retry).not.toHaveBeenCalled();
   });
 
-  it("has no recurring source selector even if a future cron task is present", async () => {
-    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", enabled: true });
+  it("returns a disabled no-write audit for a recognised disabled recurring task", async () => {
+    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", enabled: false });
     const res = response();
     await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" }, path: "/api/scheduled/financial-recurring/recurring_for_hire" } as any, res as any);
-    expect(res.status).toHaveBeenCalledWith(501);
-    expect(mocks.recordOutcome).toHaveBeenCalledWith(expect.objectContaining({ outcome: "blocked_missing_source_selector" }));
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: "disabled_no_write_audit", selectorAvailable: true, xeroWritesAttempted: 0 }));
+    expect(mocks.recordOutcome).toHaveBeenCalledWith(expect.objectContaining({ outcome: "disabled_no_write_audit" }));
     expect(mocks.retry).not.toHaveBeenCalled();
   });
 

@@ -170,6 +170,7 @@ export async function executeApprovedFinancialDraft(input: {
       preparedBy: input.requestedBy ?? approval.approvedBy,
       approvalId: approval.id,
       sourceRecordId: refreshed.sourceRecordId,
+      verifiedSourceData: refreshed.sourceData,
       postSuccessPlan: planFinancialPostSuccessActions({
         workflowType: approval.workflowType,
         document: refreshed.document,

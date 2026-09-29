@@ -56,17 +56,20 @@ import {
 } from "./financialAutomationRules";
 import {
   FINANCIAL_RELEASE_FAMILIES,
+  FINANCIAL_LEGACY_WRITER_INVENTORY,
   frozenRuleVersion,
   releaseAuthenticationDescription,
   releaseEndpointIdentifier,
   releaseFamilyStatus,
   releaseRollbackPlan,
 } from "./financialReleaseManifest";
-import { testFinancialXeroConnection } from "./financialReadOnlyXeroService";
-import { testVtigerFinancialConnection } from "./vtigerFinancialReadService";
+import { preflightFinancialXeroIntents, testFinancialXeroConnection, type FinancialXeroPreflight } from "./financialReadOnlyXeroService";
+import { retrieveCurrentVtigerFinancialRecord, testVtigerFinancialConnection } from "./vtigerFinancialReadService";
+import { FINANCIAL_POST_SUCCESS_MAPPING_CONFIG_KEY, validateDisabledPostSuccessMapping } from "./financialPostSuccessReadiness";
 import { randomUUID } from "node:crypto";
 import {
   FINANCIAL_PROPOSAL_VERSION,
+  financialSha256,
   proposalHash as calculateProposalHash,
   rulesSnapshotHash,
   sourceSnapshotHash,
@@ -222,21 +225,10 @@ export async function persistFinancialWorkflowEvaluation(
     }).onDuplicateKeyUpdate({ set: { workflowRunId: runId, updatedAt: now } });
   }
 
-  if (["storage_activation", "recurring_storage", "storage_finalisation"].includes(input.workflowType)) {
-    await db.insert(storageBillingEvents).values({
-      dealId: input.sourceRecordId ?? null,
-      containerControlId: typeof input.sourceData.containerControlId === "string" ? input.sourceData.containerControlId : null,
-      containerNumber: typeof input.sourceData.containerNumber === "string" ? input.sourceData.containerNumber : null,
-      containerType: typeof input.sourceData.containerType === "string" ? input.sourceData.containerType : null,
-      storageStage: typeof input.sourceData.storageStage === "string" ? input.sourceData.storageStage : null,
-      origin: typeof input.sourceData.origin === "string" ? input.sourceData.origin : null,
-      destination: typeof input.sourceData.destination === "string" ? input.sourceData.destination : null,
-      dateIn: input.sourceData.dateIn ? new Date(String(input.sourceData.dateIn)) : null,
-      dateOut: input.sourceData.dateOut ? new Date(String(input.sourceData.dateOut)) : null,
-      finalisationStatus: input.workflowType === "storage_finalisation" ? (status === "evaluated" ? "pending" : "held") : "open",
-      sourceSnapshot: input.sourceData as any,
-    });
-  }
+  // A storage event is an execution-state ledger record, not a shadow-evaluator
+  // convenience row. Creating it here would allow a no-write preview to imply
+  // an active recurring-storage obligation. Only verified activation/finalisation
+  // execution code may create or advance this ledger in a later approved phase.
 
   if (input.workflowType === "warranty_reconciliation" && input.sourceRecordId) {
     await db.insert(warrantyDocuments).values({
@@ -527,12 +519,17 @@ export async function reviewFinancialShadowTest(input: {
 }
 
 export async function createFinancialCandidateDiscovery(input: {
-  sourceCategory: "deal" | "container_control";
+  familyKey?: string | null;
+  sourceCategory: "deal" | "container_control" | "storage_billing_event";
   businessNumber: string;
   workflowType: string;
-  outcome: "found" | "not_found" | "ambiguous" | "blocked";
+  outcome: "found" | "not_found" | "ambiguous" | "blocked" | "no_current_candidate";
   candidateRecordIds: string[];
+  candidateSummaries?: unknown;
   sourceRefreshedAt?: Date | null;
+  sourceSnapshotHash?: string | null;
+  rulesSnapshotHash?: string | null;
+  xeroPreflightHash?: string | null;
   message: string;
   initiatedBy: number;
 }): Promise<number> {
@@ -540,8 +537,13 @@ export async function createFinancialCandidateDiscovery(input: {
   if (!db) throw new Error("DB unavailable");
   const result = await db.insert(financialCandidateDiscoveries).values({
     ...input,
+    familyKey: input.familyKey ?? null,
     candidateRecordIds: input.candidateRecordIds as any,
+    candidateSummaries: input.candidateSummaries as any,
     sourceRefreshedAt: input.sourceRefreshedAt ?? null,
+    sourceSnapshotHash: input.sourceSnapshotHash ?? null,
+    rulesSnapshotHash: input.rulesSnapshotHash ?? null,
+    xeroPreflightHash: input.xeroPreflightHash ?? null,
   });
   return Number((result[0] as any).insertId);
 }
@@ -554,7 +556,7 @@ export async function getFinancialCandidateDiscoveries(limit = 100): Promise<Fin
     .limit(limit);
 }
 
-export type CandidateRosterStatus = "draft" | "found" | "not_found" | "ambiguous" | "blocked" | "needs_data";
+export type CandidateRosterStatus = "draft" | "found" | "not_found" | "ambiguous" | "blocked" | "needs_data" | "no_current_candidate";
 
 export async function getFinancialCandidateRoster(limit = 100): Promise<FinancialCandidateRoster[]> {
   const db = await getDb();
@@ -576,6 +578,7 @@ export async function getFinancialCandidateRosterEntry(id: number): Promise<Fina
  * for a changed workflow branch.
  */
 export async function upsertFinancialCandidateRosterEntry(input: {
+  familyKey?: string | null;
   sourceCategory: "deal" | "container_control";
   businessNumber: string;
   workflowType: string;
@@ -583,15 +586,19 @@ export async function upsertFinancialCandidateRosterEntry(input: {
   businessNote?: string | null;
   ownerId?: number | null;
   reviewerId?: number | null;
+  selectedPeriodStart?: Date | null;
   createdBy: number;
 }): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
+  const familyKey = input.familyKey?.trim() || "legacy-manual";
   const existing = (await db.select().from(financialCandidateRoster).where(and(
     eq(financialCandidateRoster.sourceCategory, input.sourceCategory),
     eq(financialCandidateRoster.businessNumber, input.businessNumber),
+    eq(financialCandidateRoster.familyKey, familyKey),
   )).limit(1))[0];
   const values = {
+    familyKey,
     workflowType: input.workflowType,
     branch: input.branch,
     businessNote: input.businessNote?.trim() || null,
@@ -603,6 +610,12 @@ export async function upsertFinancialCandidateRosterEntry(input: {
     latestShadowTestId: null,
     lastDiscoveryMessage: null,
     lastResolvedAt: null,
+    selectedPeriodStart: input.selectedPeriodStart ?? null,
+    selectedPeriodEnd: null,
+    evidenceStatus: "unverified" as const,
+    sourceSnapshotHash: null,
+    rulesSnapshotHash: null,
+    xeroPreflightHash: null,
     updatedAt: new Date(),
   };
   if (existing) {
@@ -634,6 +647,10 @@ export async function updateFinancialCandidateRosterDiscovery(input: {
     latestShadowTestId: null,
     lastDiscoveryMessage: input.message,
     lastResolvedAt: new Date(),
+    evidenceStatus: "unverified",
+    sourceSnapshotHash: null,
+    rulesSnapshotHash: null,
+    xeroPreflightHash: null,
     updatedAt: new Date(),
   }).where(eq(financialCandidateRoster.id, input.id));
 }
@@ -646,15 +663,35 @@ export async function markFinancialCandidateRosterNeedsData(input: { id: number;
     candidateRecordId: null,
     latestShadowTestId: null,
     lastDiscoveryMessage: input.message.trim(),
+    evidenceStatus: "needs_data",
+    sourceSnapshotHash: null,
+    rulesSnapshotHash: null,
+    xeroPreflightHash: null,
     updatedAt: new Date(),
   }).where(eq(financialCandidateRoster.id, input.id));
 }
 
-export async function linkFinancialCandidateRosterShadowTest(id: number, shadowTestId: number): Promise<void> {
+export async function linkFinancialCandidateRosterShadowTest(input: {
+  id: number;
+  shadowTestId: number;
+  sourceSnapshotHash: string;
+  rulesSnapshotHash: string;
+  xeroPreflightHash: string;
+  selectedPeriodStart?: Date | null;
+  selectedPeriodEnd?: Date | null;
+}): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
-  await db.update(financialCandidateRoster).set({ latestShadowTestId: shadowTestId, updatedAt: new Date() })
-    .where(eq(financialCandidateRoster.id, id));
+  await db.update(financialCandidateRoster).set({
+    latestShadowTestId: input.shadowTestId,
+    evidenceStatus: "fresh",
+    sourceSnapshotHash: input.sourceSnapshotHash,
+    rulesSnapshotHash: input.rulesSnapshotHash,
+    xeroPreflightHash: input.xeroPreflightHash,
+    selectedPeriodStart: input.selectedPeriodStart ?? null,
+    selectedPeriodEnd: input.selectedPeriodEnd ?? null,
+    updatedAt: new Date(),
+  }).where(eq(financialCandidateRoster.id, input.id));
 }
 
 export async function createFinancialIntegrationAudit(input: {
@@ -688,6 +725,80 @@ export async function getFinancialIntegrationAudits(limit = 100): Promise<Financ
   return db.select().from(financialIntegrationAudits)
     .orderBy(desc(financialIntegrationAudits.checkedAt), desc(financialIntegrationAudits.id))
     .limit(limit);
+}
+
+/**
+ * Recurring storage may only inspect AP ledger rows created after a verified
+ * activation/finalisation execution. Historical/shadow rows are excluded, so
+ * this helper cannot infer an active billing obligation.
+ */
+export async function getVerifiedActiveStorageBillingEvents(limit = 10) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(storageBillingEvents).where(and(
+    eq(storageBillingEvents.provenance, "verified_execution"),
+    eq(storageBillingEvents.finalisationStatus, "open"),
+  )).orderBy(storageBillingEvents.nextBillingDate, desc(storageBillingEvents.updatedAt)).limit(Math.min(Math.max(limit, 1), 10));
+}
+
+/**
+ * The only storage-event writer. It is intentionally called only after the
+ * guarded Xero Draft transport has succeeded and exact Draft readback passed.
+ * Shadow evaluations and selector previews must never call this function.
+ */
+export async function recordVerifiedStorageBillingExecution(input: {
+  workflowType: string;
+  executionId: number;
+  sourceRecordId: string;
+  sourceData: Record<string, unknown>;
+}): Promise<void> {
+  if (!["storage_activation", "storage_finalisation"].includes(input.workflowType)) return;
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const asText = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
+  const asDate = (value: unknown) => {
+    if (!value) return null;
+    const parsed = new Date(String(value));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+  const existing = (await db.select().from(storageBillingEvents)
+    .where(eq(storageBillingEvents.dealId, input.sourceRecordId))
+    .orderBy(desc(storageBillingEvents.updatedAt)).limit(1))[0];
+  if (input.workflowType === "storage_finalisation") {
+    if (!existing || existing.provenance !== "verified_execution") return;
+    await db.update(storageBillingEvents).set({
+      finalisationStatus: "finalised",
+      finalisationExecutionId: input.executionId,
+      dateOut: asDate(input.sourceData.dateOut) ?? existing.dateOut,
+      sourceSnapshot: input.sourceData as any,
+      verifiedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(storageBillingEvents.id, existing.id));
+    return;
+  }
+  const values = {
+    containerControlId: asText(input.sourceData.containerControlId),
+    containerNumber: asText(input.sourceData.containerNumber),
+    containerType: asText(input.sourceData.containerType),
+    storageStage: asText(input.sourceData.storageStage),
+    origin: asText(input.sourceData.origin),
+    destination: asText(input.sourceData.destination),
+    dateIn: asDate(input.sourceData.dateIn),
+    dateOut: asDate(input.sourceData.dateOut),
+    nextBillingDate: asDate(input.sourceData.nextBillingDate),
+    billedThroughDate: asDate(input.sourceData.billedThroughDate),
+    provenance: "verified_execution" as const,
+    activationExecutionId: input.executionId,
+    finalisationStatus: "open" as const,
+    sourceSnapshot: input.sourceData as any,
+    verifiedAt: new Date(),
+    updatedAt: new Date(),
+  };
+  if (existing) {
+    await db.update(storageBillingEvents).set(values).where(eq(storageBillingEvents.id, existing.id));
+  } else {
+    await db.insert(storageBillingEvents).values({ dealId: input.sourceRecordId, ...values });
+  }
 }
 
 export async function getFinancialOperationsDashboard() {
@@ -991,15 +1102,20 @@ export async function prepareAllFinancialReleaseManifest(input: {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
 
-  const [config, xero, vtiger, allTests, roster] = await Promise.all([
+  const [config, xero, vtiger, allTests, roster, discoveries, executions] = await Promise.all([
     getFinancialWorkflowConfig(),
     testFinancialXeroConnection(),
     testVtigerFinancialConnection(),
     db.select().from(financialShadowTests).orderBy(desc(financialShadowTests.testedAt), desc(financialShadowTests.id)),
     db.select().from(financialCandidateRoster),
+    db.select().from(financialCandidateDiscoveries).orderBy(desc(financialCandidateDiscoveries.createdAt), desc(financialCandidateDiscoveries.id)),
+    db.select().from(financialWriterExecutions),
   ]);
   const rules = resolveFinancialAutomationRules(
     config.find((entry) => entry.configKey === FINANCIAL_AUTOMATION_RULE_CONFIG_KEY)?.configValue,
+  );
+  const postSuccessMappingReadiness = await validateDisabledPostSuccessMapping(
+    config.find((entry) => entry.configKey === FINANCIAL_POST_SUCCESS_MAPPING_CONFIG_KEY)?.configValue,
   );
 
   await Promise.all([
@@ -1020,6 +1136,13 @@ export async function prepareAllFinancialReleaseManifest(input: {
       details: { message: vtiger.message, readOnly: true, releasePreparation: true },
       actorId: input.preparedBy,
       checkedAt: vtiger.checkedAt,
+    }),
+    createFinancialIntegrationAudit({
+      integration: "vtiger",
+      action: "all_family_disabled_post_success_metadata",
+      outcome: postSuccessMappingReadiness.outcome === "passed" ? "passed" : postSuccessMappingReadiness.outcome === "blocked" ? "blocked" : "failed",
+      details: { readOnly: true, modules: postSuccessMappingReadiness.modules.map((module) => ({ module: module.module, missingFields: module.missingFields })), assignedUserConfigured: postSuccessMappingReadiness.assignedUser.configured },
+      actorId: input.preparedBy,
     }),
   ]);
 
@@ -1059,25 +1182,81 @@ export async function prepareAllFinancialReleaseManifest(input: {
   }));
   const intentManifest = new Map<string, Array<Record<string, unknown>>>(confirmedIntentRows);
 
-  const familyDrafts = FINANCIAL_RELEASE_FAMILIES.map((definition) => {
+  const latestDiscoveryByFamily = new Map<string, typeof discoveries[number]>();
+  for (const discovery of discoveries) {
+    if (discovery.familyKey && !latestDiscoveryByFamily.has(discovery.familyKey)) latestDiscoveryByFamily.set(discovery.familyKey, discovery);
+  }
+
+  const familyDrafts = await Promise.all(FINANCIAL_RELEASE_FAMILIES.map(async (definition) => {
     const test = confirmedTests.get(definition.familyKey) ?? null;
     const rosterEntry = test
       ? roster.find((entry) => entry.latestShadowTestId === test.id) ?? null
       : null;
-    const currentDocuments = intentManifest.get(definition.familyKey) ?? [];
+    const discovery = latestDiscoveryByFamily.get(definition.familyKey) ?? null;
+    const rawDocuments = intentManifest.get(definition.familyKey) ?? [];
+    let currentSourceHash: string | null = null;
+    let currentXeroPreflight: FinancialXeroPreflight[] = [];
+    let currentPreflightError: string | null = null;
+    if (test && rosterEntry?.candidateRecordId && xero.outcome === "passed" && vtiger.outcome === "passed") {
+      try {
+        const rawSource = await retrieveCurrentVtigerFinancialRecord(rosterEntry.candidateRecordId);
+        currentSourceHash = sourceSnapshotHash(rawSource);
+        // The rows came from the confirmed test's workflow run; this re-reads
+        // only exact proposed references, contacts and items, never Xero history.
+        currentXeroPreflight = await preflightFinancialXeroIntents(rawDocuments as any);
+      } catch (error) {
+        currentPreflightError = error instanceof Error ? error.message : "Current source/Xero GET-only preflight was not completed.";
+      }
+    } else if (test) {
+      currentPreflightError = "Current source/Xero GET-only revalidation is unavailable until the exact roster selection and integration checks pass.";
+    }
+    const currentDocuments = rawDocuments.map((document) => ({
+      ...document,
+      xeroReadOnlyPreflight: currentXeroPreflight[rawDocuments.indexOf(document)] ?? { duplicateState: "blocked", error: currentPreflightError ?? "No current exact Xero preflight." },
+      apExecutionCollision: executions.some((execution) => execution.documentIntentId === document.id)
+        ? executions.filter((execution) => execution.documentIntentId === document.id).map((execution) => ({ id: execution.id, status: execution.status, xeroDocumentId: execution.xeroDocumentId, xeroDocumentStatus: execution.xeroDocumentStatus }))
+        : [],
+    }));
+    const candidateOutcome = discovery?.outcome === "no_current_candidate"
+      ? "no_current_candidate" as const
+      : discovery?.outcome === "found"
+        ? "found" as const
+        : discovery?.outcome === "blocked"
+          ? "blocked" as const
+          : "not_run" as const;
+    const inventory = FINANCIAL_LEGACY_WRITER_INVENTORY.find((entry) => entry.familyKey === definition.familyKey) ?? null;
+    const evidenceFresh = Boolean(rosterEntry && rosterEntry.evidenceStatus === "fresh"
+      && rosterEntry.sourceSnapshotHash === currentSourceHash
+      && rosterEntry.rulesSnapshotHash === rulesSnapshotHash(rules)
+      && rosterEntry.xeroPreflightHash === (currentXeroPreflight.length > 0 ? financialSha256(currentXeroPreflight) : null));
+    if (rosterEntry?.evidenceStatus === "fresh" && !evidenceFresh) {
+      await db.update(financialCandidateRoster).set({
+        evidenceStatus: "stale",
+        lastDiscoveryMessage: "Current source, active rules or exact Xero GET-only preflight no longer matches the confirmed evidence. Re-run the selected candidate test.",
+        updatedAt: new Date(),
+      }).where(eq(financialCandidateRoster.id, rosterEntry.id));
+      rosterEntry.evidenceStatus = "stale";
+    }
+    const currentPreflightUsable = currentXeroPreflight.length === rawDocuments.length
+      && currentXeroPreflight.every((preflight) => !["blocked", "error", "ambiguous"].includes(preflight.duplicateState)
+        && !(preflight.duplicateState === "found" && String(preflight.status ?? "").toUpperCase() !== "DRAFT"));
     const eligibility = releaseFamilyStatus({
+      candidateOutcome,
       confirmedShadowTestId: test?.id ?? null,
       xeroOutcome: xero.outcome,
       vtigerOutcome: vtiger.outcome,
-      hasLegacyWriterInventory: false,
-      hasCurrentDocumentManifest: currentDocuments.length > 0,
+      hasLegacyWriterInventory: Boolean(inventory),
+      hasCurrentDocumentManifest: currentDocuments.length > 0 && currentPreflightUsable,
+      evidenceFresh,
+      hasDisabledPostSuccessMapping: postSuccessMappingReadiness.outcome === "passed",
     });
-    return { definition, test, rosterEntry, currentDocuments, eligibility };
-  });
+    return { definition, test, rosterEntry, discovery, inventory, currentDocuments, currentXeroPreflight, currentPreflightError, evidenceFresh, eligibility };
+  }));
 
   const includedFamilyCount = familyDrafts.filter((entry) => entry.eligibility.status === "included").length;
   const heldFamilyCount = familyDrafts.filter((entry) => entry.eligibility.status === "held").length;
-  const excludedFamilyCount = familyDrafts.filter((entry) => entry.eligibility.status === "excluded").length;
+  const noCurrentCandidateFamilyCount = familyDrafts.filter((entry) => entry.eligibility.status === "no_current_candidate").length;
+  const excludedFamilyCount = 0;
   const releaseId = `AFO-REL-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8).toUpperCase()}`;
   const currentDocumentManifest = familyDrafts.flatMap((entry) => entry.currentDocuments.map((document) => ({
     familyKey: entry.definition.familyKey,
@@ -1103,6 +1282,7 @@ export async function prepareAllFinancialReleaseManifest(input: {
     currentDocumentManifest: currentDocumentManifest as any,
     includedFamilyCount,
     heldFamilyCount,
+    noCurrentCandidateFamilyCount,
     excludedFamilyCount,
     preparedBy: input.preparedBy,
     preparedAt: new Date(),
@@ -1130,11 +1310,21 @@ export async function prepareAllFinancialReleaseManifest(input: {
       candidateRosterEntryId: entry.rosterEntry?.id ?? null,
       sourceRecordNumber: entry.test?.sourceRecordNumber ?? null,
       sourcePreflightAt: entry.test?.sourceRefreshedAt ?? null,
+      sourceSnapshotHash: entry.rosterEntry?.sourceSnapshotHash ?? entry.discovery?.sourceSnapshotHash ?? null,
+      rulesSnapshotHash: entry.rosterEntry?.rulesSnapshotHash ?? entry.discovery?.rulesSnapshotHash ?? null,
+      xeroPreflightHash: entry.rosterEntry?.xeroPreflightHash ?? entry.discovery?.xeroPreflightHash ?? null,
+      evidenceStale: !entry.evidenceFresh && Boolean(entry.test),
+      postSuccessMappingReadiness: {
+        outcome: postSuccessMappingReadiness.outcome,
+        readOnly: true,
+        modules: postSuccessMappingReadiness.modules,
+        assignedUser: postSuccessMappingReadiness.assignedUser,
+      } as any,
       xeroPreflight: entry.test?.xeroPreflight ?? null,
       currentDocumentSummary: entry.currentDocuments as any,
-      legacyWriterIdentifier: null,
-      legacyWriterOwner: null,
-      legacyDisableAction: null,
+      legacyWriterIdentifier: entry.inventory?.legacyWriterIdentifier ?? null,
+      legacyWriterOwner: entry.inventory?.legacyWriterOwner ?? null,
+      legacyDisableAction: entry.inventory?.legacyDisableAction ?? null,
       conditionPayloadContract: entry.definition.conditionPayloadContract,
       rollbackPlan: releaseRollbackPlan(),
     });
@@ -1164,7 +1354,7 @@ export async function prepareAllFinancialReleaseManifest(input: {
     details: {
       implementationVersion: FINANCIAL_WRITER_IMPLEMENTATION_VERSION,
       frozenRuleVersion: frozenRuleVersion(rules),
-      familyCounts: { included: includedFamilyCount, held: heldFamilyCount, excluded: excludedFamilyCount },
+      familyCounts: { included: includedFamilyCount, held: heldFamilyCount, noCurrentCandidate: noCurrentCandidateFamilyCount, excluded: excludedFamilyCount },
       xeroOutcome: xero.outcome,
       vtigerOutcome: vtiger.outcome,
       liveWriterEnabled: false,

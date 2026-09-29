@@ -12,6 +12,7 @@ import {
   markFinancialWriterExecutionSubmitted,
   markFinancialWriterExecutionSucceeded,
   prepareFinancialWriterExecution,
+  recordVerifiedStorageBillingExecution,
 } from "./financialWorkflowDb";
 import { readBackFinancialDraft } from "./financialReadOnlyXeroService";
 import { financialSha256 } from "./financialProposalIntegrity";
@@ -31,6 +32,8 @@ export type GuardedFinancialWriterCommand = {
   /** Optional immutable approval consumed immediately before the Xero transport. */
   approvalId?: number | null;
   sourceRecordId?: string | null;
+  /** Current source snapshot captured by approved revalidation; never supplied by a browser. */
+  verifiedSourceData?: Record<string, unknown>;
   postSuccessPlan?: PlannedFinancialPostSuccessAction[];
 };
 
@@ -100,6 +103,21 @@ export async function executeGuardedFinancialWriterCommand(
       expectedXeroDocumentId: result.xeroDocumentId,
     });
     await markFinancialWriterExecutionSucceeded(prepared.execution.id, result);
+    if (command.sourceRecordId && command.verifiedSourceData) {
+      // The storage ledger is updated only after exact Xero Draft read-back has
+      // succeeded. Shadow evaluation and selector previews never reach here.
+      try {
+        await recordVerifiedStorageBillingExecution({
+          workflowType: command.workflowType,
+          executionId: prepared.execution.id,
+          sourceRecordId: command.sourceRecordId,
+          sourceData: command.verifiedSourceData,
+        });
+      } catch {
+        // Exact Xero Draft success is already durable. A local ledger failure
+        // must not misclassify it as a failed transport or trigger a re-write.
+      }
+    }
     if (command.sourceRecordId) {
       for (const action of command.postSuccessPlan ?? []) {
         await createFinancialPostSuccessAction({

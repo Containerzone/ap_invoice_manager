@@ -108,3 +108,28 @@ export async function retrieveCurrentVtigerFinancialRecord(recordId: string): Pr
   const login = await vtigerLogin<{ sessionName: string }>({ operation: "login", username, accessKey: accessKeyHash });
   return vtigerRequest<Record<string, unknown>>({ operation: "retrieve", id: recordId.trim(), sessionName: login.sessionName });
 }
+
+/**
+ * Reads VTiger module metadata through the authenticated GET-only webservice
+ * API. It validates disabled post-success mapping configuration and never
+ * creates a note/task or changes a source record.
+ */
+export async function describeVtigerFinancialModule(moduleName: string): Promise<{ name: string; fields: string[] }> {
+  const normalized = moduleName.trim();
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(normalized)) throw new Error("VTiger module name is invalid.");
+  const { username, accessKey } = config();
+  const status = getVtigerFinancialConnectionStatus();
+  if (!status.configured || !username || !accessKey) throw new Error("VTiger is not configured for read-only financial metadata validation.");
+  const challenge = await vtigerRequest<{ token: string }>({ operation: "getchallenge", username });
+  const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
+  const login = await vtigerLogin<{ sessionName: string }>({ operation: "login", username, accessKey: accessKeyHash });
+  const described = await vtigerRequest<{ name?: string; fields?: Array<{ name?: string }> }>({
+    operation: "describe",
+    elementType: normalized,
+    sessionName: login.sessionName,
+  });
+  return {
+    name: typeof described?.name === "string" ? described.name : normalized,
+    fields: Array.from(new Set((described?.fields ?? []).map((field) => typeof field?.name === "string" ? field.name : "").filter(Boolean))),
+  };
+}

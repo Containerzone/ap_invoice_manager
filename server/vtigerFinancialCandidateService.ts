@@ -214,3 +214,155 @@ export async function findExactFinancialCandidate(input: {
 export function getFinancialCandidateFinderConfig(candidate?: unknown): FinancialCandidateFinderConfig {
   return normalizeRules(candidate);
 }
+
+export type CurrentFinancialCandidatePredicate = {
+  field: string;
+  operator: "equals" | "not_empty";
+  value?: string;
+};
+
+export type CurrentFinancialCandidateQuery = {
+  module: string;
+  sourceCategory: FinancialCandidateCategory;
+  selectFields: string[];
+  predicates: CurrentFinancialCandidatePredicate[];
+  sortField: string;
+  eligibilityReasons: string[];
+};
+
+export type CurrentFinancialCandidateLookup = {
+  outcome: "found" | "no_current_candidate" | "blocked";
+  sourceCategory: FinancialCandidateCategory;
+  candidates: Array<FinancialCandidate & { eligibilityReasons: string[] }>;
+  message: string;
+};
+
+function safeCurrentPredicate(value: unknown): CurrentFinancialCandidatePredicate | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const field = typeof row.field === "string" ? safeIdentifier(row.field) : null;
+  const operator = row.operator === "equals" || row.operator === "not_empty" ? row.operator : null;
+  const exactValue = typeof row.value === "string" ? safeBusinessNumber(row.value) : null;
+  if (!field || !operator || (operator === "equals" && !exactValue)) return null;
+  return { field, operator, value: exactValue ?? undefined };
+}
+
+function normalizeCurrentQuery(value: CurrentFinancialCandidateQuery): CurrentFinancialCandidateQuery | null {
+  const module = safeIdentifier(value.module);
+  const sourceCategory = value.sourceCategory === "deal" || value.sourceCategory === "container_control" ? value.sourceCategory : null;
+  const selectFields = uniqueValid(value.selectFields, 16);
+  const predicates = value.predicates.map(safeCurrentPredicate).filter((entry): entry is CurrentFinancialCandidatePredicate => Boolean(entry)).slice(0, 6);
+  const sortField = safeIdentifier(value.sortField);
+  const eligibilityReasons = Array.from(new Set(value.eligibilityReasons.map((entry) => entry.trim()).filter(Boolean))).slice(0, 12);
+  // A discovery without a positive current-eligibility predicate would become a
+  // broad CRM enumeration, so it is deliberately rejected.
+  if (!module || !sourceCategory || !sortField || selectFields.length === 0 || predicates.length === 0) return null;
+  return {
+    module,
+    sourceCategory,
+    selectFields: Array.from(new Set(["id", ...selectFields])).slice(0, 16),
+    predicates,
+    sortField,
+    eligibilityReasons,
+  };
+}
+
+function currentQueryText(query: CurrentFinancialCandidateQuery): string {
+  const where = query.predicates.map((predicate) => predicate.operator === "not_empty"
+    ? `${predicate.field} != ''`
+    : `${predicate.field} = ${exactLiteral(predicate.value!)}`,
+  ).join(" AND ");
+  return `SELECT ${query.selectFields.join(",")} FROM ${query.module} WHERE ${where} ORDER BY ${query.sortField} DESC LIMIT 10;`;
+}
+
+/**
+ * Finds at most ten **current** candidates across explicit, positive VTiger
+ * predicates. This is intentionally separate from the older exact-reference
+ * finder: callers must provide a narrow current-state query for one family and
+ * this helper rejects any unbounded or historical-style scan.
+ *
+ * Authentication is the same GET challenge + form POST session login used by
+ * the exact finder; every record query is a GET and no CRM data is changed.
+ */
+export async function findCurrentFinancialCandidates(input: {
+  sourceCategory: FinancialCandidateCategory;
+  queries: CurrentFinancialCandidateQuery[];
+}): Promise<CurrentFinancialCandidateLookup> {
+  const configured = input.queries
+    .filter((query) => query.sourceCategory === input.sourceCategory)
+    .map(normalizeCurrentQuery)
+    .filter((query): query is CurrentFinancialCandidateQuery => Boolean(query))
+    .slice(0, 4);
+  if (configured.length === 0) {
+    return {
+      outcome: "blocked",
+      sourceCategory: input.sourceCategory,
+      candidates: [],
+      message: "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+    };
+  }
+
+  try {
+    const sessionName = await readOnlySession();
+    const candidates = new Map<string, FinancialCandidate & { eligibilityReasons: string[] }>();
+    const failures: string[] = [];
+    let successfulQueries = 0;
+    for (const query of configured) {
+      let rows: Array<Record<string, unknown>>;
+      try {
+        rows = await request<Array<Record<string, unknown>>>({ operation: "query", sessionName, query: currentQueryText(query) });
+        successfulQueries += 1;
+      } catch {
+        failures.push(`${query.module}.${query.sortField}`);
+        continue;
+      }
+      for (const row of rows.slice(0, 10)) {
+        const recordId = typeof row.id === "string" ? row.id.trim() : "";
+        if (!/^\d+x\d+$/i.test(recordId)) continue;
+        const businessNumber = ["potential_no", "potentials_no", "container_control_no", "container_control_number", "name"]
+          .map((key) => row[key])
+          .find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ?? recordId;
+        const existing = candidates.get(recordId);
+        candidates.set(recordId, {
+          recordId,
+          module: query.module,
+          matchedField: "current_eligibility",
+          sourceCategory: input.sourceCategory,
+          businessNumber,
+          sourceRefreshedAt: sourceRefreshedAt(row),
+          summary: row,
+          eligibilityReasons: Array.from(new Set([...(existing?.eligibilityReasons ?? []), ...query.eligibilityReasons])),
+        });
+        if (candidates.size >= 10) break;
+      }
+      if (candidates.size >= 10) break;
+    }
+    if (successfulQueries === 0) {
+      return {
+        outcome: "blocked",
+        sourceCategory: input.sourceCategory,
+        candidates: [],
+        message: `VTiger rejected each configured bounded current-candidate query (${failures.join(", ") || "none"}). Review AP-side field mapping; no broad fallback was attempted.`,
+      };
+    }
+    const sorted = Array.from(candidates.values())
+      .sort((left, right) => (right.sourceRefreshedAt?.getTime() ?? 0) - (left.sourceRefreshedAt?.getTime() ?? 0))
+      .slice(0, 10);
+    if (sorted.length === 0) {
+      return {
+        outcome: "no_current_candidate",
+        sourceCategory: input.sourceCategory,
+        candidates: [],
+        message: "NO_CURRENT_CANDIDATE: the bounded current-eligibility query returned no records. This is a factual readiness result, not a pass or failure.",
+      };
+    }
+    return {
+      outcome: "found",
+      sourceCategory: input.sourceCategory,
+      candidates: sorted,
+      message: `Found ${sorted.length} bounded current review candidate${sorted.length === 1 ? "" : "s"}. Administrator selection is still required before Candidate Roster evidence can be created.`,
+    };
+  } catch (error) {
+    return { outcome: "blocked", sourceCategory: input.sourceCategory, candidates: [], message: messageFor(error) };
+  }
+}

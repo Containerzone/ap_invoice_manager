@@ -17,8 +17,8 @@ export type FinancialReleaseFamilyDefinition = {
 };
 
 const DRAFT_ONLY = "AP Management may only propose Xero Draft documents. Any non-Draft collision or amendment path must stop, create a local exception and remain outside the release.";
-const DISABLED_RELEASE_ENDPOINT = "POST /api/financial-workflows/release/:family (authenticated; registered disabled; rejects all financial writes)";
-const SHADOW_AUTH = "Server-side X-Financial-Shadow-Secret comparison; no secret value is displayed. The release endpoint is disabled and returns no write action.";
+const DISABLED_RELEASE_ENDPOINT = "Canonical authenticated AP event route (versioned 2026-09-29 envelope; dry_run/proposal only until all execution gates and a named approval pass)";
+const SHADOW_AUTH = "X-Financial-Webhook-Secret is compared server-side and never displayed. The body uses apiVersion, dryRun/mode, deterministic eventId, sourceEntityType, sourceRecordId and sourceChangedAt; generic non-dry VTiger actions remain unconfigured.";
 const DEFAULT_ROLLBACK = "Disable the AP family before any external change. Do not re-enable an Operations/VTiger/Make writer until duplicate reconciliation proves that no Draft was created. Retain AP ledger, source and Xero read evidence.";
 
 export const FINANCIAL_RELEASE_FAMILIES: readonly FinancialReleaseFamilyDefinition[] = [
@@ -185,6 +185,38 @@ export type ReleaseReadiness = {
   vtiger: VtigerFinancialConnectionTest;
 };
 
+export type LegacyWriterInventory = {
+  familyKey: string;
+  legacyWriterIdentifier: string;
+  legacyWriterOwner: string;
+  legacyDisableAction: string;
+};
+
+/** AP-local documentation only. This data never contacts or changes any external writer. */
+export const FINANCIAL_LEGACY_WRITER_INVENTORY: readonly LegacyWriterInventory[] = [
+  { familyKey: "initial_container_control_asset", legacyWriterIdentifier: "VTiger Container Control REQUEST workflow action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-cc-created", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "In VTiger, pause this shared REQUEST financial webhook action only during approved shared Container Control cutover; preserve configuration for rollback." },
+  { familyKey: "initial_container_control_customer_sale", legacyWriterIdentifier: "Same shared VTiger Container Control REQUEST action", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Same; Asset, Customer Sale and For Hire must be cut over together unless VTiger source actions are split." },
+  { familyKey: "initial_container_control_for_hire", legacyWriterIdentifier: "Same shared VTiger Container Control REQUEST action", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Same." },
+  { familyKey: "recurring_for_hire", legacyWriterIdentifier: "Operations Heartbeat forHireMonthlyPo; task UID PtaAhkr5tHtixG7E4DTZhC; /api/scheduled/forHireMonthlyPo", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Disable/pause this Operations Heartbeat immediately before enabling the approved AP recurring-for-hire task; retain paused for rollback." },
+  { familyKey: "origin_storage_activation", legacyWriterIdentifier: "Shared VTiger storage action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-storage", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Pause old shared storage action during approved joint Origin/Destination AP handover; retain paused for rollback." },
+  { familyKey: "destination_storage_activation", legacyWriterIdentifier: "Same shared VTiger storage action", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Same." },
+  { familyKey: "recurring_storage", legacyWriterIdentifier: "Operations Heartbeat storage-monthly-billing; task UID 4rB9Yofib8MRLRbijj4z9k; /api/scheduled/storageMonthlyBilling", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Disable/pause this Operations Heartbeat immediately before enabling approved AP recurring-storage task; retain paused for rollback." },
+  { familyKey: "storage_finalisation_recovery", legacyWriterIdentifier: "VTiger finalisation action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-finalise-storage", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Pause old finalisation action during approved AP finalisation cutover; retain paused." },
+  { familyKey: "main_customer_invoice", legacyWriterIdentifier: "VTiger main action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-main-invoice; confirm legacy Make main writer remains paused", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Pause/redirect only this AP-equivalent action after exact approval; confirm Make remains paused." },
+  { familyKey: "deposit_invoice", legacyWriterIdentifier: "VTiger deposit action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-deposit-invoice; confirm legacy Make deposit writer remains paused", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Pause/redirect only after exact approval; confirm Make remains paused." },
+  { familyKey: "final_weight_overweight", legacyWriterIdentifier: "VTiger action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-finalise-main-invoice", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Pause/redirect only after exact Draft-main-invoice cutover approval." },
+  { familyKey: "final_weight_underweight", legacyWriterIdentifier: "VTiger action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-finalise-main-invoice-underweight", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Pause/redirect only after exact Draft-main-invoice cutover approval." },
+  { familyKey: "extra_hire", legacyWriterIdentifier: "VTiger action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-extra-hire-invoice", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Pause/redirect only after exact invoice + Hire End Date cutover approval." },
+  { familyKey: "warranty_customer_invoice_and_aviso_po", legacyWriterIdentifier: "VTiger action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-warranty-reconcile, plus Main Customer Invoice warranty entry path", legacyWriterOwner: "ContainerZone Operations / IT", legacyDisableAction: "Pause/redirect only after coordinated warranty/main-invoice cutover approval; preserve shared warranty ledger." },
+] as const;
+
+export const FINANCIAL_CUTOVER_EXCLUSIONS = [
+  "xero-receivables-hourly — Operations task UID 9Mee6XbbAbx7dQRFHo3FCk",
+  "containerzone-monthly-underwriting-declaration — Operations task UID cDiqD3PQ3zXMDKAT5Z4zwm",
+  "/api/webhooks/vtiger-storage-import",
+  "/api/webhooks/vtiger-initialise-hire-end-date",
+] as const;
+
 export function frozenRuleVersion(rules: FinancialAutomationRules): string {
   return `rules-${createHash("sha256").update(JSON.stringify(rules)).digest("hex").slice(0, 16)}`;
 }
@@ -202,18 +234,28 @@ export function releaseRollbackPlan(): string {
 }
 
 export function releaseFamilyStatus(input: {
+  candidateOutcome?: "found" | "no_current_candidate" | "blocked" | "not_run";
   confirmedShadowTestId: number | null;
   xeroOutcome: FinancialXeroConnectionTest["outcome"];
   vtigerOutcome: VtigerFinancialConnectionTest["outcome"];
   hasLegacyWriterInventory: boolean;
   hasCurrentDocumentManifest: boolean;
-}): { status: "included" | "held" | "excluded"; reason: string } {
+  hasDisabledPostSuccessMapping?: boolean;
+  evidenceFresh?: boolean;
+}): { status: "included" | "held" | "no_current_candidate"; reason: string } {
+  if (input.candidateOutcome === "no_current_candidate") {
+    return { status: "no_current_candidate", reason: "NO_CURRENT_CANDIDATE: the bounded current discovery found no eligible source/period. This is factual readiness evidence, not a failure or inferred pass." };
+  }
   const reasons: string[] = [];
+  if (input.candidateOutcome === "blocked") reasons.push("Current candidate discovery is blocked by AP-side mapping or read-only source access.");
+  if (input.candidateOutcome === "not_run") reasons.push("No bounded current candidate discovery has been run for this family.");
   if (input.xeroOutcome !== "passed") reasons.push("AP Management Xero GET-only tenant readiness is not passing.");
   if (input.vtigerOutcome !== "passed") reasons.push("AP Management VTiger authenticated exact-read readiness is not passing.");
   if (!input.confirmedShadowTestId) reasons.push("No exact named reviewer-confirmed shadow test exists for this family branch.");
+  if (input.evidenceFresh === false) reasons.push("Source, rules or Xero preflight evidence is stale and requires a fresh candidate test.");
   if (!input.hasLegacyWriterInventory) reasons.push("The overlapping Operations/VTiger/Make writer and exact disable action are not documented.");
   if (!input.hasCurrentDocumentManifest) reasons.push("No complete current due/queued Draft document manifest is available.");
+  if (input.hasDisabledPostSuccessMapping === false) reasons.push("Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.");
   if (reasons.length === 0) return { status: "included", reason: "All mandatory release gates passed; still awaiting a final user approval before activation." };
-  return { status: "excluded", reason: `Not in this release — ${reasons.join(" ")}` };
+  return { status: "held", reason: `Held — ${reasons.join(" ")}` };
 }

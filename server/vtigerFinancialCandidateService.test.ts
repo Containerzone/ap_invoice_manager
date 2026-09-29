@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
 vi.mock("axios", () => ({ default: { get: mockGet, post: mockPost } }));
 
-import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
+import { findCurrentFinancialCandidates, findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
 
 function configuredEnvironment() {
   process.env.VTIGER_URL = "https://vtiger.example.test";
@@ -90,5 +90,21 @@ describe("exact VTiger financial candidate finder", () => {
     mockGet.mockRejectedValueOnce({ response: { status: 403 } });
     const result = await findExactFinancialCandidate({ sourceCategory: "deal", businessNumber: "D702903" });
     expect(result).toMatchObject({ outcome: "blocked", candidates: [], message: "VTiger rejected AP Management's read-only credentials." });
+  });
+
+  it("uses positive current predicates, recent sort and a hard ten-row cap for family discovery", async () => {
+    successfulSession();
+    mockGet.mockResolvedValueOnce({ data: { success: true, result: [{ id: "4x1", potentials_no: "D702903", sales_stage: "READY", modifiedtime: "2026-09-29 12:00:00" }] } });
+    const result = await findCurrentFinancialCandidates({
+      sourceCategory: "deal",
+      queries: [{
+        module: "Potentials", sourceCategory: "deal", selectFields: ["id", "potentials_no", "sales_stage", "modifiedtime"],
+        predicates: [{ field: "sales_stage", operator: "equals", value: "READY" }], sortField: "modifiedtime", eligibilityReasons: ["Current READY stage"],
+      }],
+    });
+    expect(result).toMatchObject({ outcome: "found", candidates: [expect.objectContaining({ recordId: "4x1", eligibilityReasons: ["Current READY stage"] })] });
+    const query = mockGet.mock.calls[1]?.[1]?.params?.query as string;
+    expect(query).toContain("WHERE sales_stage = 'READY'");
+    expect(query).toContain("ORDER BY modifiedtime DESC LIMIT 10");
   });
 });

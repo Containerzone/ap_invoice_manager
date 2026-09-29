@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FINANCIAL_RELEASE_FAMILIES,
+  FINANCIAL_LEGACY_WRITER_INVENTORY,
   frozenRuleVersion,
   releaseFamilyStatus,
 } from "./financialReleaseManifest";
@@ -28,7 +29,7 @@ describe("all-family financial release manifest", () => {
     ]));
   });
 
-  it("keeps a family out of a release when any mandatory gate is incomplete", () => {
+  it("holds a family when any mandatory gate is incomplete", () => {
     const status = releaseFamilyStatus({
       confirmedShadowTestId: null,
       xeroOutcome: "blocked",
@@ -36,7 +37,7 @@ describe("all-family financial release manifest", () => {
       hasLegacyWriterInventory: false,
       hasCurrentDocumentManifest: false,
     });
-    expect(status.status).toBe("excluded");
+    expect(status.status).toBe("held");
     expect(status.reason).toContain("Xero GET-only tenant readiness");
     expect(status.reason).toContain("reviewer-confirmed shadow test");
     expect(status.reason).toContain("writer and exact disable action");
@@ -50,6 +51,37 @@ describe("all-family financial release manifest", () => {
       hasLegacyWriterInventory: true,
       hasCurrentDocumentManifest: true,
     })).toMatchObject({ status: "included" });
+  });
+
+  it("records the factual no-current-candidate result without inferring failure", () => {
+    expect(releaseFamilyStatus({
+      candidateOutcome: "no_current_candidate",
+      confirmedShadowTestId: null,
+      xeroOutcome: "passed",
+      vtigerOutcome: "passed",
+      hasLegacyWriterInventory: true,
+      hasCurrentDocumentManifest: false,
+    })).toMatchObject({ status: "no_current_candidate" });
+  });
+
+  it("holds a previously confirmed family when current fingerprints are stale", () => {
+    expect(releaseFamilyStatus({
+      candidateOutcome: "found",
+      confirmedShadowTestId: 101,
+      xeroOutcome: "passed",
+      vtigerOutcome: "passed",
+      hasLegacyWriterInventory: true,
+      hasCurrentDocumentManifest: true,
+      hasDisabledPostSuccessMapping: true,
+      evidenceFresh: false,
+    })).toMatchObject({ status: "held", reason: expect.stringContaining("stale") });
+  });
+
+  it("prefills one local legacy handover entry for every release family", () => {
+    expect(FINANCIAL_LEGACY_WRITER_INVENTORY).toHaveLength(14);
+    expect(FINANCIAL_LEGACY_WRITER_INVENTORY.map((entry) => entry.familyKey)).toEqual(FINANCIAL_RELEASE_FAMILIES.map((entry) => entry.familyKey));
+    expect(FINANCIAL_LEGACY_WRITER_INVENTORY.find((entry) => entry.familyKey === "recurring_for_hire")?.legacyWriterIdentifier)
+      .toContain("forHireMonthlyPo");
   });
 
   it("derives a stable frozen rule version from the exact active rule set", () => {

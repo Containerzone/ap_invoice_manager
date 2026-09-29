@@ -9,8 +9,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 type RouteControl = {
   key: string;
+  path: string;
   displayName: string;
   workflowType: string;
+  sourceEntityTypes: string[];
+  fixedFields: Record<string, unknown> | null;
+  description: string;
   schedule: "event" | "future_schedule";
   paused: boolean;
 };
@@ -61,13 +65,13 @@ function copyExample() {
   const example = {
     apiVersion: "2026-09-29",
     dryRun: true,
-    eventId: "vtiger-event-unique-id",
+    eventId: "container-control-acquisition:<sourceRecordId>:<sourceChangedAt>",
     eventType: "container_control.updated",
     sourceSystem: "VTiger",
     sourceEntityType: "container_control",
     sourceRecordId: "12x345",
     sourceRecordNumber: "CC1860",
-    sourceChangedAt: new Date().toISOString(),
+    sourceChangedAt: "2026-09-29T14:50:42.000Z",
     data: { containerControlNumber: "CC1860", status: "REQUEST" },
   };
   void navigator.clipboard?.writeText(JSON.stringify(example, null, 2));
@@ -118,7 +122,7 @@ export function FinancialWebhookInterface() {
     </Card>
 
     <Card>
-      <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Event contract and global pause</CardTitle><p className="mt-1 text-sm text-muted-foreground">Each external request must send <code className="rounded bg-muted px-1">X-Financial-Webhook-Secret</code> and the versioned event envelope. A global pause stops future proposals and execution attempts without touching a source workflow.</p></CardHeader>
+      <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" />Event contract and global pause</CardTitle><p className="mt-1 text-sm text-muted-foreground">Each external request must send <code className="rounded bg-muted px-1">X-Financial-Webhook-Secret</code> and the versioned event envelope. Derive <code className="rounded bg-muted px-1">eventId</code> deterministically from route key, source record ID and source modification timestamp. Generic non-dry VTiger actions are not configured.</p></CardHeader>
       <CardContent className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><Badge variant="outline">apiVersion: 2026-09-29</Badge><Badge variant="outline">dryRun: true | executionApprovalId</Badge><Badge variant="outline">sourceSystem: VTiger</Badge><Badge variant="outline">no credentials returned</Badge></div>
         <div className="flex gap-2"><Button size="sm" variant="outline" onClick={copyExample}><Copy className="mr-1 h-3.5 w-3.5" />Copy sample payload</Button><Button size="sm" variant={controls.data?.controls.globalPaused ? "default" : "destructive"} onClick={() => setPaused.mutate({ routeKey: "global", paused: !Boolean(controls.data?.controls.globalPaused) })} disabled={setPaused.isPending}>{controls.data?.controls.globalPaused ? <><PlayCircle className="mr-1 h-3.5 w-3.5" />Resume all proposals</> : <><PauseCircle className="mr-1 h-3.5 w-3.5" />Pause all proposals</>}</Button></div>
@@ -126,8 +130,8 @@ export function FinancialWebhookInterface() {
     </Card>
 
     <Card>
-      <CardHeader><CardTitle>Fixed AP proposal routes</CardTitle><p className="mt-1 text-sm text-muted-foreground">These route paths are visible for AP implementation review only. Do not add them to VTiger or configure recurrence until the individual family’s legacy-writer handoff and final approval are complete.</p></CardHeader>
-      <CardContent>{controls.isLoading ? <Skeleton className="h-72" /> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">Family</th><th className="p-3">Workflow</th><th className="p-3">Trigger</th><th className="p-3">Proposal status</th><th className="p-3">AP control</th></tr></thead><tbody>{routeRows.map((route) => <tr key={route.key} className="border-b last:border-0 align-top"><td className="p-3"><p className="font-medium">{route.displayName}</p><p className="mt-1 font-mono text-xs text-muted-foreground">/api/financial-workflows/events/{route.key}</p></td><td className="p-3 font-mono text-xs">{route.workflowType}</td><td className="p-3"><Badge variant="outline">{route.schedule === "event" ? "Event-driven" : "Future schedule only"}</Badge></td><td className="p-3"><Badge className={statusTone(route.paused ? "paused" : "ready")}>{route.paused ? "Paused" : "Proposal ready"}</Badge><p className="mt-1 text-xs text-muted-foreground">Financial write disabled</p></td><td className="p-3"><Button size="sm" variant={route.paused ? "default" : "outline"} onClick={() => setPaused.mutate({ routeKey: route.key, paused: !route.paused })} disabled={setPaused.isPending}>{route.paused ? "Resume proposal" : "Pause proposal"}</Button></td></tr>)}</tbody></table></div>}</CardContent>
+      <CardHeader><CardTitle>Fixed AP proposal routes</CardTitle><p className="mt-1 text-sm text-muted-foreground">These deployed paths and accepted source entity types are visible for AP implementation review only. Do not add them to VTiger or configure recurrence until the individual family’s legacy-writer handoff and final approval are complete.</p></CardHeader>
+      <CardContent>{controls.isLoading ? <Skeleton className="h-72" /> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">Family / path</th><th className="p-3">Workflow / accepted source</th><th className="p-3">Trigger</th><th className="p-3">Proposal status</th><th className="p-3">AP control</th></tr></thead><tbody>{routeRows.map((route) => <tr key={route.key} className="border-b last:border-0 align-top"><td className="p-3"><p className="font-medium">{route.displayName}</p><p className="mt-1 font-mono text-xs text-muted-foreground">{route.path}</p><p className="mt-1 text-xs text-muted-foreground">{route.description}</p></td><td className="p-3 font-mono text-xs">{route.workflowType}<br /><span className="font-sans text-muted-foreground">{route.sourceEntityTypes.join(" | ")}</span>{route.fixedFields ? <><br /><span className="font-sans text-muted-foreground">fixed {JSON.stringify(route.fixedFields)}</span></> : null}</td><td className="p-3"><Badge variant="outline">{route.schedule === "event" ? "Event-driven" : "Future schedule only"}</Badge></td><td className="p-3"><Badge className={statusTone(route.paused ? "paused" : "ready")}>{route.paused ? "Paused" : "Proposal ready"}</Badge><p className="mt-1 text-xs text-muted-foreground">Financial write disabled</p></td><td className="p-3"><Button size="sm" variant={route.paused ? "default" : "outline"} onClick={() => setPaused.mutate({ routeKey: route.key, paused: !route.paused })} disabled={setPaused.isPending}>{route.paused ? "Resume proposal" : "Pause proposal"}</Button></td></tr>)}</tbody></table></div>}</CardContent>
     </Card>
 
     <Card>
