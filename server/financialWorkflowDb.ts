@@ -6,6 +6,8 @@ import {
   financialCutoverPacks,
   financialDocumentIntents,
   financialDocuments,
+  financialExecutionApprovals,
+  financialPostSuccessActions,
   financialCandidateDiscoveries,
   financialCandidateRoster,
   financialIntegrationAudits,
@@ -27,6 +29,8 @@ import {
   type FinancialWorkflowConfig,
   type FinancialCutoverControl,
   type FinancialCutoverPack,
+  type FinancialExecutionApproval,
+  type FinancialPostSuccessAction,
   type FinancialCandidateDiscovery,
   type FinancialCandidateRoster,
   type FinancialIntegrationAudit,
@@ -61,6 +65,12 @@ import {
 import { testFinancialXeroConnection } from "./financialReadOnlyXeroService";
 import { testVtigerFinancialConnection } from "./vtigerFinancialReadService";
 import { randomUUID } from "node:crypto";
+import {
+  FINANCIAL_PROPOSAL_VERSION,
+  proposalHash as calculateProposalHash,
+  rulesSnapshotHash,
+  sourceSnapshotHash,
+} from "./financialProposalIntegrity";
 
 export type PersistedFinancialEvaluation = {
   runId: number;
@@ -108,6 +118,8 @@ export async function persistFinancialWorkflowEvaluation(
 
   const now = new Date();
   const status = runStatus(evaluation);
+  const sourceHash = sourceSnapshotHash(input.sourceData);
+  const ruleHash = rulesSnapshotHash(input.rules ?? resolveFinancialAutomationRules());
   const insert = await db.insert(financialWorkflowRuns).values({
     workflowType: evaluation.workflowType,
     triggerType: input.triggerType,
@@ -123,6 +135,9 @@ export async function persistFinancialWorkflowEvaluation(
     sourceSnapshot: input.sourceData as any,
     validationResults: { outcome: evaluation.outcome, issues: evaluation.issues } as any,
     resultReferences: { liveXeroWrite: false, intentCount: evaluation.intents.length } as any,
+    sourceSnapshotHash: sourceHash,
+    rulesSnapshotHash: ruleHash,
+    proposalVersion: FINANCIAL_PROPOSAL_VERSION,
     errorMessage: evaluation.outcome === "failed" ? evaluation.issues.map((entry) => entry.title).join("; ") : null,
     receivedAt: now,
     evaluatedAt: now,
@@ -155,6 +170,10 @@ export async function persistFinancialWorkflowEvaluation(
       sourceRecordId: intent.sourceRecordId,
       validationStatus: intent.validationStatus,
       validationSummary: { proposedOnly: true, xeroWritePermitted: false } as any,
+      proposalHash: calculateProposalHash(intent),
+      sourceSnapshotHash: sourceHash,
+      rulesSnapshotHash: ruleHash,
+      immutableAt: now,
     });
     intentIds.push(Number((intentInsert[0] as any).insertId));
   }
@@ -1286,4 +1305,159 @@ export async function getFinancialWriterExecutions(limit = 50): Promise<Financia
   return db.select().from(financialWriterExecutions)
     .orderBy(desc(financialWriterExecutions.createdAt), desc(financialWriterExecutions.id))
     .limit(Math.max(1, Math.min(limit, 200)));
+}
+
+
+// ─── Immutable proposal approvals and post-success work ──────────────────────
+
+export async function getFinancialDocumentIntentDetail(intentId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const row = (await db.select({ intent: financialDocumentIntents, run: financialWorkflowRuns })
+    .from(financialDocumentIntents)
+    .innerJoin(financialWorkflowRuns, eq(financialWorkflowRuns.id, financialDocumentIntents.workflowRunId))
+    .where(eq(financialDocumentIntents.id, intentId))
+    .limit(1))[0];
+  return row ?? undefined;
+}
+
+/** Binds exact GET-only preflight evidence to the immutable local intent. */
+export async function setFinancialIntentPreflightHash(input: {
+  intentId: number;
+  xeroPreflightHash: string;
+  preflightSummary: unknown;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(financialDocumentIntents).set({
+    xeroPreflightHash: input.xeroPreflightHash,
+    validationSummary: { proposedOnly: true, xeroWritePermitted: false, latestPreflight: input.preflightSummary } as any,
+    updatedAt: new Date(),
+  }).where(eq(financialDocumentIntents.id, input.intentId));
+}
+
+export type CreateFinancialExecutionApprovalInput = {
+  workflowRunId: number;
+  documentIntentId: number;
+  releaseManifestId?: number | null;
+  releaseFamilyId?: number | null;
+  cutoverPackId?: number | null;
+  workflowType: string;
+  documentFamily: "purchase_order" | "customer_invoice";
+  proposedAction: "create_draft" | "update_draft";
+  proposalHash: string;
+  sourceSnapshotHash: string;
+  rulesSnapshotHash: string;
+  xeroPreflightHash: string;
+  sourceRecordId?: string | null;
+  sourceRecordNumber?: string | null;
+  proposedDocumentNumber: string;
+  counterpartyName?: string | null;
+  approvalReference: string;
+  acknowledgement: string;
+  approvalSummary: unknown;
+  approvedBy: number;
+  expiresAt?: Date | null;
+};
+
+/** Creates one single-use approval record for an exact immutable proposal hash. */
+export async function createFinancialExecutionApproval(input: CreateFinancialExecutionApprovalInput): Promise<FinancialExecutionApproval> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const approvalKey = `faa-${Date.now()}-${randomUUID().slice(0, 12)}`;
+  const insert = await db.insert(financialExecutionApprovals).values({
+    approvalKey,
+    workflowRunId: input.workflowRunId,
+    documentIntentId: input.documentIntentId,
+    releaseManifestId: input.releaseManifestId ?? null,
+    releaseFamilyId: input.releaseFamilyId ?? null,
+    cutoverPackId: input.cutoverPackId ?? null,
+    workflowType: input.workflowType,
+    documentFamily: input.documentFamily,
+    proposedAction: input.proposedAction,
+    proposalHash: input.proposalHash,
+    sourceSnapshotHash: input.sourceSnapshotHash,
+    rulesSnapshotHash: input.rulesSnapshotHash,
+    xeroPreflightHash: input.xeroPreflightHash,
+    sourceRecordId: input.sourceRecordId ?? null,
+    sourceRecordNumber: input.sourceRecordNumber ?? null,
+    proposedDocumentNumber: input.proposedDocumentNumber,
+    counterpartyName: input.counterpartyName ?? null,
+    approvalReference: input.approvalReference,
+    acknowledgement: input.acknowledgement,
+    approvalSummary: input.approvalSummary as any,
+    approvedBy: input.approvedBy,
+    expiresAt: input.expiresAt ?? null,
+  });
+  const row = (await db.select().from(financialExecutionApprovals)
+    .where(eq(financialExecutionApprovals.id, Number((insert[0] as any).insertId))).limit(1))[0];
+  if (!row) throw new Error("Financial execution approval was not persisted");
+  return row;
+}
+
+export async function getFinancialExecutionApproval(approvalId: number): Promise<FinancialExecutionApproval | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(financialExecutionApprovals).where(eq(financialExecutionApprovals.id, approvalId)).limit(1))[0];
+}
+
+export async function getFinancialExecutionApprovals(limit = 200): Promise<FinancialExecutionApproval[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialExecutionApprovals).orderBy(desc(financialExecutionApprovals.createdAt)).limit(limit);
+}
+
+export async function invalidateFinancialExecutionApproval(approvalId: number, reason: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(financialExecutionApprovals).set({
+    status: "invalidated",
+    invalidationReason: reason,
+    updatedAt: new Date(),
+  }).where(and(eq(financialExecutionApprovals.id, approvalId), eq(financialExecutionApprovals.status, "approved")));
+}
+
+/** Atomically consumes one exact approval only after a local writer execution exists. */
+export async function consumeFinancialExecutionApproval(approvalId: number, executionId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const result: any = await db.update(financialExecutionApprovals).set({
+    status: "consumed",
+    consumedByExecutionId: executionId,
+    consumedAt: new Date(),
+    updatedAt: new Date(),
+  }).where(and(eq(financialExecutionApprovals.id, approvalId), eq(financialExecutionApprovals.status, "approved")));
+  return Number(result?.[0]?.affectedRows ?? result?.rowsAffected ?? 0) === 1;
+}
+
+export async function createFinancialPostSuccessAction(input: {
+  executionId: number;
+  workflowType: string;
+  actionType: "vtiger_note" | "vtiger_task" | "vtiger_hire_end_update";
+  sourceRecordId: string;
+  payloadHash: string;
+  safePayloadSummary: unknown;
+}): Promise<FinancialPostSuccessAction> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const actionKey = `post-${input.executionId}-${input.actionType}-${input.payloadHash.slice(0, 16)}`;
+  await db.insert(financialPostSuccessActions).values({
+    executionId: input.executionId,
+    workflowType: input.workflowType,
+    actionType: input.actionType,
+    actionKey,
+    sourceRecordId: input.sourceRecordId,
+    payloadHash: input.payloadHash,
+    safePayloadSummary: input.safePayloadSummary as any,
+  }).onDuplicateKeyUpdate({ set: { updatedAt: new Date() } });
+  const row = (await db.select().from(financialPostSuccessActions)
+    .where(eq(financialPostSuccessActions.actionKey, actionKey)).limit(1))[0];
+  if (!row) throw new Error("Post-success action was not persisted");
+  return row;
+}
+
+export async function getFinancialPostSuccessActions(limit = 200): Promise<FinancialPostSuccessAction[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(financialPostSuccessActions).orderBy(desc(financialPostSuccessActions.createdAt)).limit(limit);
 }

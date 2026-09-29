@@ -225,6 +225,13 @@
       "when": 1790687072767,
       "tag": "0031_regular_firelord",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "5",
+      "when": 1790688907621,
+      "tag": "0032_remarkable_forge",
+      "breakpoints": true
     }
   ]
 }

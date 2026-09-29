@@ -27,6 +27,7 @@ import { getXeroReadAuthWithRefresh } from "./xeroService";
 import {
   preflightFinancialXeroIntents,
   previewHistoricalXeroReferences,
+  readBackFinancialDraft,
   testFinancialXeroConnection,
 } from "./financialReadOnlyXeroService";
 
@@ -89,7 +90,7 @@ describe("financial read-only Xero service", () => {
   it("preflights only GET candidate, contact and item reads and records an existing PO", async () => {
     mockGet
       .mockResolvedValueOnce({ data: { PurchaseOrders: [{ PurchaseOrderID: "po-1", PurchaseOrderNumber: "H1860", Status: "DRAFT", Contact: { Name: "Hire Supplier" } }] } })
-      .mockResolvedValueOnce({ data: { Contacts: [{ Name: "Hire Supplier" }] } })
+      .mockResolvedValueOnce({ data: { Contacts: [{ ContactID: "contact-hire", Name: "Hire Supplier" }] } })
       .mockResolvedValueOnce({ data: { Items: [{ Description: "Native HC 20 E", PurchaseDetails: { UnitPrice: 8 }, SalesDetails: { UnitPrice: 0 } }] } });
     const [result] = await preflightFinancialXeroIntents([{
       documentFamily: "purchase_order", documentType: "recurring_hire", proposedAction: "create_draft", proposedDocumentNumber: "H1860",
@@ -99,6 +100,7 @@ describe("financial read-only Xero service", () => {
     }]);
     expect(result).toMatchObject({ duplicateState: "found", xeroDocumentId: "po-1", status: "DRAFT", partyName: "Hire Supplier" });
     expect(result?.itemChecks[0]).toMatchObject({ itemCode: "HC 20 E", found: true, purchaseUnitPrice: 8, nativeDescription: "Native HC 20 E" });
+    expect(result?.contactCheck).toMatchObject({ found: true, contactId: "contact-hire" });
     noMutationAssertions();
   });
 
@@ -109,6 +111,21 @@ describe("financial read-only Xero service", () => {
       expect.objectContaining({ reference: "A1860", reconciliationState: "matched", xeroDocumentId: "po-asset" }),
       expect.objectContaining({ reference: "NOT-A-PATTERN", reconciliationState: "needs_review" }),
     ]));
+    noMutationAssertions();
+  });
+
+  it("requires an exact GET-only Draft read-back after a guarded writer response", async () => {
+    mockGet.mockResolvedValueOnce({ data: {
+      Invoices: [{
+        InvoiceID: "invoice-1", InvoiceNumber: "INV-7001", Status: "DRAFT",
+        Contact: { Name: "Customer" }, SubTotal: 100, Total: 110,
+        LineItems: [{ Description: "Service" }],
+      }],
+    } });
+    const result = await readBackFinancialDraft({
+      documentFamily: "customer_invoice", documentNumber: "INV-7001", expectedXeroDocumentId: "invoice-1",
+    });
+    expect(result).toMatchObject({ xeroDocumentId: "invoice-1", documentNumber: "INV-7001", status: "DRAFT", total: 110, lineCount: 1 });
     noMutationAssertions();
   });
 });

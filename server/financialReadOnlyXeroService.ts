@@ -36,8 +36,20 @@ export type FinancialXeroPreflight = {
   status: string | null;
   partyName: string | null;
   itemChecks: Array<{ itemCode: string; found: boolean; purchaseUnitPrice: number | null; salesUnitPrice: number | null; nativeDescription: string | null }>;
-  contactCheck: { partyName: string | null; found: boolean | null; count: number | null };
+  contactCheck: { partyName: string | null; found: boolean | null; count: number | null; contactId: string | null };
   error: string | null;
+};
+
+/** Exact GET-only evidence recorded after a financial Draft request returns. */
+export type FinancialDraftReadBack = {
+  documentFamily: "purchase_order" | "customer_invoice";
+  xeroDocumentId: string;
+  documentNumber: string;
+  status: "DRAFT";
+  partyName: string | null;
+  subtotal: number | null;
+  total: number | null;
+  lineCount: number;
 };
 
 export type HistoricalXeroPreviewRow = {
@@ -162,17 +174,22 @@ function initialPreflight(intent: ProposedFinancialDocument): FinancialXeroPrefl
     status: null,
     partyName: null,
     itemChecks: [],
-    contactCheck: { partyName: intent.partyName, found: null, count: null },
+    contactCheck: { partyName: intent.partyName, found: null, count: null, contactId: null },
     error: intent.proposedDocumentNumber ? null : "No proposed document reference is available for Xero preflight.",
   };
 }
 
 async function preflightContact(auth: ReadOnlyAuth, partyName: string | null): Promise<FinancialXeroPreflight["contactCheck"]> {
-  if (!partyName?.trim()) return { partyName: null, found: null, count: null };
+  if (!partyName?.trim()) return { partyName: null, found: null, count: null, contactId: null };
   const response = await xeroRead<any>(auth, `contact:${partyName.trim().toUpperCase()}`, `${XERO_API_BASE}/Contacts`, { searchTerm: partyName.trim() });
   const contacts = Array.isArray(response?.Contacts) ? response.Contacts : [];
   const exact = contacts.filter((contact: any) => String(contact?.Name ?? "").trim().toLowerCase() === partyName.trim().toLowerCase());
-  return { partyName, found: exact.length === 1, count: exact.length };
+  return {
+    partyName,
+    found: exact.length === 1,
+    count: exact.length,
+    contactId: exact.length === 1 && exact[0]?.ContactID ? String(exact[0].ContactID) : null,
+  };
 }
 
 async function preflightItem(auth: ReadOnlyAuth, itemCode: string) {
@@ -243,6 +260,51 @@ export async function preflightFinancialXeroIntents(intents: ProposedFinancialDo
     results.push(result);
   }
   return results;
+}
+
+/**
+ * Reads back the exact Xero Draft created or updated by the guarded writer.
+ * A missing, mismatched, or non-Draft response is a reconciliation condition;
+ * callers must not infer success from the transport response alone.
+ */
+export async function readBackFinancialDraft(input: {
+  documentFamily: "purchase_order" | "customer_invoice";
+  documentNumber: string;
+  expectedXeroDocumentId: string;
+}): Promise<FinancialDraftReadBack> {
+  const auth = await readOnlyAuth();
+  const expectedNumber = input.documentNumber.trim();
+  if (!expectedNumber || !input.expectedXeroDocumentId.trim()) {
+    throw new Error("Exact Xero document number and ID are required for Draft read-back.");
+  }
+  let document: any = null;
+  if (input.documentFamily === "purchase_order") {
+    const response = await xeroRead<any>(auth, `post-write-po:${input.expectedXeroDocumentId}`, `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(input.expectedXeroDocumentId)}`);
+    document = response?.PurchaseOrders?.[0] ?? null;
+  } else {
+    const response = await xeroRead<any>(auth, `post-write-invoice:${input.expectedXeroDocumentId}`, `${XERO_API_BASE}/Invoices/${encodeURIComponent(input.expectedXeroDocumentId)}`);
+    document = response?.Invoices?.[0] ?? null;
+  }
+  const documentNumber = String(document?.PurchaseOrderNumber ?? document?.InvoiceNumber ?? "").trim();
+  const xeroDocumentId = String(document?.PurchaseOrderID ?? document?.InvoiceID ?? "").trim();
+  const status = String(document?.Status ?? "").trim().toUpperCase();
+  if (!document || xeroDocumentId !== input.expectedXeroDocumentId || documentNumber.toUpperCase() !== expectedNumber.toUpperCase() || status !== "DRAFT") {
+    throw new Error(`Xero Draft read-back did not verify the exact expected document ${expectedNumber}.`);
+  }
+  const numeric = (value: unknown): number | null => {
+    const parsed = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  return {
+    documentFamily: input.documentFamily,
+    xeroDocumentId,
+    documentNumber,
+    status: "DRAFT",
+    partyName: document?.Contact?.Name ? String(document.Contact.Name) : null,
+    subtotal: numeric(document?.SubTotal),
+    total: numeric(document?.Total),
+    lineCount: Array.isArray(document?.LineItems) ? document.LineItems.length : 0,
+  };
 }
 
 function historicalFamily(reference: string): HistoricalXeroPreviewRow["inferredFamily"] {

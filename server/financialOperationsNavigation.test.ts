@@ -24,6 +24,7 @@ describe("Financial Operations parent navigation", () => {
       "exceptions",
       "candidate-finder",
       "shadow-tests",
+      "proposal-approvals",
       "history-preview",
       "schedules",
       "configuration",

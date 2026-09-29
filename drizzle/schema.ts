@@ -448,6 +448,12 @@ export const financialWorkflowRuns = mysqlTable("financial_workflow_runs", {
   sourceSnapshot: json("sourceSnapshot"),
   validationResults: json("validationResults"),
   resultReferences: json("resultReferences"),
+  /** SHA-256 of the exact current VTiger source used for this evaluated proposal. */
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }),
+  /** SHA-256 of the effective non-secret financial rule set used by the proposal. */
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }),
+  /** Immutable proposal contract version; retained to invalidate superseded approval formats. */
+  proposalVersion: varchar("proposalVersion", { length: 32 }).default("2026-09-29").notNull(),
   errorMessage: text("errorMessage"),
   receivedAt: timestamp("receivedAt").defaultNow().notNull(),
   evaluatedAt: timestamp("evaluatedAt"),
@@ -490,12 +496,92 @@ export const financialDocumentIntents = mysqlTable("financial_document_intents",
     .default("proposed")
     .notNull(),
   validationSummary: json("validationSummary"),
+  /** Stable hash of every document field that an administrator approves. */
+  proposalHash: varchar("proposalHash", { length: 64 }),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }),
+  immutableAt: timestamp("immutableAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type FinancialDocumentIntent = typeof financialDocumentIntents.$inferSelect;
 export type InsertFinancialDocumentIntent = typeof financialDocumentIntents.$inferInsert;
+
+// ─── Financial Proposal Approval and Post-success Audit ──────────────────────
+//
+// These tables bind one named Xero draft action to one immutable AP proposal.
+// They do not enable a writer. An approval is single-use and will be invalidated
+// by a material source, rule, proposal or preflight change before any transport.
+
+export const financialExecutionApprovals = mysqlTable("financial_execution_approvals", {
+  id: int("id").autoincrement().primaryKey(),
+  approvalKey: varchar("approvalKey", { length: 96 }).notNull(),
+  workflowRunId: int("workflowRunId").notNull(),
+  documentIntentId: int("documentIntentId").notNull(),
+  releaseManifestId: int("releaseManifestId"),
+  releaseFamilyId: int("releaseFamilyId"),
+  cutoverPackId: int("cutoverPackId"),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  documentFamily: mysqlEnum("documentFamily", ["purchase_order", "customer_invoice"] as const).notNull(),
+  proposedAction: mysqlEnum("proposedAction", ["create_draft", "update_draft"] as const).notNull(),
+  proposalHash: varchar("proposalHash", { length: 64 }).notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }).notNull(),
+  sourceRecordId: varchar("sourceRecordId", { length: 128 }),
+  sourceRecordNumber: varchar("sourceRecordNumber", { length: 128 }),
+  proposedDocumentNumber: varchar("proposedDocumentNumber", { length: 128 }).notNull(),
+  counterpartyName: varchar("counterpartyName", { length: 255 }),
+  approvalReference: varchar("approvalReference", { length: 255 }).notNull(),
+  acknowledgement: text("acknowledgement").notNull(),
+  approvalSummary: json("approvalSummary").notNull(),
+  status: mysqlEnum("status", ["approved", "consumed", "invalidated", "rejected", "expired"] as const)
+    .default("approved")
+    .notNull(),
+  invalidationReason: text("invalidationReason"),
+  approvedBy: int("approvedBy").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  consumedByExecutionId: int("consumedByExecutionId"),
+  consumedAt: timestamp("consumedAt"),
+  expiresAt: timestamp("expiresAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  financialExecutionApprovalKeyUnique: uniqueIndex("financial_execution_approval_key_unique").on(table.approvalKey),
+  financialExecutionApprovalIntentUnique: uniqueIndex("financial_execution_approval_intent_hash_unique")
+    .on(table.documentIntentId, table.proposalHash, table.status),
+}));
+
+export type FinancialExecutionApproval = typeof financialExecutionApprovals.$inferSelect;
+export type InsertFinancialExecutionApproval = typeof financialExecutionApprovals.$inferInsert;
+
+/** Post-success VTiger work is named, retryable and never replays the Xero write. */
+export const financialPostSuccessActions = mysqlTable("financial_post_success_actions", {
+  id: int("id").autoincrement().primaryKey(),
+  executionId: int("executionId").notNull(),
+  workflowType: varchar("workflowType", { length: 80 }).notNull(),
+  actionType: mysqlEnum("actionType", ["vtiger_note", "vtiger_task", "vtiger_hire_end_update"] as const).notNull(),
+  actionKey: varchar("actionKey", { length: 128 }).notNull(),
+  sourceRecordId: varchar("sourceRecordId", { length: 128 }).notNull(),
+  payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
+  safePayloadSummary: json("safePayloadSummary").notNull(),
+  status: mysqlEnum("status", ["pending", "succeeded", "failed", "reconciliation_required"] as const)
+    .default("pending")
+    .notNull(),
+  vtigerRecordId: varchar("vtigerRecordId", { length: 128 }),
+  errorMessage: text("errorMessage"),
+  attemptCount: int("attemptCount").default(0).notNull(),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  financialPostSuccessActionKeyUnique: uniqueIndex("financial_post_success_action_key_unique").on(table.actionKey),
+}));
+
+export type FinancialPostSuccessAction = typeof financialPostSuccessActions.$inferSelect;
+export type InsertFinancialPostSuccessAction = typeof financialPostSuccessActions.$inferInsert;
 
 /** Imported or later-confirmed Xero document snapshots. Shadow mode only reads them. */
 export const financialDocuments = mysqlTable("financial_documents", {

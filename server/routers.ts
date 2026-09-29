@@ -97,6 +97,8 @@ import {
   getFinancialWorkflowRuns,
   getFinancialWorkflowSchedules,
   getFinancialWriterExecutions,
+  getFinancialExecutionApprovals,
+  getFinancialPostSuccessActions,
   createFinancialShadowTest,
   createFinancialCandidateDiscovery,
   createDisabledFinancialCutoverPack,
@@ -112,6 +114,7 @@ import {
   getFinancialShadowTests,
   reviewFinancialShadowTest,
   resolveFinancialWorkflowException,
+  setFinancialIntentPreflightHash,
   upsertFinancialCandidateRosterEntry,
   updateFinancialCandidateRosterDiscovery,
   markFinancialCandidateRosterNeedsData,
@@ -143,7 +146,9 @@ import {
   type ShadowExpectedResult,
 } from "./financialShadowValidation";
 import { getFinancialShadowWebhookStatus } from "./financialWorkflowWebhook";
+import { xeroPreflightHash } from "./financialProposalIntegrity";
 import { getFinancialProposalWebhookStatus } from "./financialProposalWebhook";
+import { approveFinancialExecution, previewFinancialExecutionApproval } from "./financialApprovalService";
 import {
   FINANCIAL_AP_WEBHOOK_ROUTES,
   FINANCIAL_WEBHOOK_CONTROL_CONFIG_KEY,
@@ -381,6 +386,15 @@ async function executeFinancialShadowTest(input: ShadowTestInput) {
   let preflightProblem: string | null = null;
   try {
     preflight = await preflightFinancialXeroIntents(result.evaluation.intents);
+    await Promise.all(result.persistence.intentIds.map((intentId, index) => {
+      const intentPreflight = preflight[index];
+      if (!intentPreflight) return Promise.resolve();
+      return setFinancialIntentPreflightHash({
+        intentId,
+        xeroPreflightHash: xeroPreflightHash(intentPreflight),
+        preflightSummary: intentPreflight,
+      });
+    }));
   } catch (error: any) {
     preflightProblem = error?.message ?? "Xero read-only preflight could not be completed.";
   }
@@ -525,6 +539,10 @@ export const appRouter = router({
       .query(({ input }) => getFinancialReleaseManifests(input?.limit ?? 25)),
     writerExecutions: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getFinancialWriterExecutions(input?.limit ?? 50)),
+    executionApprovals: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getFinancialExecutionApprovals(input?.limit ?? 50)),
+    postSuccessActions: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getFinancialPostSuccessActions(input?.limit ?? 50)),
     webhookEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
       .query(({ input }) => getFinancialWebhookEvents(input?.limit ?? 100)),
     webhookControls: adminProcedure.query(async () => {
@@ -627,6 +645,24 @@ export const appRouter = router({
       await createFinancialIntegrationAudit({ integration: "xero", action: "get_only_tenant_check", outcome: result.outcome, tenantName: result.organisationName, tenantId: result.tenantId, details: { expectedTenantLabel: result.expectedTenantLabel, readOnly: true }, actorId: ctx.user.id, checkedAt: result.checkedAt });
       return result;
     }),
+    previewExecutionApproval: adminProcedure.input(z.object({
+      intentId: z.number().int().positive(),
+    })).mutation(async ({ input }) => ({
+      mode: "approval_preview" as const,
+      xeroWritePermitted: false as const,
+      preview: await previewFinancialExecutionApproval(input.intentId),
+    })),
+    approveExecution: adminProcedure.input(z.object({
+      intentId: z.number().int().positive(),
+      releaseManifestId: z.number().int().positive().nullable().optional(),
+      releaseFamilyId: z.number().int().positive().nullable().optional(),
+      cutoverPackId: z.number().int().positive().nullable().optional(),
+      approvalReference: z.string().trim().min(3).max(255),
+      acknowledgement: z.string().trim().min(20).max(5_000),
+    })).mutation(async ({ input, ctx }) => approveFinancialExecution({
+      ...input,
+      actorId: ctx.user.id,
+    })),
     prepareAllFamilyReleaseManifest: adminProcedure.input(z.object({
       maintenanceWindow: z.string().trim().max(255).nullable().optional(),
       releaseOwner: z.string().trim().max(255).nullable().optional(),

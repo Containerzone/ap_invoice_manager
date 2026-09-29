@@ -7,6 +7,7 @@ export type FinancialOperationsTab =
   | "schedules"
   | "candidate-finder"
   | "shadow-tests"
+  | "proposal-approvals"
   | "history-preview"
   | "configuration"
   | "webhook-interface"
@@ -64,6 +65,7 @@ export const FINANCIAL_OPERATIONS_NAVIGATION: readonly FinancialOperationsNaviga
       { value: "exceptions", label: "Exceptions" },
       { value: "candidate-finder", label: "Candidate Roster", adminOnly: true },
       { value: "shadow-tests", label: "Shadow Test Register", adminOnly: true },
+      { value: "proposal-approvals", label: "Proposal Approvals", adminOnly: true },
       { value: "history-preview", label: "Historical Preview", adminOnly: true },
     ],
   },

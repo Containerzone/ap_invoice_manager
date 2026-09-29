@@ -85,8 +85,7 @@ function xeroLineAmountType(document: ProposedFinancialDocument): "Exclusive" | 
 
 function xeroContact(document: ProposedFinancialDocument): Record<string, string> {
   if (document.partySourceId?.trim()) return { ContactID: document.partySourceId.trim() };
-  if (document.partyName?.trim()) return { Name: document.partyName.trim() };
-  throw new Error(`Cannot prepare ${document.proposedDocumentNumber ?? document.documentType}: a Xero contact is required.`);
+  throw new Error(`Cannot prepare ${document.proposedDocumentNumber ?? document.documentType}: an exact Xero ContactID from the current preflight is required. Name-only contact payloads are not permitted.`);
 }
 
 function documentKey(document: ProposedFinancialDocument): string {

@@ -546,3 +546,13 @@
 - [x] Applied migration `0031_regular_firelord.sql`; TypeScript, 48 Vitest files / 271 tests, and production build pass. Focused endpoint validation confirmed an unconfigured route returns 503 rather than accepting traffic.
 
 **Deferred by design:** setting the private webhook secret; providing any route to VTiger; enabling a recurring schedule; enabling the guarded writer; and document-specific Xero write approvals. Each needs an explicit later approval and the legacy-writer/schedule handoff details.
+
+## Unified Financial Operations — Proposal and Approval Layer — 29 September 2026
+
+- [x] Added immutable source/rules/proposal/Xero-preflight hash evidence to each newly persisted financial proposal, including versioned stable hashing.
+- [x] Added the admin-only **Financial Operations → Review & Evidence → Proposal Approvals** workbench. It performs a new exact VTiger read, rule re-evaluation and GET-only Xero preflight immediately before issuing a 20-minute, single-use local approval.
+- [x] Strengthened Draft payload construction so it accepts only the exact Xero `ContactID` returned by the fresh preflight; name-only contacts are rejected.
+- [x] Added exact post-response Xero Draft read-back and an append-only local post-success action ledger. Failed read-back becomes reconciliation-required; no blind replay occurs.
+- [x] Kept all 14 family evaluators under the one Financial Operations parent workspace; proposal webhooks remain configuration-gated and proposal-only, while recurring schedules remain disabled.
+- [x] Ran TypeScript, full regression suite and production build: 51 test files / 278 tests pass.
+- [ ] No live Xero writer route, schedule or webhook has been registered. Activation remains pending the exact named-document payload, current source/preflight evidence, legacy-writer handoff, GST decision and explicit final document-specific approval.
