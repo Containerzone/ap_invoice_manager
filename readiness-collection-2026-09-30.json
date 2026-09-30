@@ -1,0 +1,1314 @@
+{
+  "collectedAt": "2026-09-30T17:47:40.697Z",
+  "operation": "readiness_only",
+  "safeguards": {
+    "xeroWritePermitted": false,
+    "externalSchedulesChanged": false,
+    "sourceSystemsChanged": false
+  },
+  "xero": {
+    "configured": true,
+    "tokenState": "valid",
+    "tenantName": "CONTAINERZONE",
+    "tenantIdHint": "…388af97d",
+    "tenantId": "95a62ac7-cde3-4878-adfd-4bf1388af97d",
+    "expiresAt": "2026-09-30T18:08:11.000Z",
+    "scopeConfigured": true,
+    "readOnlyGuard": true,
+    "outcome": "passed",
+    "organisationName": "CONTAINERZONE",
+    "expectedTenantLabel": "CONTAINERZONE",
+    "checkedAt": "2026-09-30T17:47:12.912Z",
+    "message": "Read-only organisation and connection checks passed for the expected AP tenant. No Xero write endpoint was called."
+  },
+  "vtiger": {
+    "configured": true,
+    "missing": [],
+    "outcome": "passed",
+    "checkedAt": "2026-09-30T17:47:11.189Z",
+    "message": "Read-only VTiger challenge and documented form-login passed. No CRM record, workflow URL or schedule was changed."
+  },
+  "postSuccess": {
+    "configuration": {
+      "enabled": false,
+      "assignedUserId": null,
+      "notes": {
+        "enabled": false,
+        "module": "ModComments",
+        "recordLinkField": "related_to",
+        "commentField": "commentcontent"
+      },
+      "tasks": {
+        "enabled": false,
+        "module": "Calendar",
+        "recordLinkField": "parent_id",
+        "subjectField": "subject",
+        "dueDateField": "due_date"
+      },
+      "hireEndUpdate": {
+        "enabled": false,
+        "module": "Potentials",
+        "fieldName": "cf_potentials_hireenddate"
+      }
+    },
+    "outcome": "blocked",
+    "readOnly": true,
+    "modules": [
+      {
+        "module": "ModComments",
+        "requiredFields": [
+          "related_to",
+          "commentcontent"
+        ],
+        "missingFields": [
+          "related_to",
+          "commentcontent"
+        ]
+      },
+      {
+        "module": "Calendar",
+        "requiredFields": [
+          "parent_id",
+          "subject",
+          "due_date"
+        ],
+        "missingFields": [
+          "parent_id",
+          "subject",
+          "due_date"
+        ]
+      },
+      {
+        "module": "Potentials",
+        "requiredFields": [
+          "cf_potentials_hireenddate"
+        ],
+        "missingFields": [
+          "cf_potentials_hireenddate"
+        ]
+      }
+    ],
+    "assignedUser": {
+      "configured": false,
+      "formatValid": true,
+      "message": "Metadata was not verified."
+    },
+    "message": "Invalid username or password",
+    "xeroWritePermitted": false,
+    "vtigerWritePermitted": false
+  },
+  "discoveries": {
+    "initial_container_control_asset": {
+      "family": {
+        "familyKey": "initial_container_control_asset",
+        "displayName": "Initial CC — Asset",
+        "workflowType": "container_control_acquisition",
+        "branch": "Initial Container Control — Asset",
+        "sourceCategory": "container_control",
+        "criteria": [
+          "REQUEST Container Control",
+          "Acquisition Asset/ASSETT",
+          "positive resolved cost",
+          "supplier/contact mapping",
+          "A<CC> preflight clear"
+        ],
+        "holdReasons": [
+          "supplier or cost missing",
+          "existing conflicting or non-Draft PO",
+          "notes/HTML description input"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:18.291Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210001,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "initial_container_control_customer_sale": {
+      "family": {
+        "familyKey": "initial_container_control_customer_sale",
+        "displayName": "Initial CC — Customer Sale",
+        "workflowType": "container_control_acquisition",
+        "branch": "Initial Container Control — Customer Sale",
+        "sourceCategory": "container_control",
+        "criteria": [
+          "REQUEST Container Control",
+          "Acquisition Customer Sale",
+          "positive resolved cost",
+          "supplier/contact mapping",
+          "S<CC> preflight clear"
+        ],
+        "holdReasons": [
+          "supplier or cost missing",
+          "existing conflicting or non-Draft PO",
+          "notes/HTML description input"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:18.770Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210002,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "initial_container_control_for_hire": {
+      "family": {
+        "familyKey": "initial_container_control_for_hire",
+        "displayName": "Initial CC — For Hire",
+        "workflowType": "container_control_acquisition",
+        "branch": "Initial Container Control — For Hire",
+        "sourceCategory": "container_control",
+        "criteria": [
+          "REQUEST Container Control",
+          "Acquisition FOR HIRE",
+          "20/40 foot type",
+          "Collection Date",
+          "supplier and monthly cost/default"
+        ],
+        "holdReasons": [
+          "collection date/type/supplier missing",
+          "HC 20/HC 40 preflight unavailable"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:19.231Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210003,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "recurring_for_hire": {
+      "family": {
+        "familyKey": "recurring_for_hire",
+        "displayName": "Recurring For Hire",
+        "workflowType": "recurring_for_hire",
+        "branch": "Recurring For Hire",
+        "sourceCategory": "container_control",
+        "criteria": [
+          "FOR HIRE",
+          "ON HIRE or IDLE only",
+          "20/40 foot type",
+          "supplier",
+          "next consecutive 30-day period due",
+          "HC 20 E / HC 40 E purchase price"
+        ],
+        "holdReasons": [
+          "REQUEST/READY/DEHIRED or unsupported acquisition",
+          "gap/catch-up/ambiguous earlier period",
+          "matching or non-Draft PO conflict"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:19.701Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210004,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "origin_storage_activation": {
+      "family": {
+        "familyKey": "origin_storage_activation",
+        "displayName": "Origin Storage Activation",
+        "workflowType": "storage_activation",
+        "branch": "Origin Storage Activation",
+        "sourceCategory": "deal",
+        "criteria": [
+          "current origin-storage data",
+          "Date In",
+          "container 20/40 foot",
+          "customer",
+          "driver and storage supplier"
+        ],
+        "holdReasons": [
+          "JD/GD/customer mapping missing",
+          "existing incompatible document"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:20.167Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210005,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "destination_storage_activation": {
+      "family": {
+        "familyKey": "destination_storage_activation",
+        "displayName": "Destination Storage Activation",
+        "workflowType": "storage_activation",
+        "branch": "Destination Storage Activation",
+        "sourceCategory": "deal",
+        "criteria": [
+          "current destination-storage data",
+          "Date In",
+          "container 20/40 foot",
+          "customer",
+          "driver and storage supplier"
+        ],
+        "holdReasons": [
+          "JD/GD/customer mapping missing",
+          "existing incompatible document"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:20.631Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210006,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "recurring_storage": {
+      "family": {
+        "familyKey": "recurring_storage",
+        "displayName": "Recurring Storage",
+        "workflowType": "recurring_storage",
+        "branch": "Recurring Storage",
+        "sourceCategory": "storage_billing_event",
+        "criteria": [
+          "verified active AP storage event",
+          "specific next billing period",
+          "current customer/storage supplier",
+          "GD-only preflight"
+        ],
+        "holdReasons": [
+          "no verified active AP event",
+          "finalised event or collision",
+          "no current GD preflight"
+        ]
+      },
+      "outcome": "no_current_candidate",
+      "searchedAt": "2026-09-30T17:47:21.104Z",
+      "candidates": [],
+      "message": "NO_CURRENT_CANDIDATE: this family is sourced only from verified AP storage activation/finalisation execution state. No VTiger history was scanned.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210007,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "storage_finalisation_recovery": {
+      "family": {
+        "familyKey": "storage_finalisation_recovery",
+        "displayName": "Storage Finalisation / Recovery",
+        "workflowType": "storage_finalisation",
+        "branch": "Storage Finalisation / Recovery",
+        "sourceCategory": "storage_billing_event",
+        "criteria": [
+          "verified AP storage event",
+          "Date Out/FCD final date",
+          "matching Draft documents or defined zero-document recovery"
+        ],
+        "holdReasons": [
+          "non-Draft document",
+          "ambiguous final date/period",
+          "incomplete recovery inputs"
+        ]
+      },
+      "outcome": "no_current_candidate",
+      "searchedAt": "2026-09-30T17:47:21.569Z",
+      "candidates": [],
+      "message": "NO_CURRENT_CANDIDATE: this family is sourced only from verified AP storage activation/finalisation execution state. No VTiger history was scanned.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210008,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "main_customer_invoice": {
+      "family": {
+        "familyKey": "main_customer_invoice",
+        "displayName": "Main Customer Invoice",
+        "workflowType": "main_customer_invoice",
+        "branch": "Main Customer Invoice",
+        "sourceCategory": "deal",
+        "criteria": [
+          "current Deal",
+          "valid Quote reference/source lines",
+          "customer",
+          "exact INV preflight"
+        ],
+        "holdReasons": [
+          "quote/service/contact unresolved",
+          "exact invoice collision"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:22.032Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210009,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "deposit_invoice": {
+      "family": {
+        "familyKey": "deposit_invoice",
+        "displayName": "Deposit Invoice",
+        "workflowType": "deposit_invoice",
+        "branch": "Deposit Invoice",
+        "sourceCategory": "deal",
+        "criteria": [
+          "Deposit Status blank/Pending",
+          "positive Deposit Required",
+          "valid contact",
+          "exact -D preflight"
+        ],
+        "holdReasons": [
+          "invalid deposit amount/source data",
+          "existing conflict"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:22.502Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210010,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "final_weight_overweight": {
+      "family": {
+        "familyKey": "final_weight_overweight",
+        "displayName": "Final Weight — Overweight",
+        "workflowType": "final_weight_adjustment",
+        "branch": "Final Weight — Overweight",
+        "sourceCategory": "deal",
+        "criteria": [
+          "existing Draft INV",
+          "Actual > Estimated",
+          "positive per-extra-tonne"
+        ],
+        "holdReasons": [
+          "invoice not Draft",
+          "weights/rate invalid"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:22.970Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210011,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "final_weight_underweight": {
+      "family": {
+        "familyKey": "final_weight_underweight",
+        "displayName": "Final Weight — Underweight",
+        "workflowType": "final_weight_adjustment",
+        "branch": "Final Weight — Underweight",
+        "sourceCategory": "deal",
+        "criteria": [
+          "existing Draft INV",
+          "Actual < Estimated",
+          "Full Container Pickup/due-date fallback"
+        ],
+        "holdReasons": [
+          "invoice not Draft",
+          "source missing"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:23.438Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210012,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "extra_hire": {
+      "family": {
+        "familyKey": "extra_hire",
+        "displayName": "Extra Hire",
+        "workflowType": "extra_hire",
+        "branch": "Extra Hire",
+        "sourceCategory": "deal",
+        "criteria": [
+          "Hire Duration 30",
+          "prior Hire End Date",
+          "container/type",
+          "next suffix clear"
+        ],
+        "holdReasons": [
+          "date/type/container missing",
+          "suffix conflict",
+          "prior post-success update pending"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:23.903Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210013,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    },
+    "warranty_customer_invoice_and_aviso_po": {
+      "family": {
+        "familyKey": "warranty_customer_invoice_and_aviso_po",
+        "displayName": "Warranty/Aviso",
+        "workflowType": "warranty_reconciliation",
+        "branch": "Warranty Customer Invoice and Aviso PO",
+        "sourceCategory": "deal",
+        "criteria": [
+          "one supported Added Services warranty",
+          "correct main invoice state",
+          "native WAR and Aviso PO preflight"
+        ],
+        "holdReasons": [
+          "multiple/unmapped warranty",
+          "$150k/$200k/$250k",
+          "non-Draft warranty PO",
+          "missing main invoice"
+        ]
+      },
+      "outcome": "blocked",
+      "searchedAt": "2026-09-30T17:47:24.372Z",
+      "candidates": [],
+      "message": "No bounded AP-side current-candidate field mapping is configured for this family. Configure a current status/stage predicate before discovery; AP will not enumerate VTiger.",
+      "sourceSnapshotHash": null,
+      "rulesSnapshotHash": "36e1b28f4274a769baf7b0bc6d30d7c77324b446ba88549b5581cc23d79ca108",
+      "xeroPreflightHash": null,
+      "discoveryId": 210014,
+      "xeroWritePermitted": false,
+      "xeroWriteMethodsCalled": []
+    }
+  },
+  "manifest": {
+    "id": 60001,
+    "releaseId": "AFO-REL-20260930174733-8125B304",
+    "status": "preparation",
+    "included": 0,
+    "held": 12,
+    "noCurrentCandidate": 2,
+    "excluded": 0,
+    "families": [
+      {
+        "familyKey": "initial_container_control_asset",
+        "displayName": "Initial Container Control — Asset",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "VTiger Container Control REQUEST workflow action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-cc-created",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "In VTiger, pause this shared REQUEST financial webhook action only during approved shared Container Control cutover; preserve configuration for rollback.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "initial_container_control_customer_sale",
+        "displayName": "Initial Container Control — Customer Sale",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "Same shared VTiger Container Control REQUEST action",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Same; Asset, Customer Sale and For Hire must be cut over together unless VTiger source actions are split.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "initial_container_control_for_hire",
+        "displayName": "Initial Container Control — For Hire",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "Same shared VTiger Container Control REQUEST action",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Same.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "deposit_invoice",
+        "displayName": "Deposit Invoice",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "VTiger deposit action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-deposit-invoice; confirm legacy Make deposit writer remains paused",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Pause/redirect only after exact approval; confirm Make remains paused.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "extra_hire",
+        "displayName": "Extra Hire",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "VTiger action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-extra-hire-invoice",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Pause/redirect only after exact invoice + Hire End Date cutover approval.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "final_weight_overweight",
+        "displayName": "Final Weight — Overweight",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "VTiger action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-finalise-main-invoice",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Pause/redirect only after exact Draft-main-invoice cutover approval.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "final_weight_underweight",
+        "displayName": "Final Weight — Underweight",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "VTiger action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-finalise-main-invoice-underweight",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Pause/redirect only after exact Draft-main-invoice cutover approval.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "main_customer_invoice",
+        "displayName": "Main Customer Invoice",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "VTiger main action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-main-invoice; confirm legacy Make main writer remains paused",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Pause/redirect only this AP-equivalent action after exact approval; confirm Make remains paused.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "recurring_for_hire",
+        "displayName": "Recurring For Hire",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "Operations Heartbeat forHireMonthlyPo; task UID PtaAhkr5tHtixG7E4DTZhC; /api/scheduled/forHireMonthlyPo",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Disable/pause this Operations Heartbeat immediately before enabling the approved AP recurring-for-hire task; retain paused for rollback.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "recurring_storage",
+        "displayName": "Recurring Storage",
+        "releaseStatus": "no_current_candidate",
+        "statusReason": "NO_CURRENT_CANDIDATE: the bounded current discovery found no eligible source/period. This is factual readiness evidence, not a failure or inferred pass.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "Operations Heartbeat storage-monthly-billing; task UID 4rB9Yofib8MRLRbijj4z9k; /api/scheduled/storageMonthlyBilling",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Disable/pause this Operations Heartbeat immediately before enabling approved AP recurring-storage task; retain paused for rollback.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "origin_storage_activation",
+        "displayName": "Origin Storage Activation",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "Shared VTiger storage action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-storage",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Pause old shared storage action during approved joint Origin/Destination AP handover; retain paused for rollback.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "destination_storage_activation",
+        "displayName": "Destination Storage Activation",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "Same shared VTiger storage action",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Same.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "storage_finalisation_recovery",
+        "displayName": "Storage Finalisation / Recovery",
+        "releaseStatus": "no_current_candidate",
+        "statusReason": "NO_CURRENT_CANDIDATE: the bounded current discovery found no eligible source/period. This is factual readiness evidence, not a failure or inferred pass.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "VTiger finalisation action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-finalise-storage",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Pause old finalisation action during approved AP finalisation cutover; retain paused.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      },
+      {
+        "familyKey": "warranty_customer_invoice_and_aviso_po",
+        "displayName": "Warranty Customer Invoice and Aviso PO",
+        "releaseStatus": "held",
+        "statusReason": "Held — Current candidate discovery is blocked by AP-side mapping or read-only source access. No exact named reviewer-confirmed shadow test exists for this family branch. Source, rules or Xero preflight evidence is stale and requires a fresh candidate test. No complete current due/queued Draft document manifest is available. Disabled VTiger post-success field and assigned-user mapping is not yet validated by GET-only metadata.",
+        "sourceRecordNumber": null,
+        "evidenceStale": false,
+        "currentDocumentCount": 0,
+        "legacyWriterIdentifier": "VTiger action → https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-warranty-reconcile, plus Main Customer Invoice warranty entry path",
+        "legacyWriterOwner": "ContainerZone Operations / IT",
+        "legacyDisableAction": "Pause/redirect only after coordinated warranty/main-invoice cutover approval; preserve shared warranty ledger.",
+        "postSuccessMappingReadiness": {
+          "assignedUser": {
+            "configured": false,
+            "formatValid": true,
+            "message": "Metadata was not verified."
+          },
+          "modules": [
+            {
+              "missingFields": [
+                "related_to",
+                "commentcontent"
+              ],
+              "module": "ModComments",
+              "requiredFields": [
+                "related_to",
+                "commentcontent"
+              ]
+            },
+            {
+              "missingFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ],
+              "module": "Calendar",
+              "requiredFields": [
+                "parent_id",
+                "subject",
+                "due_date"
+              ]
+            },
+            {
+              "missingFields": [
+                "cf_potentials_hireenddate"
+              ],
+              "module": "Potentials",
+              "requiredFields": [
+                "cf_potentials_hireenddate"
+              ]
+            }
+          ],
+          "outcome": "blocked",
+          "readOnly": true
+        }
+      }
+    ]
+  }
+}

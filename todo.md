@@ -11,3 +11,17 @@
 - [x] Updated the existing Candidate Roster, All-Family Release and AP Webhook Interface UI: it shows bounded candidate evidence, source/rules/preflight hashes, `NO_CURRENT_CANDIDATE`, current due/Draft evidence, prefilled handovers/exclusions, actual deployed route paths/source entity types, and deterministic event-ID guidance without exposing any secret.
 - [x] Verified `npx tsc --noEmit` and `pnpm test`: 57 Vitest files / 309 tests pass before final build. The release remains readiness-only and disabled.
 - [ ] Future gate: a named document-specific approval must show the exact source, legacy writer pause action, AP event/schedule change, Xero Draft payload/preflight and hashes, VTiger post-success operation, and maintenance window before any external writer, schedule, flag or Xero document can change.
+
+## AP Readiness Collection — 30 September 2026
+
+- [x] Ran AP-only read-only readiness collection: verified the CONTAINERZONE Xero tenant, verified core VTiger read-only login, executed controlled discovery for all 14 families, validated disabled post-success mapping metadata, and prepared manifest `AFO-REL-20260930174733-8125B304`.
+- [x] Recorded factual result: 12 families are held because the bounded current-candidate mapping configuration is absent; Recurring Storage and Storage Finalisation / Recovery are `NO_CURRENT_CANDIDATE` because no verified AP execution-state storage event exists. No candidate was selected, no shadow evidence was confirmed, and no financial document was proposed for execution.
+- [x] Confirmed no financial schedule record/Heartbeat exists and no Xero write, VTiger record/workflow change, Operations/Make change, or live flag activation occurred.
+- [ ] Provide the approved read-only VTiger source field/stage mappings for the 12 non-storage families, resolve VTiger metadata describe access and supply the AP assigned-user webservice ID, then re-run bounded discovery before any reviewer selection or shadow confirmation.
+
+## Single-Family Live Pilot Preparation — 30 September 2026
+
+- [x] Simplified Financial Operations → Controls → AP Webhook Interface into one Financial Pilot Tracker: event receipt, AP proposal, named approval, verified Xero Draft read-back, held/error state and a concise first-pilot information checklist.
+- [x] Preserved the server-only Xero Draft boundary. The tracker does not expose a browser write action, enable a schedule, change VTiger, or reveal the webhook secret.
+- [x] TypeScript check and production build passed after the tracker update.
+- [ ] Receive one exact pilot source/family, expected Draft reference/type, counterparty, total, GST, dates and line summary; present the exact Xero Draft payload/preflight for user confirmation before any external configuration or Xero Draft write.

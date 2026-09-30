@@ -1,0 +1,79 @@
+{
+  "collectedAt": "2026-09-30T17:54:03.019Z",
+  "connection": {
+    "configured": true,
+    "missing": [],
+    "outcome": "passed",
+    "checkedAt": "2026-09-30T17:53:56.037Z",
+    "message": "Read-only VTiger challenge and documented form-login passed. No CRM record, workflow URL or schedule was changed."
+  },
+  "mapping": {
+    "configuration": {
+      "enabled": false,
+      "assignedUserId": null,
+      "notes": {
+        "enabled": false,
+        "module": "ModComments",
+        "recordLinkField": "related_to",
+        "commentField": "commentcontent"
+      },
+      "tasks": {
+        "enabled": false,
+        "module": "Calendar",
+        "recordLinkField": "parent_id",
+        "subjectField": "subject",
+        "dueDateField": "due_date"
+      },
+      "hireEndUpdate": {
+        "enabled": false,
+        "module": "Potentials",
+        "fieldName": "cf_potentials_hireenddate"
+      }
+    },
+    "outcome": "blocked",
+    "readOnly": true,
+    "modules": [
+      {
+        "module": "ModComments",
+        "requiredFields": [
+          "related_to",
+          "commentcontent"
+        ],
+        "missingFields": [
+          "related_to",
+          "commentcontent"
+        ]
+      },
+      {
+        "module": "Calendar",
+        "requiredFields": [
+          "parent_id",
+          "subject",
+          "due_date"
+        ],
+        "missingFields": [
+          "parent_id",
+          "subject",
+          "due_date"
+        ]
+      },
+      {
+        "module": "Potentials",
+        "requiredFields": [
+          "cf_potentials_hireenddate"
+        ],
+        "missingFields": [
+          "cf_potentials_hireenddate"
+        ]
+      }
+    ],
+    "assignedUser": {
+      "configured": false,
+      "formatValid": true,
+      "message": "Metadata was not verified."
+    },
+    "message": "Invalid username or password",
+    "xeroWritePermitted": false,
+    "vtigerWritePermitted": false
+  }
+}
