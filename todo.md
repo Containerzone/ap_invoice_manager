@@ -25,3 +25,5 @@
 - [x] Preserved the server-only Xero Draft boundary. The tracker does not expose a browser write action, enable a schedule, change VTiger, or reveal the webhook secret.
 - [x] TypeScript check and production build passed after the tracker update.
 - [ ] Receive one exact pilot source/family, expected Draft reference/type, counterparty, total, GST, dates and line summary; present the exact Xero Draft payload/preflight for user confirmation before any external configuration or Xero Draft write.
+
+- [x] Replaced the detailed webhook-contract view with a ten-row Trigger Dashboard matching the business triggers: Container Control acquisition, Recurring For Hire, Storage activation, Recurring storage, Storage finalisation, Main customer invoice, Deposit invoice, Final weight adjustment, Extra Hire and Warranty reconciliation. Storage activation and Final weight adjustment aggregate their two internal routes into one row each.

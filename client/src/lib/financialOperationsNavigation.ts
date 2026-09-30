@@ -76,7 +76,7 @@ export const FINANCIAL_OPERATIONS_NAVIGATION: readonly FinancialOperationsNaviga
     tabs: [
       { value: "schedules", label: "Schedules" },
       { value: "configuration", label: "Automation Settings", adminOnly: true },
-      { value: "webhook-interface", label: "AP Webhook Interface", adminOnly: true },
+      { value: "webhook-interface", label: "Trigger Dashboard", adminOnly: true },
       { value: "cutover-centre", label: "Cutover Control Centre", adminOnly: true },
       { value: "release-readiness", label: "All-Family Release", adminOnly: true },
     ],
