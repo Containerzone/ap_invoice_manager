@@ -43,3 +43,10 @@
 - [x] Bounded read-only shortlist found D702885 future-dated (Date In 2026-10-05) and D702839 already having all three intended Xero references. Neither is suitable for the first new Draft without reconciliation; no source selected.
 - [ ] **Not live:** No exact named Deal/three-document approval, legacy writer pause confirmation, or enabled storage deployment flag exists. No Xero Draft, VTiger record/workflow URL, Operations setting, Make scenario, or schedule was changed. Obtain a safe exact pilot source, present document payload and get document-specific confirmation before activation.
 - [ ] The new attachment excludes recurring storage, finalisation and unrelated workflows; none was activated. See `docs/loaded-storage-draft-handoff.md` for mapping and pilot prerequisites.
+
+## Exact storage pilot checks — 2026-10-01
+
+- [x] D702834 (VTiger 5x479658) was read only: stage `1 DETAILS CONFIRMED`, Storage Required `Yes at Destination`, Date In blank. Not eligible; no Draft attempt.
+- [x] D702885 (VTiger 5x484050) was read only: qualifying Destination stage but Date In 2026-10-05 is future-dated as of 2026-10-01 Sydney. Exact Xero refs `JD702885` and `GD702885` already exist as Drafts; `INV-702885-A` exists as DELETED. Existing POs have ex-GST subtotals $275.00 and $35.72 versus proposed rule amounts $250.00 and $42.21. Do not overwrite, duplicate or suffix-bypass.
+- [x] Corrected exact ACCREC Xero preflight to treat DELETED and VOIDED number matches as occupied. TypeScript, 61 test files / 342 tests and production build pass. No financial writer gate or VTiger/Operations workflow was enabled or changed.
+- [ ] Obtain an unbilled eligible named Deal or separately agree an exact D702885 reconciliation/partial-document plan with the legacy writer owner. Present a document-specific payload and handoff for confirmation before any Xero financial write.

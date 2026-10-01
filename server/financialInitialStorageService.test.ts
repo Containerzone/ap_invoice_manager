@@ -108,7 +108,7 @@ describe("narrow loaded storage event coordinator", () => {
   });
   it("holds a collision and creates no Draft", async () => {
     vi.stubEnv("FINANCIAL_LIVE_WRITES_ENABLED", "true"); vi.stubEnv("FINANCIAL_GLOBAL_SHADOW_MODE", "false"); vi.stubEnv("FINANCIAL_INITIAL_STORAGE_ENABLED", "true");
-    await armTestEvent(); preflight[0].duplicateState = "found";
+    await armTestEvent(); preflight[0].duplicateState = "found"; preflight[0].status = "DELETED";
     const { processInitialLoadedStorage } = await import("./financialInitialStorageService");
     expect(await processInitialLoadedStorage("5x123")).toMatchObject({ ok: false, status: "failed" });
     expect((await import("./financialWriterExecutionService")).executeGuardedFinancialWriterCommand).not.toHaveBeenCalled();

@@ -243,7 +243,10 @@ async function preflightDocument(auth: ReadOnlyAuth, result: FinancialXeroPrefli
     }
   }
   const response = await xeroRead<any>(auth, `invoice:${result.documentNumber.toUpperCase()}`, `${XERO_API_BASE}/Invoices`, { InvoiceNumbers: result.documentNumber });
-  const records = (response?.Invoices ?? []).filter((invoice: any) => invoice?.Type === "ACCREC" && !["VOIDED", "DELETED"].includes(invoice?.Status));
+  // Xero still returns deleted/voided invoice numbers and may refuse their reuse.
+  // Every exact-number ACCREC is a collision, regardless of its status.
+  const records = (response?.Invoices ?? []).filter((invoice: any) => invoice?.Type === "ACCREC"
+    && String(invoice?.InvoiceNumber ?? "").trim().toUpperCase() === result.documentNumber!.trim().toUpperCase());
   if (records.length === 0) { result.duplicateState = "not_found"; return; }
   if (records.length > 1) { result.duplicateState = "ambiguous"; result.error = "More than one active Xero customer invoice has this number."; return; }
   const invoice = records[0];
