@@ -39,6 +39,20 @@ The isolated Draft transport can be enabled for one persisted, expiring **Deal/l
 
 A bounded read-only VTiger query returned up to ten Deals in the exact current Origin or Destination storage stages, but **stage alone is not evidence of an unbilled Draft**. The most recently modified Destination Deal **D702885** has Date In **2026-10-05**, which was future-dated at the 2026-10-01 check. The AP workflow now holds future Sydney Date In values before reservation or Xero preflight. The next recent Origin Deal **D702839** was validated with Date In 2026-09-08, a 23-day initial period through 2026-09-30, but a GET-only Xero preflight found **all three expected numbers already present**: `INV-702839-A`, `JD702839`, `GD702839`. Its matching contact/item results do **not** justify recreating the documents or adding suffixes. Neither Deal was selected, approved, written or modified. A different exact pilot source must be named or selected for the first creation.
 
+### D702885 — owner-confirmed reconciliation-only case (1 October 2026)
+
+The owner confirmed the **new AP rules are authoritative for future storage events**, but instructed us to leave D702885's existing Xero records unchanged. This is **not** an approval to modify, recreate or renumber the legacy documents, pause a writer, or activate AP financial transport. Keep this case outside the new AP event/suffix ledger; a held reservation would otherwise consume the `A` suffix without creating a document.
+
+VTiger exact Deal `5x484050`: stage `11 STORAGE at DEST`, storage required `Yes at Destination`, 20 Foot Standard container `GRRU2300868`, customer **Wez Jenkins**, destination driver **GM Towing**, Date In **2026-10-05**, delivery **2026-10-09**. The AP inclusive first period would be five days, 5–9 October; customer invoice date 5 October and due 6 October.
+
+| Exact reference | New AP rule, if this were unbilled (ex GST / GST / total) | Current Xero record (ex GST / GST / total) |
+| --- | --- | --- |
+| `INV-702885-A` — Wez Jenkins | Storage-only $42.21 / $4.22 / $46.43, account 200 | **DELETED**. Former two-line invoice included transport and storage: $321.43 / $32.14 / $353.57, account 200; dated 5 Oct, due 6 Oct. Its exact number remains occupied for preflight purposes. |
+| `JD702885` — GM Towing | $250.00 / $25.00 / $275.00, item `JD 20`, account 310 | **DRAFT** $275.00 / $27.50 / $302.50, item `JD 20`, account 310; Xero document date 1 Oct. |
+| `GD702885` — CONTAINERZONE | $42.21 / $4.22 / $46.43, account 311 | **DRAFT** $35.72 / $3.57 / $39.29, item `GD 20`, account 311; Xero document date 1 Oct. |
+
+The current AP preflight now correctly detects the DELETED invoice and both DRAFT POs as exact-number collisions. The difference is **not merely GST rounding**: the legacy invoice also contained a transport line, and the PO unit/rate amounts differ from the new AP rule. Never suffix-bypass these records. If a later business decision requests correction of D702885, prepare a separate exact-document plan and seek explicit confirmation before any Xero or VTiger change. The legacy shared VTiger storage action is still active and must be coordinated with ContainerZone Operations / IT for a future cutover; do not generate a test Deal while it remains active.
+
 ## Example request / currently expected response
 
 ```http
@@ -59,6 +73,6 @@ A document-specific real success response cannot be represented as an observed r
 
 ## Validation and external-impact statement
 
-- TypeScript check passed; **61 test files / 341 tests** passed after the pilot-source, in-flight locking and persisted-approval gate refinements; production build passed. The focused tests cover both stages, exact names and account/payload shape, four rate types and JD item selection, pro-rata/DST/same-day periods, future-date and missing-data holds, deposit suffix exclusion, organisation priority, invalid secret, replay, collision, partial failure, pending VTiger note, and isolation of the storage-only writer gate.
+- TypeScript check passed; **61 test files / 342 tests** passed after the exact deleted/voided invoice-number collision guard, pilot-source, in-flight locking and persisted-approval gate refinements; production build passed. The focused tests cover both stages, exact names and account/payload shape, four rate types and JD item selection, pro-rata/DST/same-day periods, future-date and missing-data holds, deposit suffix exclusion, organisation priority, invalid secret, replay, collision, partial failure, pending VTiger note, and isolation of the storage-only writer gate.
 - The new local endpoint returned **401** for an unauthenticated request; the new storage event table has **zero live events** at handoff.
 - Only AP source files and one additive AP ledger migration changed. The Xero and VTiger verification calls were read-only accounting/metadata/retrieve calls (VTiger authentication used its required challenge/login exchange). **No Xero financial document, VTiger record/workflow URL, Operations setting/schedule, Make scenario, or financial Heartbeat job was changed.**
