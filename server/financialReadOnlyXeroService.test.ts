@@ -129,6 +129,26 @@ describe("financial read-only Xero service", () => {
     }
   });
 
+  it("holds an exact number shared by deleted history and a newer Draft", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
+      .mockResolvedValueOnce({ data: { Invoices: [
+        { InvoiceID: "old-deleted", InvoiceNumber: "INV-702885-A", Type: "ACCREC", Status: "DELETED" },
+        { InvoiceID: "new-draft", InvoiceNumber: "INV-702885-A", Type: "ACCREC", Status: "DRAFT" },
+      ] } })
+      .mockResolvedValueOnce({ data: { Contacts: [{ ContactID: "wez-1", Name: "Wez Jenkins" }] } });
+    const [result] = await preflightFinancialXeroIntents([{
+      documentFamily: "customer_invoice", documentType: "storage_activation", proposedAction: "create_draft", proposedDocumentNumber: "INV-702885-A",
+      reference: "D702885", partyName: "Wez Jenkins", partySourceId: null, accountCode: "200", gstTreatment: "GST_EXCLUSIVE", currency: "AUD",
+      issueDate: null, dueDate: null, subtotal: 42.21, taxAmount: 4.22, total: 46.43,
+      lineItems: [{ itemCode: "", description: "Storage", quantity: 1, unitAmount: 42.21, lineAmount: 42.21, accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" }],
+      validationStatus: "valid", sourceWorkflow: "storage_activation", sourceRecordId: "5x484050",
+    }]);
+    expect(result).toMatchObject({ duplicateState: "ambiguous", xeroDocumentId: null });
+    expect(result?.error).toMatch(/immutable ID/);
+    noMutationAssertions();
+  });
+
   it("provides a bounded historical preview without persisting or guessing unmatched references", async () => {
     mockGet.mockResolvedValueOnce({ data: { PurchaseOrders: [{ PurchaseOrderID: "po-asset", PurchaseOrderNumber: "A1860", Status: "AUTHORISED", Contact: { Name: "Supplier" } }] } });
     const rows = await previewHistoricalXeroReferences(["A1860", "NOT-A-PATTERN"]);

@@ -248,7 +248,7 @@ async function preflightDocument(auth: ReadOnlyAuth, result: FinancialXeroPrefli
   const records = (response?.Invoices ?? []).filter((invoice: any) => invoice?.Type === "ACCREC"
     && String(invoice?.InvoiceNumber ?? "").trim().toUpperCase() === result.documentNumber!.trim().toUpperCase());
   if (records.length === 0) { result.duplicateState = "not_found"; return; }
-  if (records.length > 1) { result.duplicateState = "ambiguous"; result.error = "More than one active Xero customer invoice has this number."; return; }
+  if (records.length > 1) { result.duplicateState = "ambiguous"; result.error = "More than one exact Xero customer invoice has this number, including deleted or voided history; reconcile by immutable ID."; return; }
   const invoice = records[0];
   result.duplicateState = "found";
   result.xeroDocumentId = invoice.InvoiceID ?? null;
