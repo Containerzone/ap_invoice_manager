@@ -86,7 +86,6 @@ export function FinancialWebhookInterface() {
   const settings = trpc.financialOperations.automationSettings.useQuery();
   const events = trpc.financialOperations.webhookEvents.useQuery({ limit: 100 });
   const executions = trpc.financialOperations.writerExecutions.useQuery({ limit: 100 });
-  const storageEvents = trpc.financialOperations.initialStorageEvents.useQuery({ limit: 20 });
   const webhookEvents = (events.data ?? []) as WebhookEvent[];
   const writerExecutions = (executions.data ?? []) as WriterExecution[];
   const routeConnected = Boolean((settings.data as AutomationSettings | undefined)?.proposalWebhook?.configured);
@@ -108,7 +107,7 @@ export function FinancialWebhookInterface() {
     return { trigger, event, execution, label: routeConnected ? "Waiting for VTiger setup" : "AP authentication missing", tone: "waiting" as const, detail: routeConnected ? "No VTiger action has called this AP endpoint yet" : "Configure the AP private webhook secret first" };
   }), [routeConnected, webhookEvents, writerExecutions]);
 
-  const refresh = () => void Promise.all([settings.refetch(), events.refetch(), executions.refetch(), storageEvents.refetch()]);
+  const refresh = () => void Promise.all([settings.refetch(), events.refetch(), executions.refetch()]);
 
   return <div className="space-y-4">
     <Card className="border-sky-200 bg-sky-50/60">
@@ -122,11 +121,6 @@ export function FinancialWebhookInterface() {
     <Card>
       <CardHeader><CardTitle className="text-base">Trigger status</CardTitle><p className="mt-1 text-sm text-muted-foreground">Green means Xero read-back confirmed a Draft. Blue means a proposal is ready. Amber means waiting or safely held. Red needs attention.</p></CardHeader>
       <CardContent>{events.isLoading || executions.isLoading ? <Skeleton className="h-96" /> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">VTiger trigger</th><th className="p-3">Latest source event</th><th className="p-3">Xero Draft</th><th className="p-3">Current status</th></tr></thead><tbody>{rows.map((row) => <tr key={row.trigger.routeKey} className="border-b align-top last:border-0"><td className="p-3 font-medium">{row.trigger.label}</td><td className="p-3 text-xs">{row.event ? <><span className="font-mono">{row.event.sourceRecordNumber ?? row.event.sourceRecordId}</span><br /><span className="text-muted-foreground">{dateTime(row.event.receivedAt)}</span></> : <span className="text-muted-foreground">No event yet</span>}</td><td className="p-3 text-xs">{row.execution ? <><span className="font-mono">{row.execution.proposedDocumentNumber}</span><br /><span className="text-muted-foreground">{row.execution.xeroDocumentStatus ?? row.execution.status}</span></> : <span className="text-muted-foreground">No Draft yet</span>}</td><td className="p-3"><Badge className={badgeClass(row.tone)}>{row.label}</Badge><p className="mt-1 max-w-sm text-xs text-muted-foreground">{row.detail}</p></td></tr>)}</tbody></table></div>}</CardContent>
-    </Card>
-
-    <Card>
-      <CardHeader><CardTitle className="text-base">Initial loaded-container storage</CardTitle><p className="text-sm text-muted-foreground">Read-only AP records for Origin and Destination storage. Each completed event has one invoice and two supplier PO Draft read-backs.</p></CardHeader>
-      <CardContent>{storageEvents.isLoading ? <Skeleton className="h-28" /> : storageEvents.data?.length ? <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b text-left text-xs uppercase text-muted-foreground"><tr><th className="p-2">Deal / location</th><th className="p-2">Event</th><th className="p-2">Customer invoice</th><th className="p-2">Transport PO</th><th className="p-2">Storage PO</th></tr></thead><tbody>{storageEvents.data.map((event) => { const receipts = Array.isArray(event.documentResults) ? event.documentResults as Array<{ number?: string; status?: string }> : []; return <tr key={event.id} className="border-b"><td className="p-2 font-mono">{event.dealNumber} · {event.location}</td><td className="p-2">{event.status}</td>{[0, 1, 2].map((index) => <td key={index} className="p-2 font-mono">{receipts[index]?.number ?? "—"}{receipts[index]?.status ? ` (${receipts[index]?.status})` : ""}</td>)}</tr>; })}</tbody></table></div> : <p className="text-sm text-muted-foreground">No initial storage event has been received by AP yet.</p>}</CardContent>
     </Card>
 
     <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground"><Clock3 className="mr-2 inline h-4 w-4" />When a trigger arrives, this page updates with the source reference and then the Xero Draft number. A held trigger has not created a Xero document.</div>

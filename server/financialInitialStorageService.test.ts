@@ -51,12 +51,20 @@ beforeEach(async () => {
   vi.stubEnv("FINANCIAL_GLOBAL_SHADOW_MODE", "true");
   vi.stubEnv("FINANCIAL_INITIAL_STORAGE_ENABLED", "false");
   event = createEvent();
-  preflight = ["INV-123-A", "JD123", "GD123"].map((number, i) => ({ documentNumber: number, duplicateState: "not_found", contactCheck: { found: true, contactId: `xero-contact-${i}` }, itemChecks: i === 1 ? [{ itemCode: "JD", found: true, nativeDescription: "Exact Xero JD description" }] : [] }));
+  preflight = ["INV-123-A", "JD123", "GD123"].map((number, i) => ({ documentNumber: number, duplicateState: "not_found", contactCheck: { found: true, contactId: `xero-contact-${i}` }, itemChecks: i === 1 ? [{ itemCode: "JD 20", found: true, nativeDescription: "Exact Xero JD description" }] : [] }));
   await setup();
 });
 afterEach(() => vi.unstubAllEnvs());
 
 describe("narrow loaded storage event coordinator", () => {
+  it("holds a future Sydney Date In before local reservation or Xero preflight", async () => {
+    const { retrieveCurrentVtigerFinancialRecord } = await import("./vtigerFinancialReadService");
+    vi.mocked(retrieveCurrentVtigerFinancialRecord).mockResolvedValueOnce({ ...source, cf_potentials_datein: "2099-08-10" });
+    const { processInitialLoadedStorage } = await import("./financialInitialStorageService");
+    expect(await processInitialLoadedStorage("5x123")).toMatchObject({ ok: false, status: "held", warning: expect.stringContaining("future") });
+    expect((await import("./financialInitialStorageDb")).reserveInitialStorageEvent).not.toHaveBeenCalled();
+    expect((await import("./financialReadOnlyXeroService")).preflightFinancialXeroIntents).not.toHaveBeenCalled();
+  });
   it("refreshes VTiger and holds before any Xero call when deployment is locked", async () => {
     const { processInitialLoadedStorage } = await import("./financialInitialStorageService");
     const xero = await import("./financialReadOnlyXeroService");
@@ -81,7 +89,8 @@ describe("narrow loaded storage event coordinator", () => {
     const { processInitialLoadedStorage } = await import("./financialInitialStorageService");
     expect(await processInitialLoadedStorage("5x123")).toMatchObject({ ok: true, status: "writeback_pending", customerInvoice: "INV-123-A", transportPurchaseOrder: "JD123", storagePurchaseOrder: "GD123" });
     expect(vi.mocked(writer.executeGuardedFinancialWriterCommand).mock.calls.map(([command]) => command.payload.documentNumber)).toEqual(["INV-123-A", "JD123", "GD123"]);
-    expect(vi.mocked(writer.executeGuardedFinancialWriterCommand).mock.calls[1]?.[0].payload.body).toMatchObject({ PurchaseOrders: [{ Status: "DRAFT", CurrencyCode: "AUD", LineItems: [{ ItemCode: "JD", AccountCode: "310", Description: "Exact Xero JD description" }] }] });
+    expect(vi.mocked(writer.executeGuardedFinancialWriterCommand).mock.calls[1]?.[0].payload.body).toMatchObject({ PurchaseOrders: [{ Status: "DRAFT", CurrencyCode: "AUD", LineItems: [{ ItemCode: "JD 20", AccountCode: "310", Description: "Exact Xero JD description" }] }] });
+    expect(vi.mocked((await import("./financialInitialStorageDb")).updateInitialStorageEvent).mock.calls.filter(([call]) => call.status === "reserved")).toHaveLength(3);
     expect((await import("./financialInitialStorageDb")).updateInitialStorageEvent).toHaveBeenCalledWith(expect.objectContaining({ status: "drafts_created", receipts: expect.arrayContaining([expect.objectContaining({ number: "GD123" })]) }));
   });
   it("keeps all verified Draft receipts after VTiger note failure without replaying transport", async () => {

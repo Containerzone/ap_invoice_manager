@@ -16,6 +16,7 @@ import {
 } from "./financialWorkflowDb";
 import { readBackFinancialDraft } from "./financialReadOnlyXeroService";
 import { financialSha256 } from "./financialProposalIntegrity";
+import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 
 export type GuardedFinancialWriterCommand = {
@@ -58,6 +59,17 @@ export async function executeGuardedFinancialWriterCommand(
 ): Promise<GuardedFinancialWriterOutcome> {
   // Reject before writing any local execution state or making any Xero call.
   assertFinancialDraftWriteAuthorised(command.authorisation, { requireExecutionId: false });
+  if (command.authorisation.storagePilotEventId !== undefined) {
+    if (command.workflowType !== "storage_activation" || command.proposedAction !== "create_draft") {
+      throw new Error("Storage pilot cannot execute an unrelated family or update action.");
+    }
+    await verifyInitialStoragePilotWriteAccess({
+      eventId: command.authorisation.storagePilotEventId,
+      approvalReference: command.authorisation.approvalReference!,
+      documentNumber: command.payload.documentNumber,
+      preparedBy: command.preparedBy,
+    });
+  }
 
   const prepared = await prepareFinancialWriterExecution({
     workflowRunId: command.workflowRunId,

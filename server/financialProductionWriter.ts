@@ -6,6 +6,7 @@ import type {
 } from "./financialWorkflowEngine";
 import { getXeroReadAuthWithRefresh } from "./xeroService";
 import { runXeroRequest } from "./xeroRequestManager";
+import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -53,6 +54,9 @@ export type FinancialWriteAuthorisation = {
   cutoverPackApproved: boolean;
   currentDocumentPreflightPassed: boolean;
   legacyWriterHandoffComplete: boolean;
+  /** Isolated loaded-storage pilot receipt; never supplied by a browser or generic financial route. */
+  storagePilotEventId?: number;
+  storagePilotApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -230,6 +234,22 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.storagePilotEventId !== undefined) {
+    if (context.workflowType !== "storage_activation" || !Number.isInteger(context.storagePilotEventId) || context.storagePilotEventId <= 0) {
+      throw new FinancialWriteDisabledError("Storage pilot authorisation is not valid for this financial family.");
+    }
+    if (!Number.isInteger(context.storagePilotApprovedBy) || Number(context.storagePilotApprovedBy) <= 0) {
+      throw new FinancialWriteDisabledError("Storage pilot requires its named AP approver.");
+    }
+    if (process.env.FINANCIAL_INITIAL_STORAGE_ENABLED !== "true") throw new FinancialWriteDisabledError("Initial loaded-storage Draft transport is not enabled.");
+    if (!context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete || !context.approvalReference?.trim()) {
+      throw new FinancialWriteDisabledError("Storage pilot needs exact Xero preflight, named approval and legacy writer handoff.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) {
+      throw new FinancialWriteDisabledError("Storage Draft transport requires an AP execution ledger ID.");
+    }
+    return;
+  }
   if (!isFinancialLiveWriteEnvironmentEnabled()) {
     throw new FinancialWriteDisabledError("Financial writer environment lock is active. Set no production action until a separately approved release enables it.");
   }
@@ -265,7 +285,9 @@ function responseDocument(payload: FinancialDraftPayload, data: any): any {
 
 /**
  * Performs exactly one Draft-only Xero document operation after every approval
- * guard has passed. No current route, webhook or schedule can call this method.
+ * guard has passed. The loaded-storage route is additionally restricted to
+ * three exact, named, approved Draft POSTs; unrelated financial families retain
+ * their independent disabled release gates.
  * The deterministic idempotency key is preserved for its one transient retry.
  */
 export async function executeFinancialDraftWrite(
@@ -273,8 +295,24 @@ export async function executeFinancialDraftWrite(
   context: FinancialWriteAuthorisation,
 ): Promise<FinancialDraftWriteResult> {
   assertFinancialDraftWriteAuthorised(context);
+  if (context.storagePilotEventId !== undefined && (payload.method !== "POST" || payload.expectedXeroDocumentId
+    || !["/Invoices", "/PurchaseOrders"].includes(payload.endpoint))) {
+    throw new FinancialWriteDisabledError("Loaded-storage pilot permits only a new ACCREC or Purchase Order Draft POST.");
+  }
+  if (context.storagePilotEventId !== undefined) {
+    const rows = payload.documentFamily === "customer_invoice" ? payload.body.Invoices : payload.body.PurchaseOrders;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (!row || row.Status !== "DRAFT" || (payload.documentFamily === "customer_invoice" && row.Type !== "ACCREC")) {
+      throw new FinancialWriteDisabledError("Loaded-storage pilot requires exactly one ACCREC or Purchase Order in DRAFT status.");
+    }
+  }
   if (!/^[a-f0-9]{64}$/i.test(payload.idempotencyKey)) {
     throw new FinancialWriteDisabledError("Financial writer rejected the request because a deterministic 64-character idempotency key is required.");
+  }
+  if (context.storagePilotEventId !== undefined) {
+    await verifyInitialStoragePilotWriteAccess({ eventId: context.storagePilotEventId,
+      approvalReference: context.approvalReference!, documentNumber: payload.documentNumber,
+      preparedBy: context.storagePilotApprovedBy! });
   }
   const auth = await getXeroReadAuthWithRefresh();
   const operation = `${payload.method} financial-draft:${payload.documentFamily}:${payload.documentNumber}`;

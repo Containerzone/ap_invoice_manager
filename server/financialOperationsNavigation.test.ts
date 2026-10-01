@@ -20,6 +20,7 @@ describe("Financial Operations parent navigation", () => {
       "overview",
       "po",
       "invoices",
+      "storage-drafts",
       "runs",
       "exceptions",
       "candidate-finder",
@@ -36,11 +37,14 @@ describe("Financial Operations parent navigation", () => {
   });
 
   it("keeps administrator-only evidence and settings tabs unavailable to staff", () => {
+    const documents = getFinancialOperationsGroup("documents");
     const review = getFinancialOperationsGroup("review");
     const controls = getFinancialOperationsGroup("controls");
 
     expect(firstAvailableFinancialOperationsTab(review, false)).toBe("exceptions");
     expect(firstAvailableFinancialOperationsTab(controls, false)).toBe("schedules");
+    expect(isFinancialOperationsTabAvailable(documents.tabs[2]!, false)).toBe(false);
+    expect(isFinancialOperationsTabAvailable(documents.tabs[2]!, true)).toBe(true);
     expect(isFinancialOperationsTabAvailable(review.tabs[1]!, false)).toBe(false);
     expect(isFinancialOperationsTabAvailable(review.tabs[1]!, true)).toBe(true);
     expect(isFinancialOperationsTabAvailable(controls.tabs[2]!, false)).toBe(false);

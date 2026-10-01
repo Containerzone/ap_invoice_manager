@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
+import { Temporal } from "@js-temporal/polyfill";
 import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
 import { buildInitialStorageDrafts, firstStoragePeriod, validateLoadedStorageDeal, type StorageDeal, type StorageParty } from "./financialStorageDrafts";
 import { claimInitialStorageEvent, reserveInitialStorageEvent, storedStorageReceipts, updateInitialStorageEvent, type StorageDraftReceipt } from "./financialInitialStorageDb";
 import { preflightFinancialXeroIntents, readBackFinancialDraft, verifyInitialStorageXeroAccounts } from "./financialReadOnlyXeroService";
-import { prepareFinancialDraftPayload, isFinancialLiveWriteEnvironmentEnabled } from "./financialProductionWriter";
-import { isFinancialGlobalShadowModeEnabled } from "./financialLiveExecutionService";
+import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
 import { createFinancialPostSuccessAction } from "./financialWorkflowDb";
 import { isFinancialPostSuccessVtigerWriteEnabled, runFinancialPostSuccessAction } from "./vtigerFinancialWriteService";
@@ -57,6 +57,10 @@ export type InitialStorageResult = {
 export async function processInitialLoadedStorage(recordId: string): Promise<InitialStorageResult> {
   const raw = await retrieveCurrentVtigerFinancialRecord(recordId);
   const facts = validateLoadedStorageDeal(raw, recordId);
+  if (Temporal.PlainDate.compare(Temporal.PlainDate.from(facts.dateIn), Temporal.Now.zonedDateTimeISO("Australia/Sydney").toPlainDate()) > 0) {
+    return { ok: false, status: "held", dealNumber: facts.dealNumber, location: facts.location,
+      warning: "VTiger Date In is in the future in Australia/Sydney; no storage event was reserved or sent to Xero." };
+  }
   const [customer, driver] = await Promise.all([
     resolveParty(facts.customerId, text(raw.related_to) === facts.customerId ? "account" : "contact"),
     resolveParty(facts.driverId, "vendor"),
@@ -86,6 +90,7 @@ export async function processInitialLoadedStorage(recordId: string): Promise<Ini
   // A changed Deal after a reservation cannot reuse an old pricing/supplier
   // approval or change a document number. Hold for review, never replay.
   if (event.sourceHash !== sourceHash || event.periodEnd !== period.end) {
+    await updateInitialStorageEvent({ id: event.id, status: "held", errorMessage: "Deal facts changed since storage reservation; refresh exact pilot approval." });
     return { ok: false, status: "held", ...resultBase, warning: "Deal facts changed since storage reservation; refresh exact pilot approval." };
   }
   if (event.status === "reserved") return { ok: false, status: "held", ...resultBase, warning: "Storage event is already processing; no second Xero request was sent." };
@@ -94,7 +99,10 @@ export async function processInitialLoadedStorage(recordId: string): Promise<Ini
   const documentsHash = storageDocumentsHash(documents);
   const exactApproval = Boolean(event.pilotApprovalKey && event.approvedDocumentsHash === documentsHash && event.approvalExpiresAt
     && event.approvalExpiresAt.getTime() > Date.now() && event.approvedBy && event.legacyHandoffConfirmedAt);
-  if (!exactApproval || !isFinancialLiveWriteEnvironmentEnabled() || isFinancialGlobalShadowModeEnabled() || process.env.FINANCIAL_INITIAL_STORAGE_ENABLED !== "true") {
+  // This narrow flag can arm only an already approved Deal/location/period.
+  // The broad financial family writer and its global shadow mode stay locked.
+  if (!exactApproval || process.env.FINANCIAL_INITIAL_STORAGE_ENABLED !== "true") {
+    await updateInitialStorageEvent({ id: event.id, status: "held", errorMessage: "Exact named pilot approval, legacy handoff or storage-only release gate is missing." });
     return { ok: false, status: "held", ...resultBase, warning: "Initial storage Drafts are prepared but the exact pilot approval, legacy handoff and deployment gates are not enabled." };
   }
 
@@ -114,8 +122,9 @@ export async function processInitialLoadedStorage(recordId: string): Promise<Ini
       if (evidence.duplicateState !== "not_found") throw new Error(`Xero document ${document.proposedDocumentNumber} already exists or preflight failed; reconcile before retry.`);
       if (!evidence.contactCheck.found || !evidence.contactCheck.contactId) throw new Error(`Xero has no unique exact contact match for ${document.proposedDocumentNumber}.`);
       if (i === 1) {
-        const jd = evidence.itemChecks.find((check) => check.itemCode === "JD");
-        if (!jd?.found || !jd.nativeDescription) throw new Error("Xero JD item or its native description is missing.");
+        const selectedCode = document.lineItems[0]!.itemCode;
+        const jd = evidence.itemChecks.find((check) => check.itemCode === selectedCode);
+        if (!jd?.found || !jd.nativeDescription) throw new Error(`Xero ${selectedCode} purchase item or its native description is missing.`);
         document.lineItems[0]!.description = jd.nativeDescription;
       }
       document.partySourceId = evidence.contactCheck.contactId;
@@ -140,7 +149,7 @@ export async function processInitialLoadedStorage(recordId: string): Promise<Ini
       entry.CurrencyCode = "AUD";
       const outcome = await executeGuardedFinancialWriterCommand({
         workflowType: "storage_activation", proposedAction: "create_draft", payload, preparedBy: event.approvedBy!,
-        authorisation: { workflowType: "storage_activation", approvalReference: event.pilotApprovalKey!,
+        authorisation: { workflowType: "storage_activation", approvalReference: event.pilotApprovalKey!, storagePilotEventId: event.id, storagePilotApprovedBy: event.approvedBy!,
           globalShadowMode: false, familyLiveEnabled: true, releaseManifestApproved: true, cutoverPackApproved: true,
           currentDocumentPreflightPassed: true, legacyWriterHandoffComplete: true },
       });
@@ -149,7 +158,9 @@ export async function processInitialLoadedStorage(recordId: string): Promise<Ini
       const receipt: StorageDraftReceipt = { documentType: index === 0 ? "customer_invoice" : index === 1 ? "jd_transport" : "gd_storage",
         number: outcome.result.documentNumber, xeroId: outcome.result.xeroDocumentId, status: "DRAFT", readBackAt: new Date().toISOString() };
       receipts.push(receipt);
-      await updateInitialStorageEvent({ id: event.id, status: "partial", receipts });
+      // Keep the atomic claim until the entire bundle finishes or fails;
+      // exposing "partial" while still writing would let another request claim it.
+      await updateInitialStorageEvent({ id: event.id, status: "reserved", receipts });
     }
     if (receipts.length !== 3) throw new Error("Three distinct Xero Draft read-back receipts are required.");
     await updateInitialStorageEvent({ id: event.id, status: "drafts_created", receipts });

@@ -62,6 +62,28 @@ export async function claimInitialStorageEvent(id: number): Promise<boolean> {
   return Number(result?.[0]?.affectedRows ?? result?.rowsAffected ?? 0) === 1;
 }
 
+/** An internal writer cannot arm itself by supplying a synthetic storage pilot ID. */
+export async function verifyInitialStoragePilotWriteAccess(input: {
+  eventId: number; approvalReference: string; documentNumber: string; preparedBy: number;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("AP storage approval ledger is unavailable.");
+  const event = (await db.select().from(financialInitialStorageEvents).where(eq(financialInitialStorageEvents.id, input.eventId)).limit(1))[0];
+  if (!event || event.status !== "reserved" || event.pilotApprovalKey !== input.approvalReference ||
+    !event.approvedBy || event.approvedBy !== input.preparedBy || !event.legacyHandoffConfirmedAt ||
+    !event.approvalExpiresAt || event.approvalExpiresAt.getTime() <= Date.now() ||
+    !/^[a-f0-9]{64}$/i.test(event.sourceHash) || !/^[a-f0-9]{64}$/i.test(event.approvedDocumentsHash ?? "") ||
+    !/^[a-f0-9]{64}$/i.test(event.approvedPreflightHash ?? "")) {
+    throw new Error("Stored exact loaded-storage pilot approval, source and preflight evidence are not valid.");
+  }
+  const digits = event.dealNumber.match(/^D(\d+)$/)?.[1];
+  if (!digits) throw new Error("Stored storage Deal number is invalid.");
+  const poSuffix = event.suffix === "A" ? "" : `-${event.suffix}`;
+  if (![ `INV-${digits}-${event.suffix}`, `JD${digits}${poSuffix}`, `GD${digits}${poSuffix}` ].includes(input.documentNumber)) {
+    throw new Error("Draft document does not match the named storage Deal and reserved suffix.");
+  }
+}
+
 export async function listInitialStorageEvents(limit = 50): Promise<FinancialInitialStorageEvent[]> {
   const db = await getDb();
   if (!db) return [];

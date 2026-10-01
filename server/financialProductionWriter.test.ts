@@ -130,6 +130,36 @@ describe("guarded financial production writer", () => {
     await expect(executeFinancialDraftWrite(payload, completeAuthorisation())).rejects.toThrow(/idempotency key/i);
   });
 
+  it("permits only the explicitly armed, named storage pilot; broad financial writing stays locked", () => {
+    delete process.env.FINANCIAL_LIVE_WRITES_ENABLED;
+    process.env.FINANCIAL_INITIAL_STORAGE_ENABLED = "true";
+    try {
+      const storage = completeAuthorisation({ workflowType: "storage_activation", storagePilotEventId: 17, storagePilotApprovedBy: 3 });
+      expect(() => assertFinancialDraftWriteAuthorised(storage)).not.toThrow();
+      expect(() => assertFinancialDraftWriteAuthorised(completeAuthorisation())).toThrow(FinancialWriteDisabledError);
+      expect(() => assertFinancialDraftWriteAuthorised({ ...storage, workflowType: "recurring_storage" })).toThrow(/not valid/);
+      expect(() => assertFinancialDraftWriteAuthorised({ ...storage, storagePilotEventId: -1 })).toThrow(/not valid/);
+      expect(() => assertFinancialDraftWriteAuthorised({ ...storage, currentDocumentPreflightPassed: false })).toThrow(/preflight/);
+      expect(() => assertFinancialDraftWriteAuthorised({ ...storage, approvalReference: null })).toThrow(/approval/);
+      delete process.env.FINANCIAL_INITIAL_STORAGE_ENABLED;
+      expect(() => assertFinancialDraftWriteAuthorised(storage)).toThrow(/not enabled/);
+    } finally {
+      delete process.env.FINANCIAL_INITIAL_STORAGE_ENABLED;
+    }
+  });
+
+  it("rejects storage-pilot updates and non-Draft create payloads before Xero authentication", async () => {
+    process.env.FINANCIAL_INITIAL_STORAGE_ENABLED = "true";
+    try {
+      const storage = completeAuthorisation({ workflowType: "storage_activation", storagePilotEventId: 17, storagePilotApprovedBy: 3 });
+      const payload = prepareFinancialDraftPayload(proposal(), "workflow-key");
+      await expect(executeFinancialDraftWrite({ ...payload, method: "PUT" }, storage)).rejects.toThrow(/Draft POST/);
+      await expect(executeFinancialDraftWrite({ ...payload, body: { PurchaseOrders: [{ Status: "AUTHORISED" }] } }, storage)).rejects.toThrow(/DRAFT status/);
+    } finally {
+      delete process.env.FINANCIAL_INITIAL_STORAGE_ENABLED;
+    }
+  });
+
   it("never prepares held or pending-GST proposals", () => {
     expect(() => prepareFinancialDraftPayload(proposal({ validationStatus: "held" }), "workflow-key")).toThrow(/held/i);
     expect(() => prepareFinancialDraftPayload(proposal({ gstTreatment: "PENDING_CONFIGURATION", documentFamily: "customer_invoice" }), "workflow-key")).toThrow(/GST treatment/i);

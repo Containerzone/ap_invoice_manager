@@ -57,6 +57,7 @@ describe("verified VTiger initial loaded storage", () => {
     expect(documents[0].subtotal).toBe(Math.round(weekly * period.days / 7 * 100) / 100);
     expect(documents[2].subtotal).toBe(documents[0].subtotal);
     expect(documents[1].subtotal).toBe(transport);
+    expect(documents[1].lineItems[0].itemCode).toBe(containerType.startsWith("20") ? "JD 20" : "JD 40");
   });
   it("builds one ACCREC and two POs with correct codes/numbering/tax/date", () => {
     const { documents: [invoice, transport, storage] } = buildInitialStorageDrafts(deal, "A", true);
@@ -65,12 +66,12 @@ describe("verified VTiger initial loaded storage", () => {
     expect(invoice.dueDate?.toISOString()).toBe("2026-08-11T00:00:00.000Z");
     expect(invoice.lineItems[0].description).toContain("Origin");
     expect(transport).toMatchObject({ proposedDocumentNumber: "JD123456", accountCode: "310", partyName: "Driver" });
-    expect(transport.lineItems[0].itemCode).toBe("JD");
+    expect(transport.lineItems[0].itemCode).toBe("JD 20");
     expect(storage).toMatchObject({ proposedDocumentNumber: "GD123456", accountCode: "311", partyName: "Containerzone" });
     expect(storage.lineItems[0].accountCode).not.toBe("312");
     const payloads = [invoice, transport, storage].map((doc, index) => prepareFinancialDraftPayload({ ...doc, partySourceId: `xero-contact-${index}` }, "storage-event-123"));
     expect(payloads[0].body).toMatchObject({ Invoices: [{ Type: "ACCREC", Status: "DRAFT", InvoiceNumber: "INV-123456-A", LineAmountTypes: "Exclusive", DueDate: "2026-08-11", LineItems: [{ AccountCode: "200" }] }] });
-    expect(payloads[1].body).toMatchObject({ PurchaseOrders: [{ Status: "DRAFT", PurchaseOrderNumber: "JD123456", LineAmountTypes: "Exclusive", LineItems: [{ ItemCode: "JD", AccountCode: "310" }] }] });
+    expect(payloads[1].body).toMatchObject({ PurchaseOrders: [{ Status: "DRAFT", PurchaseOrderNumber: "JD123456", LineAmountTypes: "Exclusive", LineItems: [{ ItemCode: "JD 20", AccountCode: "310" }] }] });
     expect(payloads[2].body).toMatchObject({ PurchaseOrders: [{ Status: "DRAFT", PurchaseOrderNumber: "GD123456", LineItems: [{ AccountCode: "311" }] }] });
   });
   it("shares a Deal-wide suffix, skips deposit D, and matches second-location POs", () => {

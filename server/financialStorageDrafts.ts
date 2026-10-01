@@ -125,8 +125,9 @@ export function buildInitialStorageDrafts(deal: StorageDeal, suffix: string, fir
     ...common, documentFamily: "purchase_order", documentType: "jd_transport", proposedDocumentNumber: `JD${digits}${poSuffix}`,
     reference, partyName: deal.driver.name, partySourceId: null, accountCode: "310", dueDate: null,
     subtotal: transportCost, taxAmount: money(transportCost * 0.1), total: money(transportCost * 1.1),
-    // Replaced with the exact current Xero JD item description after GET-only preflight.
-    lineItems: [line({ itemCode: "JD", description: "", quantity: 1, unitAmount: transportCost, accountCode: "310" })],
+    // Verified existing Xero purchase items are JD 20 / JD 40; the plain JD item is absent.
+    // The item's actual purchase wording is refreshed by GET-only preflight.
+    lineItems: [line({ itemCode: feet === 20 ? "JD 20" : "JD 40", description: "", quantity: 1, unitAmount: transportCost, accountCode: "310" })],
   };
   const storage: ProposedFinancialDocument = {
     ...common, documentFamily: "purchase_order", documentType: "gd_storage", proposedDocumentNumber: `GD${digits}${poSuffix}`,

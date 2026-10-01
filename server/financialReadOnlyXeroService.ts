@@ -214,7 +214,10 @@ async function preflightItem(auth: ReadOnlyAuth, itemCode: string) {
       found: Boolean(item),
       purchaseUnitPrice: typeof item?.PurchaseDetails?.UnitPrice === "number" ? item.PurchaseDetails.UnitPrice : Number(item?.PurchaseDetails?.UnitPrice ?? NaN) || null,
       salesUnitPrice: typeof item?.SalesDetails?.UnitPrice === "number" ? item.SalesDetails.UnitPrice : Number(item?.SalesDetails?.UnitPrice ?? NaN) || null,
-      nativeDescription: item?.Description ? String(item.Description) : null,
+      // Purchase orders must use the purchase-side wording, not the sales description.
+      nativeDescription: (itemCode === "JD 20" || itemCode === "JD 40")
+        ? (item?.PurchaseDescription ? String(item.PurchaseDescription) : item?.Description ? String(item.Description) : null)
+        : (item?.Description ? String(item.Description) : null),
     };
   } catch (error: any) {
     if (error?.response?.status === 404) return { itemCode, found: false, purchaseUnitPrice: null, salesUnitPrice: null, nativeDescription: null };
@@ -286,8 +289,10 @@ export async function verifyInitialStorageXeroAccounts(): Promise<void> {
     const matches = accounts.filter((account: any) => String(account?.Code ?? "").trim() === code && String(account?.Status ?? "").toUpperCase() === "ACTIVE");
     if (matches.length !== 1) throw new Error(`Xero storage account ${code} is absent, inactive, or ambiguous.`);
   }
-  const jd = await preflightItem(auth, "JD");
-  if (!jd.found || !jd.nativeDescription) throw new Error("Xero JD item or its native description is missing.");
+  for (const code of ["JD 20", "JD 40"]) {
+    const jd = await preflightItem(auth, code);
+    if (!jd.found || !jd.nativeDescription) throw new Error(`Xero ${code} purchase item or its native description is missing.`);
+  }
 }
 
 /**
