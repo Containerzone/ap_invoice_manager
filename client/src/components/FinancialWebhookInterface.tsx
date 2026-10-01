@@ -13,6 +13,7 @@ type WebhookEvent = {
   sourceRecordId: string;
   sourceRecordNumber: string | null;
   status: "received" | "proposed" | "held" | "paused" | "duplicate" | "rejected" | "failed";
+  workflowRunId: number | null;
   errorMessage: string | null;
   receivedAt: Date | string;
 };
@@ -20,6 +21,7 @@ type WebhookEvent = {
 type WriterExecution = {
   id: number;
   workflowType: string;
+  workflowRunId: number | null;
   proposedDocumentNumber: string;
   status: "prepared" | "blocked" | "submitted" | "succeeded" | "failed" | "reconciliation_required";
   xeroDocumentStatus: string | null;
@@ -35,21 +37,23 @@ type AutomationSettings = {
 type TriggerGroup = {
   label: string;
   workflowType: string;
-  routeKeys: string[];
+  routeKey: string;
 };
 
-/** The ten operational triggers requested by ContainerZone. */
+/** Each row is one separately configured VTiger webhook action. */
 const TRIGGERS: TriggerGroup[] = [
-  { label: "Container Control acquisition", workflowType: "container_control_acquisition", routeKeys: ["container-control-acquisition"] },
-  { label: "Recurring For Hire", workflowType: "recurring_for_hire", routeKeys: ["recurring-for-hire"] },
-  { label: "Storage activation", workflowType: "storage_activation", routeKeys: ["storage-origin-activation", "storage-destination-activation"] },
-  { label: "Recurring storage", workflowType: "recurring_storage", routeKeys: ["recurring-storage"] },
-  { label: "Storage finalisation", workflowType: "storage_finalisation", routeKeys: ["storage-finalisation"] },
-  { label: "Main customer invoice", workflowType: "main_customer_invoice", routeKeys: ["main-customer-invoice"] },
-  { label: "Deposit invoice", workflowType: "deposit_invoice", routeKeys: ["deposit-invoice"] },
-  { label: "Final weight adjustment", workflowType: "final_weight_adjustment", routeKeys: ["overweight-adjustment", "underweight-due-date"] },
-  { label: "Extra Hire", workflowType: "extra_hire", routeKeys: ["extra-hire"] },
-  { label: "Warranty reconciliation", workflowType: "warranty_reconciliation", routeKeys: ["warranty-reconciliation"] },
+  { label: "Container Control acquisition", workflowType: "container_control_acquisition", routeKey: "container-control-acquisition" },
+  { label: "Recurring For Hire", workflowType: "recurring_for_hire", routeKey: "recurring-for-hire" },
+  { label: "Origin Storage activation", workflowType: "storage_activation", routeKey: "storage-origin-activation" },
+  { label: "Destination Storage activation", workflowType: "storage_activation", routeKey: "storage-destination-activation" },
+  { label: "Recurring storage", workflowType: "recurring_storage", routeKey: "recurring-storage" },
+  { label: "Storage finalisation", workflowType: "storage_finalisation", routeKey: "storage-finalisation" },
+  { label: "Main customer invoice", workflowType: "main_customer_invoice", routeKey: "main-customer-invoice" },
+  { label: "Deposit invoice", workflowType: "deposit_invoice", routeKey: "deposit-invoice" },
+  { label: "Final weight — overweight", workflowType: "final_weight_adjustment", routeKey: "overweight-adjustment" },
+  { label: "Final weight — underweight", workflowType: "final_weight_adjustment", routeKey: "underweight-due-date" },
+  { label: "Extra Hire", workflowType: "extra_hire", routeKey: "extra-hire" },
+  { label: "Warranty reconciliation", workflowType: "warranty_reconciliation", routeKey: "warranty-reconciliation" },
 ];
 
 function dateTime(value: Date | string | null | undefined): string {
@@ -87,15 +91,20 @@ export function FinancialWebhookInterface() {
   const routeConnected = Boolean((settings.data as AutomationSettings | undefined)?.proposalWebhook?.configured);
 
   const rows = useMemo(() => TRIGGERS.map((trigger) => {
-    const event = latest(webhookEvents.filter((candidate) => trigger.routeKeys.includes(candidate.routeKey)));
-    const execution = latest(writerExecutions.filter((candidate) => candidate.workflowType === trigger.workflowType));
+    const event = latest(webhookEvents.filter((candidate) => candidate.routeKey === trigger.routeKey));
+    const execution = latest(writerExecutions.filter((candidate) =>
+      candidate.workflowType === trigger.workflowType
+      && event?.workflowRunId !== null
+      && event?.workflowRunId !== undefined
+      && candidate.workflowRunId === event.workflowRunId,
+    ));
     const draftVerified = execution?.status === "succeeded" && execution.xeroDocumentStatus === "DRAFT";
     if (draftVerified) return { trigger, event, execution, label: "Draft created", tone: "draft" as const, detail: execution.proposedDocumentNumber };
     if (execution?.status === "failed" || execution?.status === "reconciliation_required") return { trigger, event, execution, label: "Xero check required", tone: "failure" as const, detail: execution.errorMessage ?? execution.proposedDocumentNumber };
     if (event && ["held", "paused", "rejected", "failed"].includes(event.status)) return { trigger, event, execution, label: "Held for review", tone: "hold" as const, detail: event.errorMessage ?? "No Xero Draft was sent" };
     if (event?.status === "proposed") return { trigger, event, execution, label: "Proposal ready", tone: "proposal" as const, detail: "Awaiting named Draft approval" };
     if (event) return { trigger, event, execution, label: "Event received", tone: "proposal" as const, detail: "AP is processing the event" };
-    return { trigger, event, execution, label: routeConnected ? "Waiting for VTiger" : "Webhook not connected", tone: "waiting" as const, detail: routeConnected ? "No event received" : "No authenticated event route is configured" };
+    return { trigger, event, execution, label: routeConnected ? "Waiting for VTiger setup" : "AP authentication missing", tone: "waiting" as const, detail: routeConnected ? "No VTiger action has called this AP endpoint yet" : "Configure the AP private webhook secret first" };
   }), [routeConnected, webhookEvents, writerExecutions]);
 
   const refresh = () => void Promise.all([settings.refetch(), events.refetch(), executions.refetch()]);
@@ -103,10 +112,10 @@ export function FinancialWebhookInterface() {
   return <div className="space-y-4">
     <Card className="border-sky-200 bg-sky-50/60">
       <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div><CardTitle className="flex items-center gap-2 text-sky-950"><Webhook className="h-5 w-5" />Financial Trigger Dashboard</CardTitle><p className="mt-1 text-sm text-sky-900">Each VTiger trigger follows the same path: <strong>VTiger event → AP validation → Xero Draft → tracked below</strong>.</p></div>
+        <div><CardTitle className="flex items-center gap-2 text-sky-950"><Webhook className="h-5 w-5" />Financial Trigger Dashboard</CardTitle><p className="mt-1 text-sm text-sky-900">Each line below is a separate VTiger webhook: <strong>VTiger event → AP validation → Xero Draft → tracked below</strong>.</p></div>
         <Button size="sm" variant="outline" onClick={refresh} disabled={events.isFetching || executions.isFetching}><RefreshCw className={`mr-2 h-4 w-4 ${events.isFetching || executions.isFetching ? "animate-spin" : ""}`} />Refresh</Button>
       </CardHeader>
-      <CardContent className="flex flex-wrap gap-2 text-xs"><Badge className={badgeClass(routeConnected ? "proposal" : "waiting")}>{routeConnected ? "Webhook connection ready" : "Webhook connection not configured"}</Badge><Badge variant="outline">Xero creates Drafts only</Badge><Badge variant="outline">No financial schedules enabled</Badge><Badge variant="outline">Events are tracked automatically</Badge></CardContent>
+      <CardContent className="flex flex-wrap gap-2 text-xs"><Badge className={badgeClass(routeConnected ? "proposal" : "waiting")}>{routeConnected ? "AP endpoints authenticated" : "AP authentication missing"}</Badge><Badge variant="outline">VTiger URLs not switched yet</Badge><Badge variant="outline">Xero creates Drafts only</Badge><Badge variant="outline">No financial schedules enabled</Badge></CardContent>
     </Card>
 
     <Card>

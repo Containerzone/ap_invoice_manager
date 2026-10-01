@@ -27,3 +27,7 @@
 - [ ] Receive one exact pilot source/family, expected Draft reference/type, counterparty, total, GST, dates and line summary; present the exact Xero Draft payload/preflight for user confirmation before any external configuration or Xero Draft write.
 
 - [x] Replaced the detailed webhook-contract view with a ten-row Trigger Dashboard matching the business triggers: Container Control acquisition, Recurring For Hire, Storage activation, Recurring storage, Storage finalisation, Main customer invoice, Deposit invoice, Final weight adjustment, Extra Hire and Warranty reconciliation. Storage activation and Final weight adjustment aggregate their two internal routes into one row each.
+
+- [x] Configured the private `FINANCIAL_AP_WEBHOOK_SECRET` and verified an authenticated AP dry-run request: accepted event, held before any financial action, no Xero write method invoked and no schedule registered.
+- [x] Changed the dashboard to show all 12 separate VTiger webhook routes individually (including Origin/Destination Storage and Overweight/Underweight Final Weight), with Draft results linked to the exact webhook workflow run.
+- [ ] Obtain document-specific approval and access to reconfigure the twelve external VTiger webhook actions. Each action must move from its Operations URL to the matching AP endpoint with the private header; existing Operations writers must be paused only after the exact AP Draft has been validated, to prevent duplicates.
