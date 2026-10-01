@@ -23,6 +23,7 @@ import Reports from "./pages/Reports";
 import PoRequests from "./pages/PoRequests";
 import OperationalFailures from "./pages/OperationalFailures";
 import FinancialOperations from "./pages/FinancialOperations";
+import StorageAutomation from "./pages/StorageAutomation";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -85,6 +86,9 @@ function AppRoutes() {
               <Route path="/reports" component={Reports} />
               <Route path="/po-requests" component={PoRequests} />
               <Route path="/financial-operations" component={FinancialOperations} />
+              <Route path="/storage-automation">
+                <AdminGuard><StorageAutomation /></AdminGuard>
+              </Route>
               <Route path="/operational-failures">
                 <AdminGuard><OperationalFailures /></AdminGuard>
               </Route>

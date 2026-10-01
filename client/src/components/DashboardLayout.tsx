@@ -22,7 +22,7 @@ import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
   LayoutDashboard, LogOut, PanelLeft, Users, FileText,
-  Building2, Settings, ShieldCheck, BarChart3, ShoppingCart, Siren, Landmark
+  Building2, Settings, ShieldCheck, BarChart3, ShoppingCart, Siren, Landmark, Warehouse
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -37,6 +37,7 @@ const menuItems = [
   { icon: BarChart3,       label: "Reports",     path: "/reports",     adminOnly: false },
   { icon: ShoppingCart,    label: "PO Requests", path: "/po-requests", adminOnly: false },
   { icon: Landmark,        label: "Financial Operations", path: "/financial-operations", adminOnly: false },
+  { icon: Warehouse,       label: "VTiger → Xero Storage", path: "/storage-automation", adminOnly: true },
   { icon: Siren,           label: "Operational Failures", path: "/operational-failures", adminOnly: true },
   { icon: Building2,       label: "Suppliers",   path: "/suppliers",   adminOnly: false },
   { icon: Users,           label: "Users",       path: "/users",       adminOnly: true  },

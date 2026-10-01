@@ -2,7 +2,6 @@ export type FinancialOperationsTab =
   | "overview"
   | "po"
   | "invoices"
-  | "storage-drafts"
   | "runs"
   | "exceptions"
   | "schedules"
@@ -35,8 +34,9 @@ export type FinancialOperationsNavigationGroup = {
 };
 
 /**
- * All financial feature pages live beneath one sidebar parent: Financial
- * Operations. These groups are an in-workspace hierarchy only; they do not
+ * Financial Operations groups non-storage families below their parent.
+ * Initial loaded-container storage now has its own sidebar workspace. These
+ * groups are an in-workspace hierarchy only; they do not
  * create routes, new browser tabs, schedules or live financial actions.
  */
 export const FINANCIAL_OPERATIONS_NAVIGATION: readonly FinancialOperationsNavigationGroup[] = [
@@ -55,7 +55,6 @@ export const FINANCIAL_OPERATIONS_NAVIGATION: readonly FinancialOperationsNaviga
     tabs: [
       { value: "po", label: "PO Operations" },
       { value: "invoices", label: "Customer Invoices" },
-      { value: "storage-drafts", label: "Storage Drafts", adminOnly: true },
       { value: "runs", label: "Trigger Runs" },
     ],
   },

@@ -128,6 +128,24 @@ describe("financial operations tRPC safeguards", () => {
     });
   });
 
+  it("shows storage receiver and writer lock without exposing secrets or changing Operations", async () => {
+    const { appRouter } = await import("./routers");
+    const existing = process.env.FINANCIAL_INITIAL_STORAGE_ENABLED;
+    try {
+      delete process.env.FINANCIAL_INITIAL_STORAGE_ENABLED;
+      await expect(appRouter.createCaller(context("user")).financialOperations.initialStorageReadiness())
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      const status = await appRouter.createCaller(context("admin")).financialOperations.initialStorageReadiness();
+      expect(status).toMatchObject({ endpointPath: "/api/webhooks/vtiger/deal-storage",
+        namedPilotWriteGateArmed: false, legacyOriginDestinationWriter: "not_verified_in_ap",
+        vtigerDelivery: "not_verified_in_ap", scheduleRequired: false });
+      expect(Object.keys(status)).not.toContain("secret");
+    } finally {
+      if (existing === undefined) delete process.env.FINANCIAL_INITIAL_STORAGE_ENABLED;
+      else process.env.FINANCIAL_INITIAL_STORAGE_ENABLED = existing;
+    }
+  });
+
   it("permits an admin dry run and returns an explicit no-write result", async () => {
     const { appRouter } = await import("./routers");
     const { evaluateAndPersistFinancialWorkflow } = await import("./financialWorkflowService");

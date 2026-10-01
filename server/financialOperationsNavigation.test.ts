@@ -7,7 +7,7 @@ import {
 } from "../client/src/lib/financialOperationsNavigation";
 
 describe("Financial Operations parent navigation", () => {
-  it("keeps every financial child tab under one ordered parent workspace", () => {
+  it("keeps non-storage financial child tabs under the ordered parent workspace", () => {
     expect(FINANCIAL_OPERATIONS_NAVIGATION.map((group) => group.value)).toEqual([
       "dashboard",
       "documents",
@@ -20,7 +20,6 @@ describe("Financial Operations parent navigation", () => {
       "overview",
       "po",
       "invoices",
-      "storage-drafts",
       "runs",
       "exceptions",
       "candidate-finder",
@@ -43,8 +42,8 @@ describe("Financial Operations parent navigation", () => {
 
     expect(firstAvailableFinancialOperationsTab(review, false)).toBe("exceptions");
     expect(firstAvailableFinancialOperationsTab(controls, false)).toBe("schedules");
-    expect(isFinancialOperationsTabAvailable(documents.tabs[2]!, false)).toBe(false);
-    expect(isFinancialOperationsTabAvailable(documents.tabs[2]!, true)).toBe(true);
+    expect(isFinancialOperationsTabAvailable(documents.tabs[2]!, false)).toBe(true);
+    expect(documents.tabs.map((tab) => tab.value)).toEqual(["po", "invoices", "runs"]);
     expect(isFinancialOperationsTabAvailable(review.tabs[1]!, false)).toBe(false);
     expect(isFinancialOperationsTabAvailable(review.tabs[1]!, true)).toBe(true);
     expect(isFinancialOperationsTabAvailable(controls.tabs[2]!, false)).toBe(false);

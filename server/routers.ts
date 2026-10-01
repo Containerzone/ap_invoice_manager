@@ -74,6 +74,7 @@ import { sendDisputeEmail, generateDisputeEmailTemplate, sendInviteEmail } from 
 import { ENV } from "./_core/env";
 import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
 import { listInitialStorageEvents } from "./financialInitialStorageDb";
+import { INITIAL_STORAGE_WEBHOOK_PATH } from "./financialInitialStorageWebhook";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
@@ -559,6 +560,16 @@ export const appRouter = router({
       .query(({ input }) => getFinancialWriterExecutions(input?.limit ?? 50)),
     initialStorageEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
       .query(({ input }) => listInitialStorageEvents(input?.limit ?? 50)),
+    initialStorageReadiness: adminProcedure.query(() => ({
+      endpointPath: INITIAL_STORAGE_WEBHOOK_PATH,
+      authenticationConfigured: Boolean(process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim()),
+      namedPilotWriteGateArmed: process.env.FINANCIAL_INITIAL_STORAGE_ENABLED === "true",
+      legacyOriginDestinationWriter: "not_verified_in_ap" as const,
+      vtigerDelivery: "not_verified_in_ap" as const,
+      scheduleRequired: false as const,
+      // A configured header/flag is not proof of a VTiger cutover or of an
+      // approved three-document bundle. No secret or mutable control leaves AP.
+    })),
     executionApprovals: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getFinancialExecutionApprovals(input?.limit ?? 50)),
     executionGateState: adminProcedure.input(z.object({ approvalId: z.number().int().positive() }))
