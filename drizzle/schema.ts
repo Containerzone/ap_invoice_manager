@@ -649,6 +649,40 @@ export const storageBillingEvents = mysqlTable("storage_billing_events", {
 export type StorageBillingEvent = typeof storageBillingEvents.$inferSelect;
 export type InsertStorageBillingEvent = typeof storageBillingEvents.$inferInsert;
 
+/** One initial loaded-storage event per Deal/location/period. No shadow row can be a write receipt. */
+export const financialInitialStorageEvents = mysqlTable("financial_initial_storage_events", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 64 }).notNull(),
+  location: mysqlEnum("location", ["origin", "destination"] as const).notNull(),
+  periodStart: varchar("periodStart", { length: 10 }).notNull(),
+  periodEnd: varchar("periodEnd", { length: 10 }).notNull(),
+  suffix: varchar("suffix", { length: 1 }).notNull(),
+  sourceHash: varchar("sourceHash", { length: 64 }).notNull(),
+  containerNumber: varchar("containerNumber", { length: 128 }).notNull(),
+  containerType: varchar("containerType", { length: 80 }).notNull(),
+  status: mysqlEnum("status", ["held", "reserved", "partial", "drafts_created", "writeback_pending", "failed"] as const).default("held").notNull(),
+  /** A separate, exact, expiring user-approved pilot authorisation is required before transport. */
+  pilotApprovalKey: varchar("pilotApprovalKey", { length: 96 }),
+  approvedDocumentsHash: varchar("approvedDocumentsHash", { length: 64 }),
+  approvedPreflightHash: varchar("approvedPreflightHash", { length: 64 }),
+  approvalExpiresAt: timestamp("approvalExpiresAt"),
+  approvedBy: int("approvedBy"),
+  legacyHandoffConfirmedAt: timestamp("legacyHandoffConfirmedAt"),
+  documentResults: json("documentResults"),
+  errorMessage: text("errorMessage"),
+  retryCount: int("retryCount").default(0).notNull(),
+  receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  eventUnique: uniqueIndex("financial_initial_storage_event_unique").on(table.dealId, table.location, table.periodStart),
+  suffixUnique: uniqueIndex("financial_initial_storage_suffix_unique").on(table.dealId, table.suffix),
+}));
+
+export type FinancialInitialStorageEvent = typeof financialInitialStorageEvents.$inferSelect;
+
 export const recurringHireRuns = mysqlTable("recurring_hire_runs", {
   id: int("id").autoincrement().primaryKey(),
   workflowRunId: int("workflowRunId"),

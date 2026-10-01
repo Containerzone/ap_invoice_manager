@@ -276,6 +276,20 @@ export async function preflightFinancialXeroIntents(intents: ProposedFinancialDo
   return results;
 }
 
+/** GET-only verification of the three account codes required for loaded storage. */
+export async function verifyInitialStorageXeroAccounts(): Promise<void> {
+  const auth = await readOnlyAuth();
+  await assertExpectedFinancialTenant(auth);
+  const response = await xeroRead<any>(auth, "storage-account-codes", `${XERO_API_BASE}/Accounts`);
+  const accounts = Array.isArray(response?.Accounts) ? response.Accounts : [];
+  for (const code of ["200", "310", "311"]) {
+    const matches = accounts.filter((account: any) => String(account?.Code ?? "").trim() === code && String(account?.Status ?? "").toUpperCase() === "ACTIVE");
+    if (matches.length !== 1) throw new Error(`Xero storage account ${code} is absent, inactive, or ambiguous.`);
+  }
+  const jd = await preflightItem(auth, "JD");
+  if (!jd.found || !jd.nativeDescription) throw new Error("Xero JD item or its native description is missing.");
+}
+
 /**
  * Reads back the exact Xero Draft created or updated by the guarded writer.
  * A missing, mismatched, or non-Draft response is a reconciliation condition;

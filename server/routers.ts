@@ -73,6 +73,7 @@ import {
 import { sendDisputeEmail, generateDisputeEmailTemplate, sendInviteEmail } from "./emailService";
 import { ENV } from "./_core/env";
 import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
+import { listInitialStorageEvents } from "./financialInitialStorageDb";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
@@ -556,6 +557,8 @@ export const appRouter = router({
       .query(({ input }) => getFinancialReleaseManifests(input?.limit ?? 25)),
     writerExecutions: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getFinancialWriterExecutions(input?.limit ?? 50)),
+    initialStorageEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
+      .query(({ input }) => listInitialStorageEvents(input?.limit ?? 50)),
     executionApprovals: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getFinancialExecutionApprovals(input?.limit ?? 50)),
     executionGateState: adminProcedure.input(z.object({ approvalId: z.number().int().positive() }))

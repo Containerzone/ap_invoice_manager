@@ -131,6 +131,9 @@ async function vtigerRevise(input: { endpoint: string; sessionName: string; elem
 }
 
 function actionMessage(summary: Record<string, unknown>, workflowType: string): string {
+  if (workflowType === "storage_activation" && typeof summary.customerInvoice === "string" && typeof summary.transportPurchaseOrder === "string" && typeof summary.storagePurchaseOrder === "string") {
+    return `[AP Storage Drafts Created]\nLocation: ${summary.storageLocation === "destination" ? "Destination" : "Origin"}\nCustomer invoice: ${summary.customerInvoice} (Draft)\nTransport PO: ${summary.transportPurchaseOrder} (Draft)\nStorage PO: ${summary.storagePurchaseOrder} (Draft)\nBilling period: ${typeof summary.billingPeriod === "string" ? summary.billingPeriod : "see AP ledger"}`;
+  }
   const documentNumber = typeof summary.documentNumber === "string" ? summary.documentNumber : "(unnumbered Draft)";
   const xeroDocumentId = typeof summary.xeroDocumentId === "string" ? summary.xeroDocumentId : "(unavailable)";
   const location = typeof summary.storageLocation === "string" ? ` Location: ${summary.storageLocation}.` : "";

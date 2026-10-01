@@ -115,6 +115,15 @@ export async function retrieveCurrentVtigerFinancialRecord(recordId: string): Pr
  * creates a note/task or changes a source record.
  */
 export async function describeVtigerFinancialModule(moduleName: string): Promise<{ name: string; fields: string[] }> {
+  const described = await describeVtigerFinancialModuleFields(moduleName);
+  return { name: described.name, fields: described.fields.map((field) => field.name) };
+}
+
+/** Authenticated metadata-only describe; labels/picklist values come from VTiger, not guessed field aliases. */
+export async function describeVtigerFinancialModuleFields(moduleName: string): Promise<{
+  name: string;
+  fields: Array<{ name: string; label: string; type: Record<string, unknown>; mandatory: boolean }>;
+}> {
   const normalized = moduleName.trim();
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(normalized)) throw new Error("VTiger module name is invalid.");
   const { username, accessKey } = config();
@@ -123,13 +132,14 @@ export async function describeVtigerFinancialModule(moduleName: string): Promise
   const challenge = await vtigerRequest<{ token: string }>({ operation: "getchallenge", username });
   const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
   const login = await vtigerLogin<{ sessionName: string }>({ operation: "login", username, accessKey: accessKeyHash });
-  const described = await vtigerRequest<{ name?: string; fields?: Array<{ name?: string }> }>({
+  const described = await vtigerRequest<{ name?: string; fields?: Array<{ name?: string; label?: string; type?: Record<string, unknown>; mandatory?: boolean }> }>({
     operation: "describe",
     elementType: normalized,
     sessionName: login.sessionName,
   });
   return {
     name: typeof described?.name === "string" ? described.name : normalized,
-    fields: Array.from(new Set((described?.fields ?? []).map((field) => typeof field?.name === "string" ? field.name : "").filter(Boolean))),
+    fields: (described?.fields ?? []).filter((field): field is typeof field & { name: string } => typeof field?.name === "string" && Boolean(field.name))
+      .map((field) => ({ name: field.name, label: field.label ?? "", type: field.type ?? {}, mandatory: field.mandatory === true })),
   };
 }

@@ -30,4 +30,12 @@
 
 - [x] Configured the private `FINANCIAL_AP_WEBHOOK_SECRET` and verified an authenticated AP dry-run request: accepted event, held before any financial action, no Xero write method invoked and no schedule registered.
 - [x] Changed the dashboard to show all 12 separate VTiger webhook routes individually (including Origin/Destination Storage and Overweight/Underweight Final Weight), with Draft results linked to the exact webhook workflow run.
-- [ ] Obtain document-specific approval and access to reconfigure the twelve external VTiger webhook actions. Each action must move from its Operations URL to the matching AP endpoint with the private header; existing Operations writers must be paused only after the exact AP Draft has been validated, to prevent duplicates.
+- [ ] Superseded for the current storage-only phase: do not reconfigure all twelve VTiger actions. A single exact storage-stage pilot handover requires its own review and documented legacy-writer pause before any destination change.
+
+## Narrow Loaded-Container Storage (2026-10-01)
+
+- [x] Added authenticated Deal-only `POST /api/webhooks/vtiger/deal-storage` and verified VTiger `Potentials`, `Accounts`, `Contacts`, `Vendors`, and `ModComments` metadata through GET-only describe. No VTiger workflow URL was changed.
+- [x] Added three-document initial-period rules, unique AP storage event/suffix ledger, guarded readback-driven write coordinator, read-only rows in the existing Trigger Dashboard, and partial-failure/write-back isolation. Applied additive migration 0035.
+- [x] TypeScript, 60 test files / 336 tests, and build pass; unauthenticated route returns 401; initial storage ledger has zero live events.
+- [ ] **Not live:** Xero `JD` item is missing (`Items/JD` returned 404). Existing `JD 20` / `JD 40` require a business choice. No exact named Deal/three-document approval, legacy writer pause confirmation, or enabled financial deployment flags exist. No Xero Draft, VTiger record, Operations setting, Make scenario, or schedule was changed.
+- [ ] The new attachment excludes recurring storage, finalisation and unrelated workflows; none was activated. See `docs/loaded-storage-draft-handoff.md` for mapping and pilot prerequisites.
