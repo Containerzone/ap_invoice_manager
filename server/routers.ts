@@ -75,6 +75,7 @@ import { ENV } from "./_core/env";
 import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
 import { listInitialStorageEvents } from "./financialInitialStorageDb";
 import { INITIAL_STORAGE_WEBHOOK_PATH } from "./financialInitialStorageWebhook";
+import { previewInitialLoadedStorage } from "./financialInitialStorageService";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
@@ -570,6 +571,22 @@ export const appRouter = router({
       // A configured header/flag is not proof of a VTiger cutover or of an
       // approved three-document bundle. No secret or mutable control leaves AP.
     })),
+    previewInitialStorage: adminProcedure.input(z.object({ exactDeal: z.string().trim().regex(/^(?:D\d{1,12}|5x\d{1,12})$/) }))
+      .mutation(async ({ input }) => {
+        let recordId = input.exactDeal;
+        if (recordId.startsWith("D")) {
+          const lookup = await findExactFinancialCandidate({ sourceCategory: "deal", businessNumber: recordId });
+          if (lookup.outcome !== "found" || lookup.candidates.length !== 1) {
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: lookup.message });
+          }
+          recordId = lookup.candidates[0]!.recordId;
+        }
+        const preview = await previewInitialLoadedStorage(recordId);
+        if (input.exactDeal.startsWith("D") && preview.dealNumber !== input.exactDeal) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "VTiger Deal number no longer matches the exact lookup." });
+        }
+        return preview;
+      }),
     executionApprovals: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getFinancialExecutionApprovals(input?.limit ?? 50)),
     executionGateState: adminProcedure.input(z.object({ approvalId: z.number().int().positive() }))

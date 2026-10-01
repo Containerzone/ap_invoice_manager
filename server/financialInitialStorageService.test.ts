@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildInitialStorageDrafts, type StorageDeal } from "./financialStorageDrafts";
 vi.mock("./vtigerFinancialReadService", () => ({ retrieveCurrentVtigerFinancialRecord: vi.fn() }));
-vi.mock("./financialInitialStorageDb", () => ({ reserveInitialStorageEvent: vi.fn(), claimInitialStorageEvent: vi.fn(), storedStorageReceipts: (event: any) => event.documentResults ?? [], updateInitialStorageEvent: vi.fn() }));
+vi.mock("./financialInitialStorageDb", () => ({ reserveInitialStorageEvent: vi.fn(), previewInitialStorageReservation: vi.fn().mockResolvedValue({ suffix: "A", existing: null }), claimInitialStorageEvent: vi.fn(), storedStorageReceipts: (event: any) => event.documentResults ?? [], updateInitialStorageEvent: vi.fn() }));
 vi.mock("./financialReadOnlyXeroService", () => ({ preflightFinancialXeroIntents: vi.fn(), readBackFinancialDraft: vi.fn(), verifyInitialStorageXeroAccounts: vi.fn() }));
 vi.mock("./financialWriterExecutionService", () => ({ executeGuardedFinancialWriterCommand: vi.fn() }));
 vi.mock("./financialWorkflowDb", () => ({ createFinancialPostSuccessAction: vi.fn() }));
@@ -57,6 +57,27 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("narrow loaded storage event coordinator", () => {
+  it("previews the exact three documents with fresh VTiger/Xero GETs and no reservation or write", async () => {
+    const { previewInitialLoadedStorage } = await import("./financialInitialStorageService");
+    const result = await previewInitialLoadedStorage("5x123");
+    expect(result).toMatchObject({ dealNumber: "D123", location: "origin", suffix: "A", eligibleForApproval: true,
+      documents: [{ number: "INV-123-A", accountCode: "200", xeroNumberState: "not_found" },
+        { number: "JD123", accountCode: "310", itemCode: "JD 20" },
+        { number: "GD123", accountCode: "311" }] });
+    expect(result.sourceHash).toMatch(/^[a-f0-9]{64}$/);
+    expect((await import("./financialInitialStorageDb")).reserveInitialStorageEvent).not.toHaveBeenCalled();
+    expect((await import("./financialInitialStorageDb")).updateInitialStorageEvent).not.toHaveBeenCalled();
+    expect((await import("./financialWriterExecutionService")).executeGuardedFinancialWriterCommand).not.toHaveBeenCalled();
+  });
+  it("holds a pre-existing invoice and PO in preview even when a deleted invoice number could be reused manually", async () => {
+    preflight[0].duplicateState = "ambiguous"; preflight[0].status = "DELETED";
+    preflight[1].duplicateState = "found"; preflight[1].status = "DRAFT";
+    const result = await (await import("./financialInitialStorageService")).previewInitialLoadedStorage("5x123");
+    expect(result).toMatchObject({ eligibleForApproval: false, reasons: expect.arrayContaining([
+      expect.stringContaining("INV-123-A"), expect.stringContaining("JD123") ]) });
+    expect((await import("./financialInitialStorageDb")).reserveInitialStorageEvent).not.toHaveBeenCalled();
+    expect((await import("./financialWriterExecutionService")).executeGuardedFinancialWriterCommand).not.toHaveBeenCalled();
+  });
   it("holds a future Sydney Date In before local reservation or Xero preflight", async () => {
     const { retrieveCurrentVtigerFinancialRecord } = await import("./vtigerFinancialReadService");
     vi.mocked(retrieveCurrentVtigerFinancialRecord).mockResolvedValueOnce({ ...source, cf_potentials_datein: "2099-08-10" });

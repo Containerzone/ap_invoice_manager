@@ -89,3 +89,18 @@ export async function listInitialStorageEvents(limit = 50): Promise<FinancialIni
   if (!db) return [];
   return db.select().from(financialInitialStorageEvents).orderBy(desc(financialInitialStorageEvents.receivedAt), desc(financialInitialStorageEvents.id)).limit(Math.max(1, Math.min(limit, 100)));
 }
+
+/** GET-only ledger lookup for a single named Deal; does not claim or consume a suffix. */
+export async function previewInitialStorageReservation(dealId: string, location: StorageLocation, periodStart: string) {
+  const db = await getDb();
+  if (!db) throw new Error("AP storage ledger is unavailable.");
+  const rows = await db.select().from(financialInitialStorageEvents).where(eq(financialInitialStorageEvents.dealId, dealId)).limit(26);
+  const existing = rows.find(row => row.location === location && row.periodStart === periodStart) ?? null;
+  if (existing) return { suffix: existing.suffix, existing };
+  const used = new Set(rows.map(row => row.suffix));
+  for (let index = 0; index < 25; index += 1) {
+    const suffix = storageSuffix(index);
+    if (!used.has(suffix)) return { suffix, existing: null };
+  }
+  throw new Error("All safe storage suffixes for this Deal have been reserved.");
+}

@@ -2,10 +2,11 @@ import { AlertTriangle, ArrowRight, CheckCircle2, LockKeyhole, Warehouse, Webhoo
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FinancialStorageDrafts } from "@/components/FinancialStorageDrafts";
+import { StorageLivePreview } from "@/components/StorageLivePreview";
 import { trpc } from "@/lib/trpc";
 
 const handoverSteps = [
-  { title: "Publish and verify the AP receiver", detail: "Deploy this checkpoint, verify authentication on the published URL and that a safe, known event returns Held without creating documents. Do not expose the private header value in this page." },
+  { title: "Publish and verify the AP receiver", detail: "Deploy this checkpoint, verify the published route rejects unauthenticated calls, and use the exact Deal preview for GET-only evidence. Do not send an authenticated stage event for an old Deal as a probe; even a held event can reserve an AP suffix." },
   { title: "Agree a named, unbilled Origin or Destination pilot", detail: "Refresh the VTiger Deal and Xero tenant, contacts, JD 20/JD 40 items, accounts and exact invoice/PO numbers. Record an expiring three-document approval with prices, GST, source hash, preflight hash and reviewer." },
   { title: "Handover the shared Operations writer", detail: "With ContainerZone Operations / IT, schedule a maintenance window. Pause the shared VTiger storage action pointing to the Operations /api/webhooks/vtiger-storage endpoint, drain in-flight work and retain the old configuration for rollback. This action covers BOTH Origin and Destination." },
   { title: "Run one controlled AP pilot without redirecting all Deals", detail: "During the agreed window, submit the one approved Deal event directly to the published AP receiver with its private header. Arm only the isolated, approved storage pilot gate; keep the shared VTiger destination paused, not broadly redirected. Recheck exact Xero evidence immediately before execution." },
@@ -46,6 +47,7 @@ export default function StorageAutomation() {
       <div className="rounded-lg border p-3"><strong>3 · Draft receipts</strong><p className="mt-1 text-muted-foreground">Customer ACCREC account 200; driver JD PO account 310; storage GD PO account 311. Each Draft must be read back by ID.</p></div>
     </CardContent></Card>
 
+    <StorageLivePreview />
     <FinancialStorageDrafts />
 
     <Card><CardHeader><CardTitle className="text-base">Controlled cutover checklist</CardTitle><p className="text-sm text-muted-foreground">Preparation only. None of these external actions is performed by opening this page.</p></CardHeader>

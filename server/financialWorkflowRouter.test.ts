@@ -146,6 +146,14 @@ describe("financial operations tRPC safeguards", () => {
     }
   });
 
+  it("rejects staff and broad, non-exact storage previews before VTiger access", async () => {
+    const { appRouter } = await import("./routers");
+    await expect(appRouter.createCaller(context("user")).financialOperations.previewInitialStorage({ exactDeal: "D702885" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(appRouter.createCaller(context("admin")).financialOperations.previewInitialStorage({ exactDeal: "D%" }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   it("permits an admin dry run and returns an explicit no-write result", async () => {
     const { appRouter } = await import("./routers");
     const { evaluateAndPersistFinancialWorkflow } = await import("./financialWorkflowService");

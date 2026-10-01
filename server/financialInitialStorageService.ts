@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Temporal } from "@js-temporal/polyfill";
 import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
 import { buildInitialStorageDrafts, firstStoragePeriod, validateLoadedStorageDeal, type StorageDeal, type StorageParty } from "./financialStorageDrafts";
-import { claimInitialStorageEvent, reserveInitialStorageEvent, storedStorageReceipts, updateInitialStorageEvent, type StorageDraftReceipt } from "./financialInitialStorageDb";
+import { claimInitialStorageEvent, previewInitialStorageReservation, reserveInitialStorageEvent, storedStorageReceipts, updateInitialStorageEvent, type StorageDraftReceipt } from "./financialInitialStorageDb";
 import { preflightFinancialXeroIntents, readBackFinancialDraft, verifyInitialStorageXeroAccounts } from "./financialReadOnlyXeroService";
 import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
@@ -46,6 +46,67 @@ export type InitialStorageResult = {
   storagePurchaseOrder?: string;
   warning?: string;
 };
+
+/** Reviewer-invoked GET-only preview. It never reserves a suffix, approves or calls a writer. */
+export async function previewInitialLoadedStorage(recordId: string) {
+  const raw = await retrieveCurrentVtigerFinancialRecord(recordId);
+  const facts = validateLoadedStorageDeal(raw, recordId);
+  const [customer, driver] = await Promise.all([
+    resolveParty(facts.customerId, text(raw.related_to) === facts.customerId ? "account" : "contact"),
+    resolveParty(facts.driverId, "vendor"),
+  ]);
+  const deal: StorageDeal = {
+    dealId: recordId, dealNumber: facts.dealNumber, location: facts.location,
+    containerNumber: facts.containerNumber, containerType: facts.containerType,
+    dateIn: facts.dateIn, deliveryDate: facts.deliveryDate, customer, driver,
+    storageSupplier: { name: "Containerzone", vtigerId: "xero-contact", email: null },
+  };
+  const period = firstStoragePeriod(deal.dateIn, deal.deliveryDate);
+  const reservation = await previewInitialStorageReservation(recordId, facts.location, period.start);
+  const { documents } = buildInitialStorageDrafts(deal, reservation.suffix, reservation.suffix === "A");
+  const documentsHash = storageDocumentsHash(documents);
+  const sourceHash = sha256({ recordId, dealNumber: deal.dealNumber, location: deal.location,
+    containerNumber: deal.containerNumber, containerType: deal.containerType, period,
+    customer: customer.vtigerId, driver: driver.vtigerId });
+  await verifyInitialStorageXeroAccounts();
+  const preflight = await preflightFinancialXeroIntents(documents);
+  for (let index = 0; index < documents.length; index += 1) {
+    const doc = documents[index]!;
+    const check = preflight[index]!;
+    if (check.contactCheck.found && check.contactCheck.contactId) doc.partySourceId = check.contactCheck.contactId;
+    if (index === 1) {
+      const selectedCode = doc.lineItems[0]!.itemCode;
+      const jd = check.itemChecks.find(item => item.itemCode === selectedCode);
+      if (jd?.found && jd.nativeDescription) doc.lineItems[0]!.description = jd.nativeDescription;
+    }
+  }
+  const reasons: string[] = [];
+  if (Temporal.PlainDate.compare(Temporal.PlainDate.from(period.start), Temporal.Now.zonedDateTimeISO("Australia/Sydney").toPlainDate()) > 0) reasons.push("Date In is in the future in Sydney.");
+  if (reservation.existing) reasons.push(`An AP storage event already exists with status ${reservation.existing.status}.`);
+  if (reservation.existing && reservation.existing.sourceHash !== sourceHash) reasons.push("VTiger source evidence differs from the existing AP reservation.");
+  for (let index = 0; index < documents.length; index += 1) {
+    const doc = documents[index]!;
+    const check = preflight[index]!;
+    if (check.duplicateState !== "not_found") reasons.push(`${doc.proposedDocumentNumber}: exact Xero number is ${check.duplicateState}${check.status ? ` (${check.status})` : ""}.`);
+    if (!check.contactCheck.found || !check.contactCheck.contactId) reasons.push(`${doc.proposedDocumentNumber}: no unique exact Xero contact match.`);
+    if (index === 1 && (!check.itemChecks.some(item => item.itemCode === doc.lineItems[0]?.itemCode && item.found && item.nativeDescription))) reasons.push(`${doc.proposedDocumentNumber}: JD purchase item or native description is unavailable.`);
+  }
+  return {
+    dealNumber: deal.dealNumber, recordId, location: deal.location, containerNumber: deal.containerNumber,
+    containerType: deal.containerType, customer: customer.name, driver: driver.name,
+    period, suffix: reservation.suffix, eventStatus: reservation.existing?.status ?? null,
+    eligibleForApproval: reasons.length === 0, reasons,
+    sourceHash, documentsHash, preflightHash: storagePreflightHash(preflight, documents),
+    documents: documents.map((doc, index) => ({ family: doc.documentFamily, type: doc.documentType,
+      number: doc.proposedDocumentNumber, party: doc.partyName, contactId: doc.partySourceId,
+      issueDate: doc.issueDate?.toISOString().slice(0, 10), dueDate: doc.dueDate?.toISOString().slice(0, 10) ?? null,
+      subtotal: doc.subtotal, taxAmount: doc.taxAmount, total: doc.total,
+      accountCode: doc.accountCode, itemCode: doc.lineItems[0]?.itemCode ?? "",
+      lineDescription: doc.lineItems[0]?.description ?? "",
+      xeroNumberState: preflight[index]!.duplicateState, xeroStatus: preflight[index]!.status,
+      xeroDocumentId: preflight[index]!.xeroDocumentId })),
+  };
+}
 
 /**
  * An authenticated VTiger Deal event enters only this storage-specific workflow.
