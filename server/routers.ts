@@ -73,6 +73,7 @@ import {
 import { sendDisputeEmail, generateDisputeEmailTemplate, sendInviteEmail } from "./emailService";
 import { ENV } from "./_core/env";
 import { getMicrosoftGraphConfig } from "./microsoftGraphConfig";
+import { summarizeInvoiceListNotes } from "./invoiceNotePreview";
 import { listInitialStorageEvents } from "./financialInitialStorageDb";
 import { INITIAL_STORAGE_WEBHOOK_PATH } from "./financialInitialStorageWebhook";
 import { previewInitialLoadedStorage } from "./financialInitialStorageService";
@@ -172,7 +173,7 @@ import {
 import { getFinancialWebhookEvents } from "./financialWebhookEventDb";
 import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ─── Admin guard ──────────────────────────────────────────────────────────────
@@ -1379,32 +1380,26 @@ export const appRouter = router({
         const allInvoices = await getAllInvoices(input);
         if (allInvoices.length === 0) return [];
 
-        // Batch-fetch note counts per invoice (query notes = email_sent/email_received, internal = note/status_change/system)
+        // Batch-fetch counts and short previews for the same visible invoices.
         const db = await (await import("./db")).getDb();
-        if (!db) return allInvoices.map((inv) => ({ ...inv, queryNoteCount: 0, internalNoteCount: 0 }));
+        if (!db) return allInvoices.map((inv) => ({ ...inv, queryNoteCount: 0, internalNoteCount: 0,
+          queryNotePreview: null as string | null, internalNotePreview: null as string | null,
+          internalNotePreviewType: null as "note" | "activity" | null }));
 
         const { conversationNotes } = await import("../drizzle/schema");
         const invoiceIds = allInvoices.map((inv) => inv.id);
         const allNotes = await db
-          .select({ invoiceId: conversationNotes.invoiceId, type: conversationNotes.type })
+          .select({ id: conversationNotes.id, invoiceId: conversationNotes.invoiceId, type: conversationNotes.type,
+            content: sql<string>`LEFT(${conversationNotes.content}, 800)`, createdAt: conversationNotes.createdAt })
           .from(conversationNotes)
           .where(inArray(conversationNotes.invoiceId, invoiceIds));
 
-        // Build counts per invoice
-        const queryNoteCounts = new Map<number, number>();
-        const internalNoteCounts = new Map<number, number>();
-        for (const n of allNotes) {
-          if (n.type === "email_sent" || n.type === "email_received") {
-            queryNoteCounts.set(n.invoiceId, (queryNoteCounts.get(n.invoiceId) ?? 0) + 1);
-          } else if (n.type === "note" || n.type === "status_change" || n.type === "system") {
-            internalNoteCounts.set(n.invoiceId, (internalNoteCounts.get(n.invoiceId) ?? 0) + 1);
-          }
-        }
+        const summaries = summarizeInvoiceListNotes(allNotes);
 
         return allInvoices.map((inv) => ({
           ...inv,
-          queryNoteCount: queryNoteCounts.get(inv.id) ?? 0,
-          internalNoteCount: internalNoteCounts.get(inv.id) ?? 0,
+          ...(summaries.get(inv.id) ?? { queryNoteCount: 0, internalNoteCount: 0,
+            queryNotePreview: null, internalNotePreview: null, internalNotePreviewType: null }),
         }));
       }),
 

@@ -5,6 +5,7 @@ import type { TrpcContext } from "./_core/context";
 
 // Mock all db helpers
 vi.mock("./db", () => ({
+  getDb: vi.fn().mockResolvedValue(null),
   getAllUsers: vi.fn().mockResolvedValue([]),
   updateUserRole: vi.fn().mockResolvedValue(undefined),
   getAllSuppliers: vi.fn().mockResolvedValue([]),
@@ -208,6 +209,23 @@ describe("invoices.list", () => {
     const caller = appRouter.createCaller(makeUserCtx());
     const result = await caller.invoices.list({ status: "flagged" });
     expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("returns latest query and internal note snippets without a per-invoice query", async () => {
+    const { getAllInvoices, getDb } = await import("./db");
+    vi.mocked(getAllInvoices).mockResolvedValueOnce([{ id: 21, status: "flagged" }, { id: 22, status: "extracted" }] as any);
+    const rows = [
+      { id: 1, invoiceId: 21, type: "email_received", content: "Supplier will reissue", createdAt: new Date("2026-10-08T00:00:00Z") },
+      { id: 2, invoiceId: 21, type: "note", content: "Check PO reference", createdAt: new Date("2026-10-08T01:00:00Z") },
+    ];
+    const select = vi.fn(() => ({ from: () => ({ where: async () => rows }) }));
+    vi.mocked(getDb).mockResolvedValueOnce({ select } as any);
+    const result = await appRouter.createCaller(makeUserCtx()).invoices.list({});
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(result[0]).toMatchObject({ id: 21, queryNoteCount: 1, internalNoteCount: 1,
+      queryNotePreview: "Supplier will reissue", internalNotePreview: "Check PO reference", internalNotePreviewType: "note" });
+    expect(result[1]).toMatchObject({ id: 22, queryNoteCount: 0, internalNoteCount: 0,
+      queryNotePreview: null, internalNotePreview: null });
   });
 });
 

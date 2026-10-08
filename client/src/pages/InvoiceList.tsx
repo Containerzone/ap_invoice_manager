@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/StatusBadge";
+import { InvoiceNotesPreview } from "@/components/InvoiceNotesPreview";
 import { formatRelativeTime } from "@/lib/invoiceUtils";
 import { externalInvoiceListRefreshOptions } from "@/lib/invoiceListRefresh";
 import { Upload, Search, FileText, Filter, Users, ChevronUp, ChevronDown, ChevronsUpDown, X, MessageSquare, StickyNote } from "lucide-react";
@@ -272,7 +273,7 @@ export default function InvoiceList() {
       </div>
 
       {/* Table */}
-      <Card className="border shadow-sm overflow-hidden">
+      <Card className="border shadow-sm overflow-x-auto">
         {isLoading ? (
           <div className="divide-y divide-border">
             {[...Array(6)].map((_, i) => (
@@ -312,7 +313,7 @@ export default function InvoiceList() {
           <TooltipProvider>
             <>
               {/* Desktop table header — sortable */}
-              <div className="hidden xl:grid grid-cols-[1.3fr_0.8fr_1.1fr_0.7fr_0.7fr_0.7fr_0.7fr_0.5fr_0.9fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
+              <div className="hidden xl:grid xl:min-w-[1080px] grid-cols-[1.15fr_.75fr_1fr_.65fr_.65fr_.65fr_.55fr_.4fr_.9fr_2.1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
                 <SortHeader col="invoiceNumber" label="Invoice #" />
                 <SortHeader col="poNumber" label="PO Number" />
                 <SortHeader col="supplier" label="Supplier" />
@@ -320,22 +321,24 @@ export default function InvoiceList() {
                 <SortHeader col="issueDate" label="Issue Date" />
                 <SortHeader col="dueDate" label="Due Date" />
                 <SortHeader col="received" label="Received" />
-                <span className="uppercase tracking-wider text-xs font-medium text-muted-foreground">Notes</span>
+                <span className="uppercase tracking-wider text-xs font-medium text-muted-foreground">QN / IN</span>
                 <SortHeader col="status" label="Status" />
+                <span className="uppercase tracking-wider text-xs font-medium text-muted-foreground">Notes</span>
               </div>
               {/* Tablet header */}
-              <div className="xl:hidden hidden md:grid grid-cols-[1fr_1fr_0.7fr_1fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
+              <div className="xl:hidden hidden md:grid md:min-w-[730px] grid-cols-[1fr_1fr_.7fr_1fr_1.7fr] gap-3 px-5 py-2.5 bg-muted/40 border-b">
                 <SortHeader col="invoiceNumber" label="Invoice #" />
                 <SortHeader col="supplier" label="Supplier" />
                 <SortHeader col="amount" label="Amount" />
                 <SortHeader col="status" label="Status" />
+                <span className="uppercase tracking-wider text-xs font-medium text-muted-foreground">Notes</span>
               </div>
 
               <div className="divide-y divide-border">
                 {displayedInvoices.map((invoice) => (
                   <div
                     key={invoice.id}
-                    className={`grid grid-cols-1 md:grid-cols-[1fr_1fr_0.7fr_1fr] xl:grid-cols-[1.3fr_0.8fr_1.1fr_0.7fr_0.7fr_0.7fr_0.7fr_0.5fr_0.9fr] gap-2 md:gap-3 items-center px-5 py-3.5 hover:bg-muted/20 cursor-pointer transition-colors ${invoice.status === "resolved" ? "opacity-60" : ""}`}
+                    className={`grid grid-cols-1 md:grid-cols-[1fr_1fr_.7fr_1fr_1.7fr] md:min-w-[730px] xl:grid-cols-[1.15fr_.75fr_1fr_.65fr_.65fr_.65fr_.55fr_.4fr_.9fr_2.1fr] xl:min-w-[1080px] gap-2 md:gap-3 items-center px-5 py-3.5 hover:bg-muted/20 cursor-pointer transition-colors ${invoice.status === "resolved" ? "opacity-60" : ""}`}
                     onClick={() => window.open(`/invoices/${invoice.id}`, '_blank', 'noopener,noreferrer')}
                   >
                     {/* Col 1: Invoice # */}
@@ -385,26 +388,26 @@ export default function InvoiceList() {
 
                     {/* Col 8: Notes icons */}
                     <div className="hidden xl:flex items-center gap-1.5">
-                      {(invoice as any).queryNoteCount > 0 && (
+                      {invoice.queryNoteCount > 0 && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span className="inline-flex items-center gap-0.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
                               <MessageSquare className="h-3 w-3" />
-                              {(invoice as any).queryNoteCount}
+                              {invoice.queryNoteCount}
                             </span>
                           </TooltipTrigger>
-                          <TooltipContent>Query Notes ({(invoice as any).queryNoteCount})</TooltipContent>
+                          <TooltipContent>Query Notes ({invoice.queryNoteCount})</TooltipContent>
                         </Tooltip>
                       )}
-                      {(invoice as any).internalNoteCount > 0 && (
+                      {invoice.internalNoteCount > 0 && (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span className="inline-flex items-center gap-0.5 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
                               <StickyNote className="h-3 w-3" />
-                              {(invoice as any).internalNoteCount}
+                              {invoice.internalNoteCount}
                             </span>
                           </TooltipTrigger>
-                          <TooltipContent>Internal Notes ({(invoice as any).internalNoteCount})</TooltipContent>
+                          <TooltipContent>Internal Notes ({invoice.internalNoteCount})</TooltipContent>
                         </Tooltip>
                       )}
                     </div>
@@ -417,6 +420,13 @@ export default function InvoiceList() {
                           Δ
                         </span>
                       )}
+                    </div>
+
+                    {/* After Status: latest query and internal note text */}
+                    <div className="min-w-0 max-w-full" aria-label="Invoice notes preview">
+                      <InvoiceNotesPreview queryNoteCount={invoice.queryNoteCount} internalNoteCount={invoice.internalNoteCount}
+                        queryNotePreview={invoice.queryNotePreview} internalNotePreview={invoice.internalNotePreview}
+                        internalNotePreviewType={invoice.internalNotePreviewType} />
                     </div>
                   </div>
                 ))}
