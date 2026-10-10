@@ -193,6 +193,9 @@ export async function runFinancialPostSuccessAction(actionId: number): Promise<{
         elementType: config.tasks.module,
         element: {
           assigned_user_id: config.assignedUserId,
+          ...(summary.purpose === "finalise_storage_invoice_task" ? {
+            tasktype: "ACCOUNTS", taskstatus: "Not Started", taskpriority: "High", date_start: dueDate,
+          } : {}),
           [config.tasks.recordLinkField]: claimed.sourceRecordId,
           [config.tasks.subjectField]: subject,
           [config.tasks.dueDateField]: dueDate,
@@ -224,12 +227,12 @@ export async function runFinancialPostSuccessAction(actionId: number): Promise<{
  * Bounded retry worker for VTiger-only post-success actions. It has no path to
  * any Xero financial write; each action retains its own Xero read-back evidence.
  */
-export async function retryFinancialPostSuccessActions(limit = 20): Promise<{
+export async function retryFinancialPostSuccessActions(limit = 20, workflowTypes?: string[]): Promise<{
   considered: number;
   succeeded: number;
   failed: number;
 }> {
-  const candidates = await getRetryableFinancialPostSuccessActions(limit);
+  const candidates = workflowTypes ? await getRetryableFinancialPostSuccessActions(limit, workflowTypes) : await getRetryableFinancialPostSuccessActions(limit);
   let succeeded = 0;
   let failed = 0;
   for (const candidate of candidates) {

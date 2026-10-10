@@ -6,8 +6,10 @@ import {
 } from "./financialWorkflowDb";
 import { isFinancialGlobalShadowModeEnabled } from "./financialLiveExecutionService";
 import { isFinancialLiveWriteEnvironmentEnabled } from "./financialProductionWriter";
-import { retryFinancialPostSuccessActions } from "./vtigerFinancialWriteService";
+import { retryFinancialPostSuccessActions, isFinancialPostSuccessVtigerWriteEnabled } from "./vtigerFinancialWriteService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
+import { runAutomaticRecurringStorage } from "./financialStorageLifecycleService";
+import { getStorageReleasePolicy, assertStorageRelease } from "./financialStorageRelease";
 
 async function verifyFinancialSchedule(req: Request, expectedWorkflowType: string) {
   const user = await sdk.authenticateRequest(req);
@@ -86,9 +88,19 @@ export async function financialRecurringProposalHandler(req: Request, res: Respo
         message: "Recognised AP financial schedule is disabled. No selector, source update or financial write was run.",
       });
     }
+    if (workflowType === "recurring_storage" && process.env.FINANCIAL_STORAGE_AUTOMATIC_ENABLED === "true") {
+      const policy = await getStorageReleasePolicy(); assertStorageRelease(policy, "recurring");
+      if (isFinancialPostSuccessVtigerWriteEnabled()) await retryFinancialPostSuccessActions(10, ["storage_activation", "recurring_storage", "storage_finalisation"]);
+    }
     if (workflowType === "recurring_storage" && !isFirstSydneyCalendarDay()) {
       await recordFinancialWorkflowScheduleOutcome({ workflowType, taskUid, outcome: "skipped_not_first_sydney_calendar_day" });
       return res.json({ ok: true, skipped: "not_first_sydney_calendar_day", xeroWritesAttempted: 0 });
+    }
+    if (workflowType === "recurring_storage" && process.env.FINANCIAL_STORAGE_AUTOMATIC_ENABLED === "true") {
+      const result = await runAutomaticRecurringStorage();
+      await recordFinancialWorkflowScheduleOutcome({ workflowType, taskUid, outcome: "storage_lifecycle_completed" });
+      if ("retryRemainingBatch" in result && result.retryRemainingBatch) return res.status(429).json({ ...result, message: "More current due storage periods remain; retry the same managed callback." });
+      return res.json(result);
     }
     await recordFinancialWorkflowScheduleOutcome({ workflowType, taskUid, outcome: "enabled_selector_proposal_only" });
     return res.status(409).json({

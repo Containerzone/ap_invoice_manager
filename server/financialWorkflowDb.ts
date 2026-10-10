@@ -1754,12 +1754,13 @@ export async function markFinancialPostSuccessActionFailed(input: {
   }).where(eq(financialPostSuccessActions.id, input.actionId));
 }
 
-export async function getRetryableFinancialPostSuccessActions(limit = 20): Promise<FinancialPostSuccessAction[]> {
+export async function getRetryableFinancialPostSuccessActions(limit = 20, workflowTypes?: string[]): Promise<FinancialPostSuccessAction[]> {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(financialPostSuccessActions)
     .where(and(
       inArray(financialPostSuccessActions.status, ["pending", "failed"]),
+      workflowTypes ? inArray(financialPostSuccessActions.workflowType, workflowTypes) : undefined,
       sql`${financialPostSuccessActions.attemptCount} < 3`,
     ))
     .orderBy(financialPostSuccessActions.createdAt)

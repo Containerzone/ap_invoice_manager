@@ -307,8 +307,10 @@ export async function readBackFinancialDraft(input: {
   documentFamily: "purchase_order" | "customer_invoice";
   documentNumber: string;
   expectedXeroDocumentId: string;
+  expectedDocument?: ProposedFinancialDocument;
 }): Promise<FinancialDraftReadBack> {
   const auth = await readOnlyAuth();
+  await assertExpectedFinancialTenant(auth);
   const expectedNumber = input.documentNumber.trim();
   if (!expectedNumber || !input.expectedXeroDocumentId.trim()) {
     throw new Error("Exact Xero document number and ID are required for Draft read-back.");
@@ -331,6 +333,29 @@ export async function readBackFinancialDraft(input: {
     const parsed = typeof value === "number" ? value : Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
+  const expected = input.expectedDocument;
+  if (expected) {
+    const lines = Array.isArray(document.LineItems) ? document.LineItems : [];
+    const dateOnly = (value: unknown) => {
+      const raw = String(value ?? "");
+      const ms = raw.match(/^\/Date\((\d+)(?:[+-]\d+)?\)\/$/);
+      const parsed = ms ? new Date(Number(ms[1])) : new Date(raw);
+      return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0,10) : null;
+    };
+    if (document.Contact?.ContactID !== expected.partySourceId || document.LineAmountTypes !== "Exclusive" ||
+      (expected.documentFamily === "customer_invoice" && document.Type !== "ACCREC") ||
+      (expected.issueDate && dateOnly(document.DateString ?? document.Date) !== expected.issueDate.toISOString().slice(0,10)) ||
+      (expected.dueDate && dateOnly(document.DueDateString ?? document.DueDate) !== expected.dueDate.toISOString().slice(0,10)) ||
+      !Number.isFinite(Number(document.SubTotal)) || !Number.isFinite(Number(document.Total)) ||
+      Math.abs(Number(document.SubTotal) - expected.subtotal) > 0.01 || Math.abs(Number(document.Total) - expected.total) > 0.01 ||
+      lines.length !== expected.lineItems.length || lines.some((line: any, index: number) => {
+        const wanted = expected.lineItems[index]!;
+        return line.Description !== wanted.description || String(line.AccountCode) !== String(wanted.accountCode) ||
+          !Number.isFinite(Number(line.UnitAmount)) ||
+          Number(line.Quantity) !== wanted.quantity || Math.abs(Number(line.UnitAmount) - wanted.unitAmount) > 0.001 ||
+          line.TaxType !== (expected.documentFamily === "purchase_order" ? "INPUT" : "OUTPUT");
+      })) throw new Error(`Xero Draft ${expectedNumber} does not match the exact storage contact, lines, account or totals.`);
+  }
   return {
     documentFamily: input.documentFamily,
     xeroDocumentId,

@@ -7,6 +7,7 @@ import type {
 import { getXeroReadAuthWithRefresh } from "./xeroService";
 import { runXeroRequest } from "./xeroRequestManager";
 import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
+import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -57,6 +58,9 @@ export type FinancialWriteAuthorisation = {
   /** Isolated loaded-storage pilot receipt; never supplied by a browser or generic financial route. */
   storagePilotEventId?: number;
   storagePilotApprovedBy?: number;
+  storageAutomaticEventId?: number;
+  storageReleaseKey?: string;
+  storageApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -234,6 +238,13 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.storageAutomaticEventId !== undefined) {
+    if (process.env.FINANCIAL_STORAGE_AUTOMATIC_ENABLED !== "true" || !["storage_activation", "recurring_storage", "storage_finalisation"].includes(context.workflowType) ||
+      !Number.isInteger(context.storageAutomaticEventId) || context.storageAutomaticEventId <= 0 || !context.storageReleaseKey || !context.storageApprovedBy ||
+      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete) throw new FinancialWriteDisabledError("Storage automatic release gate is not valid.");
+    if (options.requireExecutionId !== false && (!context.executionId || context.executionId <= 0)) throw new FinancialWriteDisabledError("Storage execution ledger is required.");
+    return;
+  }
   if (context.storagePilotEventId !== undefined) {
     if (context.workflowType !== "storage_activation" || !Number.isInteger(context.storagePilotEventId) || context.storagePilotEventId <= 0) {
       throw new FinancialWriteDisabledError("Storage pilot authorisation is not valid for this financial family.");
@@ -313,6 +324,16 @@ export async function executeFinancialDraftWrite(
     await verifyInitialStoragePilotWriteAccess({ eventId: context.storagePilotEventId,
       approvalReference: context.approvalReference!, documentNumber: payload.documentNumber,
       preparedBy: context.storagePilotApprovedBy! });
+  }
+  if (context.storageAutomaticEventId !== undefined) {
+    const rows = payload.documentFamily === "customer_invoice" ? payload.body.Invoices : payload.body.PurchaseOrders;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (!row || row.Status !== "DRAFT" || row.LineAmountTypes !== "Exclusive" || row.CurrencyCode !== "AUD" ||
+      (payload.documentFamily === "customer_invoice" && row.Type !== "ACCREC") ||
+      !Array.isArray(row.LineItems) || row.LineItems.length !== 1 ||
+      !row.LineItems.every((line: any) => ["200", "310", "311"].includes(String(line.AccountCode)))) throw new FinancialWriteDisabledError("Automatic storage is restricted to exact AUD Exclusive storage Draft payloads.");
+    await verifyStorageAutomaticWriteAccess({ eventId: context.storageAutomaticEventId, releaseKey: context.storageReleaseKey!,
+      preparedBy: context.storageApprovedBy!, payload, workflowType: context.workflowType });
   }
   const auth = await getXeroReadAuthWithRefresh();
   const operation = `${payload.method} financial-draft:${payload.documentFamily}:${payload.documentNumber}`;

@@ -253,6 +253,13 @@
       "when": 1790836372895,
       "tag": "0035_careful_sabretooth",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1791660592688,
+      "tag": "0036_volatile_earthquake",
+      "breakpoints": true
     }
   ]
 }

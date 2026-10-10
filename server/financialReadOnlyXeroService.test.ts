@@ -160,6 +160,7 @@ describe("financial read-only Xero service", () => {
   });
 
   it("requires an exact GET-only Draft read-back after a guarded writer response", async () => {
+    mockGet.mockResolvedValueOnce({ data: { Organisations: [{ Name: "CONTAINERZONE" }] } });
     mockGet.mockResolvedValueOnce({ data: {
       Invoices: [{
         InvoiceID: "invoice-1", InvoiceNumber: "INV-7001", Status: "DRAFT",
@@ -171,6 +172,25 @@ describe("financial read-only Xero service", () => {
       documentFamily: "customer_invoice", documentNumber: "INV-7001", expectedXeroDocumentId: "invoice-1",
     });
     expect(result).toMatchObject({ xeroDocumentId: "invoice-1", documentNumber: "INV-7001", status: "DRAFT", total: 110, lineCount: 1 });
+    noMutationAssertions();
+  });
+
+  it("rejects a storage read-back with mismatched content even when ID and Draft status match", async () => {
+    const expected = {
+      documentFamily: "customer_invoice", documentType: "storage_activation", proposedAction: "create_draft", proposedDocumentNumber: "INV-123-A",
+      partyName: "Customer", partySourceId: "contact-1", accountCode: "200", reference: "D123", gstTreatment: "GST_EXCLUSIVE", currency: "AUD",
+      subtotal: 100, taxAmount: 10, total: 110, issueDate: new Date("2026-08-10T00:00:00Z"), dueDate: new Date("2026-08-11T00:00:00Z"),
+      lineItems: [{ description: "Storage", quantity: 1, unitAmount: 100, lineAmount: 100, itemCode: "", accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" }],
+      validationStatus: "valid", sourceWorkflow: "storage_activation", sourceRecordId: "5x123",
+    } as any;
+    const actual = { InvoiceID: "id-1", InvoiceNumber: "INV-123-A", Status: "DRAFT", Type: "ACCREC", Contact: { ContactID: "contact-1" },
+      Date: "2026-08-10", DueDate: "2026-08-11", LineAmountTypes: "Exclusive", SubTotal: 100, Total: 110,
+      LineItems: [{ Description: "Storage", Quantity: 1, UnitAmount: 100, AccountCode: "200", TaxType: "OUTPUT" }] };
+    for (const patch of [{ Total: 111 }, { Date: "2026-08-09" }, { Contact: { ContactID: "wrong" } }, { LineItems: [{ ...actual.LineItems[0], UnitAmount: undefined }] }]) {
+      mockGet.mockResolvedValueOnce({ data: { Organisations: [{ Name: "CONTAINERZONE" }] } })
+        .mockResolvedValueOnce({ data: { Invoices: [{ ...actual, ...patch }] } });
+      await expect(readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-123-A", expectedXeroDocumentId: "id-1", expectedDocument: expected })).rejects.toThrow(/does not match/);
+    }
     noMutationAssertions();
   });
 });

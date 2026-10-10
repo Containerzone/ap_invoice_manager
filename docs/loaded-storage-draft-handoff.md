@@ -1,91 +1,95 @@
-# Loaded-container storage → Xero Drafts: implementation handoff
+# VTiger → Xero Storage — lifecycle handoff
 
-**Status (1 October 2026): the automatic VTiger stage-triggered workflow is implemented and tested but not activated. One separately authorised customer-invoice-only Xero Draft test was created and verified; the three-document webhook remains disabled.** This replaces the earlier broad storage cutover work for the initial stage-triggered workflow only. The two supplied attachments, `pasted_content_12.txt` and `pasted_content_13.txt`, contain the same specification; the owner subsequently approved using the existing size-specific JD items.
+**Updated: 11 October 2026. Implementation complete for storage-only automatic initial billing, recurring billing, finalisation and controlled recovery. Deployment/cutover is not activated.** The user requested completion of these features on 11 October, extending the earlier initial-storage-only scope.
 
-**Live-preparation update:** The separate storage workspace now has an administrator-invoked **read-only exact Deal preview**. It shows current VTiger parties/stage/period, proposed three-document values, Xero exact-number/contact/item/account results and source/document/preflight fingerprints. It does not reserve a suffix, grant an approval or send an accounting write. A live GET-only preview of D702885 returned **held**: Date In remains future in Sydney, `INV-702885-A` is ambiguous because both the new DRAFT and deleted history have the number, and `JD702885`/`GD702885` already exist as DRAFT POs. This does not make D702885 a three-document pilot.
+## Implemented
 
-## What is prepared
-
-- A narrow authenticated `POST /api/webhooks/vtiger/deal-storage` endpoint accepts only `{"record_id":"5x123456","event":"deal.storage-stage-changed"}` with header **`X-Financial-Webhook-Secret`**. Never place the secret in a URL, UI screenshot, or report. Missing or invalid authentication returns HTTP 401; unconfigured authentication returns 503.
-- The AP handler retrieves the current VTiger **Potentials / Deal** and its bill-to organisation or fallback contact and the location-specific vendor; it ignores supplied financial facts. It requires stage `4 STORAGE at ORIGIN` or `11 STORAGE at DEST` and a matching `Storage Required` value. Wrong stages and incomplete sources are held before any Xero financial call.
-- Initial period uses Sydney **calendar dates**, including both Date In and end day: month-end, extended through next month-end when fewer than seven days remain, capped by Full Container Delivery Date. `Temporal.PlainDate` avoids DST drift. Four allowed container types use $59.09/$86.36 ex-GST weekly customer and supplier storage rates, and $250/$340.91 ex-GST one-time transport.
-- Three Draft documents are calculated: `ACCREC` invoice on account 200 due one calendar day later, transport PO on account 310, and Containerzone storage PO on account 311. **Transport item codes use `JD 20` and `JD 40` by size, after an explicit owner choice and Xero GET validation.** A first event receives invoice suffix A and unsuffixed `JD`/`GD` PO numbers; further events reserve a per-Deal suffix, skipping deposit suffix D, and append it to both POs.
-- A database table has **unique Deal + location + initial-period** and **unique Deal + suffix** keys. It retains per-document Draft read-back receipts for safe partial-failure reconciliation. The owner subsequently requested a **standalone, administrator-only VTiger → Xero Storage sidebar page**, outside Financial Operations. It shows Deal/location, period, three Xero references, separately authorised invoice-only tests, non-secret receiver/gate status, and the handover checklist; no manual trigger buttons. No separate app, recurring schedule, payment action or unrelated family activation was added.
-- Future post-success traceability queues one VTiger note after all three exact Xero Draft read-backs. If VTiger note writing is disabled or fails, the three verified receipts remain successful and the event shows `writeback_pending` rather than recreating Xero documents.
-
-## Live VTiger field mapping confirmed by authenticated `describe`
-
-| Fact | Verified `Potentials` API field / source |
-| --- | --- |
-| Deal ID / number | `id` / `potential_no` |
-| Storage stage | `sales_stage`: `4 STORAGE at ORIGIN`, `11 STORAGE at DEST` |
-| Storage choice | `cf_potentials_storagerequired`: `Yes at Origin`, `Yes at Destination` |
-| Container number / size | `potentialname` / `cf_potentials_containertype` |
-| Date In / delivery cap | `cf_potentials_datein` / `cf_potentials_fullcontainerdeliverydate` |
-| Organisation / contact | `related_to` / `contact_id` → `Accounts.accountname` or `Contacts.firstname`, `Contacts.lastname` |
-| Origin / Destination driver | `cf_potentials_contractorc2` / `cf_potentials_fullcontainerdeliveryv` → `Vendors.vendorname` |
-| VTiger note fields | `ModComments.related_to`, `ModComments.commentcontent`, `ModComments.assigned_user_id` |
-
-Only the exact referenced records are retrieved. No broad VTiger scan or record update occurred.
-
-## Blockers before any actual Draft or external webhook handover
-
-1. **The JD item mismatch is resolved in code, not by changing Xero.** GET-only checks confirm the expected CONTAINERZONE tenant, active accounts **200/310/311**, and existing `JD 20` / `JD 40` purchased items with native purchase descriptions on account 310. `Items/JD` itself remains absent. The owner explicitly selected the existing size-specific items. PO document numbers still begin `JD`; only the Xero **item code** varies by container size.
-2. The isolated deployment lock `FINANCIAL_INITIAL_STORAGE_ENABLED` remains unset. The broad financial live-write lock is also unset, global financial shadow mode remains active, and unrelated families cannot be enabled by the storage pilot. There is no named source or exact, expiring three-document approval with source/payload/Xero-preflight hashes and no confirmed legacy writer handoff. The route will accept authenticated events for local held/audit tracking, **not** create Drafts, until the exact pilot is confirmed and the narrow gate is intentionally armed.
-3. Existing VTiger workflow destinations and the old Operations writer are **unchanged**, following the newer narrow attachment's explicit exclusion of existing VTiger workflows and Operations changes. This route is not claimed to receive live VTiger traffic yet. Once an exact pilot is reviewed, hand over just the relevant existing stage action in a separate coordinated change to avoid two writers.
-4. Xero's exact customer/driver/Containerzone contact matches, existing document-number collisions, and selected `JD 20` / `JD 40` purchase wording must pass a fresh GET-only preflight for the named pilot. No arbitrary historical matching or suffix bypass is permitted. The current pilot approval is not available from a public/browser action.
-
-The isolated Draft transport can be enabled for one persisted, expiring **Deal/location/period** approval only. A writer call rechecks that row is claimed, names the exact reference, has current source/document/preflight hashes, and records the legacy handoff; it accepts only a new `POST` containing exactly one `DRAFT` ACCREC invoice or purchase order. The broad all-family writer flags and shadow mode remain unchanged. Setting a flag alone cannot bypass the stored pilot approval.
-
-### Proposed Origin/Destination cutover order — not performed
-
-1. Publish and check the standalone administrator **VTiger → Xero Storage** workspace and the published AP storage receiver; confirm the private header is present in the published runtime. Use the **read-only exact Deal preview** for a known Deal and check that an unauthenticated request returns 401. Do **not** send an authenticated storage-stage event for a legacy Deal just to probe the route: it can reserve a local suffix even while Draft writing is locked. Never create a new test Deal while the old writer is active.
-2. Select an exact *unbilled* eligible Deal and freeze a three-document pilot pack: current VTiger stage and dates, customer, driver, container, business rates/GST, number/suffix, Xero contact/item/account and exact-number preflight. Exclude D702885 because both POs already exist and a new customer Draft now shares its historical deleted number.
-3. Obtain the exact pilot approval and written maintenance window with ContainerZone Operations / IT for the **shared** VTiger storage action whose current URL is `https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-storage`. Pause its old financial action, drain in-flight jobs, retain the unchanged configuration for rollback and verify no new legacy storage records are being generated. This joint handover covers Origin **and** Destination; do not pause unrelated recurring-storage Heartbeat, storage finalisation, storage import or hire-end-date processes.
-4. **Pilot only:** Keep the old shared action paused rather than redirecting all VTiger Deals to an AP route that is approved for just one Deal. Submit only the named, approved `record_id` and event `deal.storage-stage-changed` directly to the published AP receiver `POST /api/webhooks/vtiger/deal-storage` with private header `X-Financial-Webhook-Secret`; arm only `FINANCIAL_INITIAL_STORAGE_ENABLED` during the approved window. No AP schedule or broad `FINANCIAL_LIVE_WRITES_ENABLED` flag is needed for this pilot.
-5. Verify the exact new Xero ACCREC Draft and JD/GD PO Draft **by immutable ID**, tax, contact, reference and line details, then inspect the AP event ledger and any separate VTiger note retry. If held, partial or uncertain, inspect Xero by exact ID/number and reconcile—never blindly replay or change suffix. If the wider automatic release is not approved, disarm the AP gate and **restore the old shared VTiger action promptly** after reconciliation so new business is not stranded.
-6. **Important product gap:** The present guarded route requires an exact expiring approval for **each** Deal/location/period and therefore is not an autonomous all-Deal replacement. Review and test a separate standing release policy (with collision holds, fresh source/Xero checks and idempotency) before switching all Origin and Destination traffic to automatic creation. Only in a second coordinated window should the shared VTiger action be redirected to AP and resumed. Rollback is restoring its old destination and disarming only the isolated AP storage gate, after first reconciling any AP-created Drafts; never delete them blindly.
-
-### Candidate facts collected after the owner approved size-specific JD items
-
-A bounded read-only VTiger query returned up to ten Deals in the exact current Origin or Destination storage stages, but **stage alone is not evidence of an unbilled Draft**. The most recently modified Destination Deal **D702885** has Date In **2026-10-05**, which was future-dated at the 2026-10-01 check. The AP workflow now holds future Sydney Date In values before reservation or Xero preflight. The next recent Origin Deal **D702839** was validated with Date In 2026-09-08, a 23-day initial period through 2026-09-30, but a GET-only Xero preflight found **all three expected numbers already present**: `INV-702839-A`, `JD702839`, `GD702839`. Its matching contact/item results do **not** justify recreating the documents or adding suffixes. Neither Deal was selected, approved, written or modified. A different exact pilot source must be named or selected for the first creation.
-
-### D702885 — owner-confirmed reconciliation-only case (1 October 2026)
-
-The owner confirmed the **new AP rules are authoritative for future storage events**. The later, exact authorisation for a **single new customer invoice Draft** does not authorise editing the original deleted invoice, the existing POs, pausing a writer, or activating the stage-triggered three-document webhook. Keep this case outside the new AP event/suffix ledger; a held reservation would otherwise consume the `A` suffix without completing that bundle.
-
-VTiger exact Deal `5x484050`: stage `11 STORAGE at DEST`, storage required `Yes at Destination`, 20 Foot Standard container `GRRU2300868`, customer **Wez Jenkins**, destination driver **GM Towing**, Date In **2026-10-05**, delivery **2026-10-09**. The AP inclusive first period would be five days, 5–9 October; customer invoice date 5 October and due 6 October.
-
-| Exact reference | New AP rule, if this were unbilled (ex GST / GST / total) | Current Xero record (ex GST / GST / total) |
+| Flow | Behavior | AP destination |
 | --- | --- | --- |
-| `INV-702885-A` — Wez Jenkins | Storage-only $42.21 / $4.22 / $46.43, account 200 | **DELETED**. Former two-line invoice included transport and storage: $321.43 / $32.14 / $353.57, account 200; dated 5 Oct, due 6 Oct. Its exact number remains occupied for preflight purposes. |
-| `JD702885` — GM Towing | $250.00 / $25.00 / $275.00, item `JD 20`, account 310 | **DRAFT** $275.00 / $27.50 / $302.50, item `JD 20`, account 310; Xero document date 1 Oct. |
-| `GD702885` — CONTAINERZONE | $42.21 / $4.22 / $46.43, account 311 | **DRAFT** $35.72 / $3.57 / $39.29, item `GD 20`, account 311; Xero document date 1 Oct. |
+| Initial Origin / Destination | Three new Drafts: storage-only customer ACCREC invoice, once-only JD transport PO, GD storage PO. Current Deal and referenced parties are read from VTiger. | `POST /api/webhooks/vtiger/deal-storage` |
+| Monthly recurring | Next consecutive due period only, on the first Australia/Sydney calendar day. Two Drafts: customer invoice + GD storage PO; never another JD transport PO. Only complete AP activation/period receipts can drive billing. | `POST /api/scheduled/financial-writer/recurring_storage` |
+| Finalisation | Current Date Out, falling back to Full Container Delivery Date, caps the last billed period. Updates only the exact stored customer/GD **DRAFT** IDs. JD is not amended. Root is finalised only after verified read-back, preventing subsequent recurrence. | `POST /api/webhooks/vtiger/deal-storage-finalise` |
+| Controlled recovery | Requires its additional release gate. Can create genuinely missing exact documents for one initial/final period or the next unbilled final month, without adopting unrelated legacy records. Multi-month missing history remains held for reconciliation; no fabricated bulk catch-up. | Same finalisation route |
 
-The current AP three-document preflight detects the DELETED invoice and both DRAFT POs as exact-number collisions. The difference is **not merely GST rounding**: the legacy invoice also contained a transport line, and the PO unit/rate amounts differ from the new AP rule. Never suffix-bypass these records. The legacy shared VTiger storage action is still active and must be coordinated with ContainerZone Operations / IT for a future cutover; do not generate a test Deal while it remains active.
+**UI:** Standalone administrator sidebar **VTiger → Xero Storage**, route `/storage-automation`, outside Financial Operations. It shows receiver/release status, initial/monthly/finalisation receipts, next due/final date, held reasons and read-only reference previews. The historical invoice-only test is separately identified. No public/manual Draft-write button.
 
-**One-off result:** At 18:31 AEST on 1 October 2026 the owner explicitly confirmed the exact storage-only invoice payload (Wez Jenkins, account 200, 5 October date, 6 October due date, $42.21 ex GST / $4.22 GST / $46.43 total) and requested one new Draft only. Xero's [official guidance](https://central.xero.com/0/article/Delete-or-void-a-sales-invoice) permits reuse of a **deleted Draft** number (not a voided approved invoice). After refreshing the Deal, tenant, contact and all three exact references, a single **create-only PUT `/Invoices`** submitted `ACCREC` `DRAFT` `INV-702885-A`, one Destination storage line and no PO or VTiger mutation. An exact ID read-back and independent number search verified **new Xero ID `64a83cc1-437c-4495-8186-d33b5df439de`**, status **DRAFT**, the approved dates, customer, line, $42.21 ex GST, $4.22 GST and $46.43 total. The original distinct ID `50162b52-5761-42da-8f3f-68aeba4d7475` remains **DELETED** with its old total $353.57; `JD702885` and `GD702885` remain **DRAFT** with their original $302.50 and $39.29 totals. AP writer execution **#1** is `succeeded` for this single create-only operation. This is **not** a test of the VTiger webhook, not a three-document AP event, and not an approval to correct either PO. The isolated AP automatic storage flag and generic financial flags remain unset.
+### Financial rules
 
-## Example request / currently expected response
+- Sydney business dates use `Temporal.PlainDate`; inclusive day count, no DST-hour drift.
+- Initial period: month end, extended through the next month end when fewer than seven days remain, capped by delivery. Recurring periods start the day after the last verified billed day and finish at that calendar month end.
+- Four supported 20/40-foot Standard/High Cube types. Weekly storage rate: **$59.09 / $86.36 ex GST** for 20/40 feet, prorated by inclusive days. Customer account **200**, storage supplier account **311**, 10% GST Exclusive, AUD; due one calendar day after invoice date.
+- One-time transport: **$250.00 / $340.91 ex GST**, account **310**, existing Xero items **JD 20 / JD 40** with native purchase descriptions. These item choices were approved by the owner; no Xero item was changed.
+- Per-Deal suffix reservation is unique; deposit suffix **D** is skipped. First activation uses `INV-<digits>-A`, `JD<digits>`, `GD<digits>`. Later periods/events use the reserved suffix on invoice/PO numbers. No suffix is chosen to bypass an occupied reference.
 
-```http
-POST /api/webhooks/vtiger/deal-storage
-X-Financial-Webhook-Secret: <private AP-managed value>
-Content-Type: application/json
+## Release behavior
 
+`financial-automation.loaded-storage-release` is the AP-local standing storage policy. Once separately approved and enabled, it replaces per-Deal manual approvals for qualifying storage events only. It contains a versioned rules hash, release key, approver/time, effective time, initial/recurring/finalisation handover confirmations and a separate recovery permission.
+
+Deployment gate **`FINANCIAL_STORAGE_AUTOMATIC_ENABLED` is off**. Pilot gate `FINANCIAL_INITIAL_STORAGE_ENABLED`, broad `FINANCIAL_LIVE_WRITES_ENABLED`, and VTiger post-success flag remain off. No approval/enable operation was invoked during implementation. The administrator preparation API can save only a disabled policy; server-only approval and schedule-binding helpers are available for the later confirmed cutover. Neither creates or runs a managed schedule.
+
+Every request rechecks persisted release authority and the exact preflighted payload hash. All storage payloads are restricted to one AUD/GST-Exclusive Draft invoice/PO, accounts 200/310/311. Updates require finalisation and an immutable target ID. Unrelated financial families remain locked.
+
+Durable per-location claims prevent monthly/finalisation races. Per-document receipts support partial retries; a timeout can be reconciled only against an exact matching AP execution attempt/payload and fresh Xero Draft content. Existing unrelated documents are held, not imported or duplicated. Changed source facts, changed closed Date Out, non-Draft targets, overlapping periods, missing history and ambiguous references hold for reconciliation.
+
+After verified Xero success, notes and the required **Finalise Storage Invoice** task (stages 4/5/6) are queued independently. The task retains ACCOUNTS type, High priority, Not Started status and Date Out due/start date. VTiger writing requires its own enabled/verified mapping and AP assigned-user ID. Failed/pending follow-up never repeats Xero billing; the daily storage callback retries storage-only follow-ups when separately enabled.
+
+## Exact live cutover — not performed
+
+1. **Publish the saved AP checkpoint**, then verify the production storage page and both authenticated receivers. Keep write gates off during this verification; use read-only previews, not legacy Deal event probes.
+2. In Operations/VTiger, retain rollback configuration and pause/drain only these storage writers:
+   - Shared Origin/Destination action → `https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-storage`.
+   - Monthly storage Heartbeat **`4rB9Yofib8MRLRbijj4z9k`**, name **`storage-monthly-billing`**, callback `/api/scheduled/storageMonthlyBilling`.
+   - Finalisation action → `https://supplycrm-7kuu33x8.manus.space/api/webhooks/vtiger-finalise-storage` — preserve the Accounts task behavior by verifying AP mapping or retaining an agreed task-only workflow.
+3. Point the matching VTiger actions to the published AP URLs with the private header and contracts below. Confirm only AP owns the financial actions. Do not pause unrelated Operations automations, storage planning import, payment sync, underwriting or hire-end initialisation.
+4. Obtain the exact **storage-only standing-release/cutover approval**, including effective time, rates/GST/accounts, create/update/recovery scope, handovers and VTiger post-success actions. Persist the approved policy and arm only `FINANCIAL_STORAGE_AUTOMATIC_ENABLED`; broad financial writing/shadow settings stay unchanged.
+5. After publication and approval, create/bind the AP monthly Heartbeat under its **returned task UID** with cron **`0 5 13 * * *` UTC** and callback `/api/scheduled/financial-writer/recurring_storage`. The callback checks the Sydney first day, processes bounded batches and asks managed retry when more current due roots remain. No in-process timers. No storage/financial Heartbeat currently exists.
+6. Verify the next qualifying event’s exact Draft IDs/contact/lines/GST and the storage tracker, then recurrence/finalisation and the Accounts task. Existing-document reference checks are sufficient to inspect the rules, but are not evidence that a new automated event was delivered. Do not generate duplicate documents for testing.
+
+**Rollback:** disarm only AP storage, stop its managed task, reconcile AP-created/updated Drafts by exact IDs, then restore the retained legacy storage actions/task. Do not delete Drafts or resume both writers concurrently.
+
+### VTiger contracts
+
+Header on both: `X-Financial-Webhook-Secret: <private AP-managed value>`; `Content-Type: application/json`. Never include the secret in a URL, report, UI screenshot or log.
+
+Initial:
+
+```json
 {"record_id":"5x123456","event":"deal.storage-stage-changed"}
 ```
 
-Until the named Deal, exact approval and deployment gates exist, a valid stage resolves to an HTTP 202 response resembling:
+Finalisation:
 
 ```json
-{"ok":false,"status":"held","dealNumber":"D123456","location":"origin","warning":"Initial storage Drafts are prepared but the exact pilot approval, legacy handoff and deployment gates are not enabled."}
+{"record_id":"5x123456","event":"deal.storage-finalised","storageLocation":"destination"}
 ```
 
-A three-document webhook success response cannot be represented as an observed result yet; all three-Draft event completions so far were mocked in automated tests. The separately authorised invoice-only result above must not be presented as such a completion.
+Production base: `https://apinvmanager-dm3caxom.manus.space`. Authentication rejects missing/invalid headers; source financial values in an incoming payload are not trusted.
 
-## Validation and external-impact statement
+## Verified VTiger mapping
 
-- TypeScript check passed; **61 test files / 348 tests** passed after the exact deleted/voided invoice-number collision and same-number history guards, pilot-source, in-flight locking, persisted-approval gate and read-only preview refinements; production build passed. The focused tests cover both stages, exact names and account/payload shape, four rate types and JD item selection, pro-rata/DST/same-day periods, future-date and missing-data holds, deposit suffix exclusion, organisation priority, invalid secret, replay, collision, partial failure, pending VTiger note, and isolation of the storage-only writer gate.
-- The new local endpoint returned **401** for an unauthenticated request; the new storage event table has **zero live events** at handoff.
-- Only AP source files and one additive AP ledger migration changed for the stage-triggered implementation. The later one-off invoice-only test used the AP Xero OAuth connection and recorded an AP execution ledger receipt. **Only the explicitly approved new Xero customer Draft was created.** No existing Xero invoice or PO, VTiger record/workflow URL, Operations setting/schedule, Make scenario, financial Heartbeat job, or live writer flag changed.
+| Fact | API mapping |
+| --- | --- |
+| Deal ID / business number | `Potentials.id` / `potential_no` |
+| Loaded stages | `sales_stage`: `4 STORAGE at ORIGIN`, `11 STORAGE at DEST` |
+| Matching storage choice | `cf_potentials_storagerequired`: `Yes at Origin`, `Yes at Destination` |
+| Container / type | `potentialname` / `cf_potentials_containertype` |
+| Date In / Date Out / delivery fallback | `cf_potentials_datein` / `cf_potentials_dateout` / `cf_potentials_fullcontainerdeliverydate` |
+| Organisation / contact | `related_to` → Accounts; fallback `contact_id` → Contacts |
+| Origin / Destination driver | `cf_potentials_contractorc2` / `cf_potentials_fullcontainerdeliveryv` → Vendors |
+| Note | `ModComments.related_to`, `commentcontent`, `assigned_user_id` |
+| Task | Calendar verified fields plus `tasktype=ACCOUNTS`, `taskstatus=Not Started`, `taskpriority=High`, `date_start` |
+
+Only exact referenced records and authenticated metadata were read. Finalisation permits a later sales stage while still requiring the matching storage facts; source changes must not be inferred from old screenshots.
+
+## D702885 reference test — historical, not imported
+
+On 1 October the owner approved exactly one new ACCREC Draft `INV-702885-A` to **Wez Jenkins**, storage 5–9 October, $42.21 ex GST + $4.22 GST = **$46.43**, dated 5 October, due 6 October. Read-back verified Xero ID **`64a83cc1-437c-4495-8186-d33b5df439de`**; AP writer execution #1 succeeded. Original invoice **`50162b52-5761-42da-8f3f-68aeba4d7475`** remained DELETED; legacy `JD702885` and `GD702885` POs were not edited. That was an invoice-only create, not three-document webhook or monthly/finalisation execution.
+
+On the current **11 October Sydney** GET-only source refresh, D702885 is now at **`16 REVIEW REQUEST`**, Storage Required **`NO`**, Date In **5 October**, Date Out blank, Full Container Delivery Date **6 October**. Its current finalisation preview correctly holds rather than inventing storage eligibility or modifying the source. Fixture tests retain the earlier five-day $42.21 calculation as a historical rule reference. No need to create another test Deal merely to inspect the arithmetic.
+
+## Validation / impact
+
+- Additive AP schema migration **0036** applied; original uniqueness constraints retained. No history import, source edit or test data inserted.
+- Automated coverage includes Sydney dates/month edges, no recurring JD, exact contact/payload/ID read-back, non-Draft/ambiguity holds, standing-release isolation, disabled schedules, cron auth, changed-source holds, locks, partial/recovery/idempotency, final-month-only recovery, Accounts task preservation and reference-only previews.
+- **TypeScript passed; 67 test files / 411 tests passed; production build and diff checks passed.** Unauthenticated local finalisation receiver returns **401**. Browser-authenticated visual validation remains dependent on an administrator sign-in; tests do not establish source webhook delivery.
+- This implementation run made **no new Xero financial write, VTiger record/workflow update, Operations/Make modification or schedule state change**. Three existing AP mailbox/monitoring Heartbeats were inspected read-only; no financial task was created/enabled. The previous specifically approved invoice-only test is not reversed or extended.

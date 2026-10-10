@@ -27,16 +27,17 @@ export function FinancialStorageDrafts() {
     <Card className="border-sky-200 bg-sky-50/50">
       <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div><CardTitle className="flex items-center gap-2"><Warehouse className="h-5 w-5" />Loaded-container Storage Drafts</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">Origin and Destination stage events from VTiger. The three document references appear only after Xero Draft read-back; a held event has not been written.</p></div>
+          <p className="mt-1 text-sm text-muted-foreground">Initial, monthly and final-period storage receipts. Document references appear only after exact Xero Draft read-back.</p></div>
         <Button size="sm" variant="outline" onClick={() => { void events.refetch(); void executions.refetch(); }} disabled={events.isFetching || executions.isFetching}><RefreshCw className={`mr-2 h-4 w-4 ${events.isFetching || executions.isFetching ? "animate-spin" : ""}`} />Refresh</Button>
       </CardHeader>
       <CardContent>{events.isLoading ? <Skeleton className="h-36" /> : events.error ? <p className="text-sm text-red-700">Storage records could not be loaded. Please retry.</p> : !events.data?.length ?
         <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No loaded-container storage Deal event has been recorded by AP yet.</p>
         : <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">Deal / location</th><th className="p-3">Initial period</th><th className="p-3">Status</th><th className="p-3">Customer invoice</th><th className="p-3">Transport PO</th><th className="p-3">Storage PO</th></tr></thead><tbody>{events.data.map((event) => {
           const receipts = Array.isArray(event.documentResults) ? event.documentResults as StorageReceipt[] : [];
+          const finalReceipts = Array.isArray(event.finalisationResults) ? event.finalisationResults as StorageReceipt[] : [];
           const receipt = (kind: string) => receipts.find((item) => item.documentType === kind);
           return <tr key={event.id} className="border-b align-top last:border-0"><td className="p-3"><span className="font-mono font-medium">{event.dealNumber}</span><br /><span className="capitalize text-muted-foreground">{event.location}</span></td>
-            <td className="whitespace-nowrap p-3 font-mono text-xs">{event.periodStart}<br />to {event.periodEnd}</td><td className="p-3"><Badge className={statusStyle(event.status)}>{event.status.replaceAll("_", " ")}</Badge>{event.errorMessage && <p className="mt-1 max-w-64 text-xs text-muted-foreground">{event.errorMessage}</p>}</td>
+            <td className="whitespace-nowrap p-3 font-mono text-xs"><span className="font-sans capitalize">{event.eventKind}</span><br />{event.periodStart}<br />to {event.finalDate ?? event.periodEnd}{event.nextBillingDate && <p className="mt-1 text-muted-foreground">Next: {event.nextBillingDate}</p>}</td><td className="p-3"><Badge className={statusStyle(event.status)}>{event.finalisedAt ? "finalised" : event.status.replaceAll("_", " ")}</Badge>{finalReceipts.length > 0 && <p className="mt-1 text-xs">{finalReceipts.length} final Draft receipts</p>}{event.errorMessage && <p className="mt-1 max-w-64 text-xs text-muted-foreground">{event.errorMessage}</p>}</td>
             {(["customer_invoice", "jd_transport", "gd_storage"] as const).map((kind) => <td key={kind} className="p-3"><span className="font-mono text-xs">{receipt(kind)?.number ?? "—"}</span><br /><span className="text-xs text-muted-foreground">{receipt(kind)?.status ?? "Not verified"}</span></td>)}
           </tr>;
         })}</tbody></table></div>}</CardContent>

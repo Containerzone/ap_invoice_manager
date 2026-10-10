@@ -17,7 +17,9 @@ import {
 import { readBackFinancialDraft } from "./financialReadOnlyXeroService";
 import { financialSha256 } from "./financialProposalIntegrity";
 import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
+import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
+import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export type GuardedFinancialWriterCommand = {
   workflowRunId?: number | null;
@@ -36,6 +38,7 @@ export type GuardedFinancialWriterCommand = {
   /** Current source snapshot captured by approved revalidation; never supplied by a browser. */
   verifiedSourceData?: Record<string, unknown>;
   postSuccessPlan?: PlannedFinancialPostSuccessAction[];
+  expectedDraftDocument?: ProposedFinancialDocument;
 };
 
 export type GuardedFinancialWriterOutcome =
@@ -59,6 +62,10 @@ export async function executeGuardedFinancialWriterCommand(
 ): Promise<GuardedFinancialWriterOutcome> {
   // Reject before writing any local execution state or making any Xero call.
   assertFinancialDraftWriteAuthorised(command.authorisation, { requireExecutionId: false });
+  if (command.authorisation.storageAutomaticEventId !== undefined) {
+    await verifyStorageAutomaticWriteAccess({ eventId: command.authorisation.storageAutomaticEventId,
+      releaseKey: command.authorisation.storageReleaseKey!, payload: command.payload, workflowType: command.workflowType, preparedBy: command.preparedBy });
+  }
   if (command.authorisation.storagePilotEventId !== undefined) {
     if (command.workflowType !== "storage_activation" || command.proposedAction !== "create_draft") {
       throw new Error("Storage pilot cannot execute an unrelated family or update action.");
@@ -113,6 +120,7 @@ export async function executeGuardedFinancialWriterCommand(
       documentFamily: command.payload.documentFamily,
       documentNumber: command.payload.documentNumber,
       expectedXeroDocumentId: result.xeroDocumentId,
+      expectedDocument: command.expectedDraftDocument,
     });
     await markFinancialWriterExecutionSucceeded(prepared.execution.id, result);
     if (command.sourceRecordId && command.verifiedSourceData) {

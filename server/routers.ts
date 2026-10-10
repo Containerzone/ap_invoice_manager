@@ -77,6 +77,8 @@ import { summarizeInvoiceListNotes } from "./invoiceNotePreview";
 import { listInitialStorageEvents } from "./financialInitialStorageDb";
 import { INITIAL_STORAGE_WEBHOOK_PATH } from "./financialInitialStorageWebhook";
 import { previewInitialLoadedStorage } from "./financialInitialStorageService";
+import { getStorageReleasePolicy, prepareStorageReleasePolicy } from "./financialStorageRelease";
+import { previewStorageFinalisation } from "./financialStorageLifecycleService";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
@@ -562,6 +564,23 @@ export const appRouter = router({
       .query(({ input }) => getFinancialWriterExecutions(input?.limit ?? 50)),
     initialStorageEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
       .query(({ input }) => listInitialStorageEvents(input?.limit ?? 50)),
+    storageLifecycleReadiness: adminProcedure.query(async () => ({
+      policy: await getStorageReleasePolicy(), automaticWriterEnabled: process.env.FINANCIAL_STORAGE_AUTOMATIC_ENABLED === "true",
+      recurringRoute: "/api/scheduled/financial-writer/recurring_storage", recurringCron: "0 5 13 * * *",
+      finalisationRoute: "/api/webhooks/vtiger/deal-storage-finalise",
+      dateOutField: "cf_potentials_dateout", recurringImplemented: true, finalisationImplemented: true,
+    })),
+    prepareStorageRelease: adminProcedure.mutation(({ ctx }) => prepareStorageReleasePolicy(ctx.user.id)),
+    previewStorageFinalisation: adminProcedure.input(z.object({ exactDeal: z.string().trim().regex(/^(?:D\d{1,12}|5x\d{1,12})$/), location: z.enum(["origin", "destination"]) }))
+      .mutation(async ({ input }) => {
+        let recordId = input.exactDeal;
+        if (recordId.startsWith("D")) {
+          const lookup = await findExactFinancialCandidate({ sourceCategory: "deal", businessNumber: recordId });
+          if (lookup.outcome !== "found" || lookup.candidates.length !== 1) throw new TRPCError({ code: "PRECONDITION_FAILED", message: lookup.message });
+          recordId = lookup.candidates[0]!.recordId;
+        }
+        return previewStorageFinalisation(recordId, input.location);
+      }),
     initialStorageReadiness: adminProcedure.query(() => ({
       endpointPath: INITIAL_STORAGE_WEBHOOK_PATH,
       authenticationConfigured: Boolean(process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim()),
