@@ -87,6 +87,7 @@ function releasedPolicy(overrides: Partial<release.StorageReleasePolicy> = {}): 
     effectiveFrom: "2026-01-06T00:00:00.000Z",
     handoffs: { activation: true, recurring: true, finalisation: true },
     recoveryEnabled: true,
+    migrationScope: "include_active",
     ...overrides,
   };
 }
@@ -263,6 +264,19 @@ describe("automatic loaded-storage lifecycle coordinator", () => {
     await expect(processAutomaticInitialStorage(DEAL_ID)).rejects.toThrow(/release is disabled/i);
 
     expect(vtiger.retrieveCurrentVtigerFinancialRecord).not.toHaveBeenCalled();
+    expect(lifecycleDb.reserveStoragePeriod).not.toHaveBeenCalled();
+    expect(writer.executeGuardedFinancialWriterCommand).not.toHaveBeenCalled();
+  });
+
+  it("holds a Date In before the effective new-events-only cutover without reserving or writing", async () => {
+    vi.mocked(release.getStorageReleasePolicy).mockResolvedValue(releasedPolicy({
+      migrationScope: "new_events_only",
+      effectiveFrom: "2026-08-11T00:00:00.000Z",
+    }));
+
+    await expect(processAutomaticInitialStorage(DEAL_ID)).rejects.toThrow(/predates the new-events-only AP cutover/i);
+
+    expect(xero.verifyInitialStorageXeroAccounts).not.toHaveBeenCalled();
     expect(lifecycleDb.reserveStoragePeriod).not.toHaveBeenCalled();
     expect(writer.executeGuardedFinancialWriterCommand).not.toHaveBeenCalled();
   });
@@ -469,6 +483,16 @@ describe("automatic loaded-storage lifecycle coordinator", () => {
     vi.mocked(release.getStorageReleasePolicy).mockResolvedValue(releasedPolicy({ recoveryEnabled: false }));
 
     await expect(processStorageFinalisation(DEAL_ID, "origin")).rejects.toThrow(/recovery is not released/i);
+
+    expect(lifecycleDb.reserveStoragePeriod).not.toHaveBeenCalled();
+    expect(writer.executeGuardedFinancialWriterCommand).not.toHaveBeenCalled();
+  });
+
+  it("holds a finalisation with no AP activation receipt under new-events-only scope", async () => {
+    rawDeal = { ...activeDeal, sales_stage: "11 DELIVER From STORAGE", cf_potentials_dateout: "2026-08-15" };
+    vi.mocked(release.getStorageReleasePolicy).mockResolvedValue(releasedPolicy({ migrationScope: "new_events_only" }));
+
+    await expect(processStorageFinalisation(DEAL_ID, "origin")).rejects.toThrow(/pre-cutover storage history is held/i);
 
     expect(lifecycleDb.reserveStoragePeriod).not.toHaveBeenCalled();
     expect(writer.executeGuardedFinancialWriterCommand).not.toHaveBeenCalled();

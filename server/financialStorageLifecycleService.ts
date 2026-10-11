@@ -157,6 +157,9 @@ async function executeBundle(event: FinancialInitialStorageEvent, documents: Pro
 export async function processAutomaticInitialStorage(recordId: string) {
   const policy = await getStorageReleasePolicy(); assertStorageRelease(policy, "initial");
   const { deal, dateOut } = await loadDeal(recordId);
+  if (policy.migrationScope === "new_events_only" && Temporal.PlainDate.compare(Temporal.PlainDate.from(deal.dateIn), Temporal.PlainDate.from(policy.effectiveFrom!.slice(0, 10))) < 0) {
+    throw new Error("Storage Date In predates the new-events-only AP cutover; existing storage history is held.");
+  }
   if (after(deal.dateIn, today())) throw new Error("Storage Date In is future-dated in Sydney.");
   if (dateOut && !after(dateOut, today())) throw new Error("Completed storage must use finalisation/recovery, not initial creation.");
   await verifyInitialStorageXeroAccounts();
@@ -232,6 +235,9 @@ export async function processStorageFinalisation(recordId: string, location: "or
   if (!dateOut || after(dateOut, today())) throw new Error("Finalisation requires a current, non-future VTiger Date Out/delivery date.");
   const rows = await storagePeriods(recordId, location); const root = rows.find(v => !v.parentEventId);
   if (!root || (root.eventKind === "recovery" && !root.finalisedAt)) {
+    if (policy.migrationScope !== "include_active") {
+      throw new Error("Storage finalisation has no AP activation receipt; pre-cutover storage history is held under new-events-only scope.");
+    }
     assertStorageRelease(policy, "recovery");
     // Controlled missing-document recovery uses the true initial capped period, never suffix-bypasses old records.
     deal.deliveryDate = dateOut;

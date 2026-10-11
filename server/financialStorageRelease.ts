@@ -9,13 +9,16 @@ export type StorageReleasePolicy = {
   approvedAt: string | null; effectiveFrom: string | null;
   handoffs: { activation: boolean; recurring: boolean; finalisation: boolean };
   recoveryEnabled: boolean;
+  /** New events is the safe default: pre-cutover storage history is never adopted or billed. */
+  migrationScope: "new_events_only" | "include_active";
 };
 export function resolveStorageRelease(value: unknown): StorageReleasePolicy {
   const v = (value && typeof value === "object" ? value : {}) as Partial<StorageReleasePolicy>;
   return { releaseKey: v.releaseKey ?? "", rulesHash: v.rulesHash ?? STORAGE_RULES_HASH, enabled: v.enabled === true,
     approvedBy: v.approvedBy ?? null, approvedAt: v.approvedAt ?? null, effectiveFrom: v.effectiveFrom ?? null,
     handoffs: { activation: v.handoffs?.activation === true, recurring: v.handoffs?.recurring === true, finalisation: v.handoffs?.finalisation === true },
-    recoveryEnabled: v.recoveryEnabled === true };
+    recoveryEnabled: v.recoveryEnabled === true,
+    migrationScope: v.migrationScope === "include_active" ? "include_active" : "new_events_only" };
 }
 export async function getStorageReleasePolicy(): Promise<StorageReleasePolicy> {
   const configs = await getFinancialWorkflowConfig();
@@ -44,13 +47,13 @@ export async function prepareStorageReleasePolicy(preparedBy: number) {
 /** Call only after the exact storage-only standing-release scope is approved; never changes deployment flags or external workflows. */
 export async function approveStorageReleasePolicy(input: {
   approvedBy: number; effectiveFrom: string;
-  handoffs: StorageReleasePolicy["handoffs"]; recoveryEnabled: boolean;
+  handoffs: StorageReleasePolicy["handoffs"]; recoveryEnabled: boolean; migrationScope: StorageReleasePolicy["migrationScope"];
 }) {
   if (!Number.isInteger(input.approvedBy) || input.approvedBy <= 0 || !Number.isFinite(Date.parse(input.effectiveFrom)) ||
     !input.handoffs.activation || !input.handoffs.recurring || !input.handoffs.finalisation) throw new Error("Storage release requires an exact effective time, administrator and all three handovers.");
   const policy: StorageReleasePolicy = { releaseKey: `STORAGE-${STORAGE_RULES_HASH.slice(0,16)}`, rulesHash: STORAGE_RULES_HASH,
     enabled: true, approvedBy: input.approvedBy, approvedAt: new Date().toISOString(), effectiveFrom: input.effectiveFrom,
-    handoffs: input.handoffs, recoveryEnabled: input.recoveryEnabled };
+    handoffs: input.handoffs, recoveryEnabled: input.recoveryEnabled, migrationScope: input.migrationScope };
   await upsertFinancialWorkflowConfig(STORAGE_RELEASE_KEY, policy, "Approved storage-only standing policy; separate deployment gate and source/schedule cutover required.", input.approvedBy);
   return policy;
 }

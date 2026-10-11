@@ -26,6 +26,7 @@ function releasedPolicy(overrides: Partial<StorageReleasePolicy> = {}): StorageR
     effectiveFrom: "2026-01-11T00:00:00.000Z",
     handoffs: { activation: true, recurring: true, finalisation: true },
     recoveryEnabled: true,
+    migrationScope: "include_active",
     ...overrides,
   };
 }
@@ -50,6 +51,7 @@ describe("loaded-storage standing release policy", () => {
       effectiveFrom: null,
       handoffs: { activation: false, recurring: false, finalisation: false },
       recoveryEnabled: false,
+      migrationScope: "new_events_only",
     });
     expect(resolveStorageRelease({ enabled: "true", handoffs: { activation: 1 }, recoveryEnabled: 1 } as any)).toMatchObject({
       enabled: false,
