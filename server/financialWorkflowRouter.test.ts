@@ -96,6 +96,16 @@ vi.mock("./financialReadOnlyXeroService", () => ({
   previewHistoricalXeroReferences: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("./financialForHireDb", () => ({
+  getForHirePoEvents: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("./financialForHireService", () => ({
+  getForHireReadiness: vi.fn().mockResolvedValue({ routeRegistered: false, heartbeatRegistered: false, writerEnabled: false, noWrites: true }),
+  previewInitialForHirePo: vi.fn().mockResolvedValue({ facts: { controlNumber: "C1860" }, kind: "initial", noWrites: true }),
+  previewRecurringForHirePo: vi.fn().mockResolvedValue({ facts: { controlNumber: "C1860" }, kind: "recurring", noWrites: true }),
+}));
+
 vi.mock("./financialLiveExecutionService", () => ({
   getFinancialExecutionGateState: vi.fn().mockResolvedValue({ approvalId: 71, gates: { allPassed: false } }),
   isFinancialGlobalShadowModeEnabled: () => true,
@@ -152,6 +162,18 @@ describe("financial operations tRPC safeguards", () => {
       .rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(appRouter.createCaller(context("admin")).financialOperations.previewInitialStorage({ exactDeal: "D%" }))
       .rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("keeps For Hire previews administrator-only, exact and without an activation control", async () => {
+    const { appRouter } = await import("./routers");
+    await expect(appRouter.createCaller(context("user")).financialOperations.forHireReadiness())
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(appRouter.createCaller(context("user")).financialOperations.previewForHire({ exactContainerControl: "C1860", lifecycle: "initial" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(appRouter.createCaller(context("admin")).financialOperations.previewForHire({ exactContainerControl: "C%", lifecycle: "initial" }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    const readiness = await appRouter.createCaller(context("admin")).financialOperations.forHireReadiness();
+    expect(readiness).toMatchObject({ routeRegistered: false, heartbeatRegistered: false, writerEnabled: false, noWrites: true });
   });
 
   it("permits an admin dry run and returns an explicit no-write result", async () => {

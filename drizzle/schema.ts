@@ -711,6 +711,49 @@ export const recurringHireRuns = mysqlTable("recurring_hire_runs", {
 export type RecurringHireRun = typeof recurringHireRuns.$inferSelect;
 export type InsertRecurringHireRun = typeof recurringHireRuns.$inferInsert;
 
+// ─── For Hire Container Control PO lifecycle (AP readiness only) ────────────
+//
+// This ledger is deliberately separate from the shared Container Control
+// acquisition workflow. It can record AP-side previews, holds and (only after a
+// future For Hire-only cutover) verified Draft receipts. It never imports or
+// adopts historical Operations POs.
+export const financialForHirePoEvents = mysqlTable("financial_for_hire_po_events", {
+  id: int("id").autoincrement().primaryKey(),
+  containerControlId: varchar("containerControlId", { length: 128 }).notNull(),
+  containerControlNumber: varchar("containerControlNumber", { length: 128 }).notNull(),
+  eventKind: mysqlEnum("eventKind", ["initial", "recurring"] as const).notNull(),
+  billingPeriodStart: varchar("billingPeriodStart", { length: 10 }).notNull(),
+  billingPeriodEnd: varchar("billingPeriodEnd", { length: 10 }).notNull(),
+  proposedPoNumber: varchar("proposedPoNumber", { length: 128 }).notNull(),
+  containerNumber: varchar("containerNumber", { length: 128 }).notNull(),
+  containerType: varchar("containerType", { length: 80 }).notNull(),
+  supplierVtigerId: varchar("supplierVtigerId", { length: 128 }),
+  supplierName: varchar("supplierName", { length: 255 }),
+  sourceRefreshedAt: timestamp("sourceRefreshedAt"),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }),
+  proposal: json("proposal"),
+  xeroPreflight: json("xeroPreflight"),
+  xeroPurchaseOrderId: varchar("xeroPurchaseOrderId", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "held", "reserved", "drafts_created", "reconciliation_required", "dehired"] as const)
+    .default("previewed")
+    .notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  alertStatus: varchar("alertStatus", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  controlPeriodUnique: uniqueIndex("financial_for_hire_po_control_period_unique")
+    .on(table.containerControlId, table.eventKind, table.billingPeriodStart),
+  proposedPoUnique: uniqueIndex("financial_for_hire_po_proposed_number_unique")
+    .on(table.proposedPoNumber),
+}));
+
+export type FinancialForHirePoEvent = typeof financialForHirePoEvents.$inferSelect;
+export type InsertFinancialForHirePoEvent = typeof financialForHirePoEvents.$inferInsert;
+
 export const extraHireRuns = mysqlTable("extra_hire_runs", {
   id: int("id").autoincrement().primaryKey(),
   workflowRunId: int("workflowRunId"),

@@ -45,9 +45,12 @@ export const DEFAULT_FINANCIAL_CANDIDATE_FINDER_CONFIG: FinancialCandidateFinder
     selectFields: ["id", "potential_no", "potentialname", "modifiedtime"],
   }],
   container_control: [{
-    module: "ContainerControl",
-    businessNumberFields: ["container_control_no", "cf_container_control", "container_control_number", "name"],
-    selectFields: ["id", "container_control_no", "cf_container_control", "container_control_number", "name", "accountname", "modifiedtime"],
+    // Verified through authenticated metadata on 2026-10-11. This is the
+    // actual VTiger webservice module and business-number field used by the
+    // For Hire Container Control lifecycle; do not fall back to a broad scan.
+    module: "vtcmcontainercontrols",
+    businessNumberFields: ["vtcmcontainercontrolsnumber"],
+    selectFields: ["id", "vtcmcontainercontrolsnumber", "fld_vtcmcontainercontrolsname", "cf_vtcmcontainercontrols_acquisition", "cf_vtcmcontainercontrols_status", "modifiedtime"],
   }],
 };
 
@@ -319,7 +322,7 @@ export async function findCurrentFinancialCandidates(input: {
       for (const row of rows.slice(0, 10)) {
         const recordId = typeof row.id === "string" ? row.id.trim() : "";
         if (!/^\d+x\d+$/i.test(recordId)) continue;
-        const businessNumber = ["potential_no", "potentials_no", "container_control_no", "container_control_number", "name"]
+        const businessNumber = ["potential_no", "potentials_no", "vtcmcontainercontrolsnumber", "container_control_no", "container_control_number", "name"]
           .map((key) => row[key])
           .find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ?? recordId;
         const existing = candidates.get(recordId);

@@ -260,6 +260,13 @@
       "when": 1791660592688,
       "tag": "0036_volatile_earthquake",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "5",
+      "when": 1791703139982,
+      "tag": "0037_blue_doctor_doom",
+      "breakpoints": true
     }
   ]
 }

@@ -79,6 +79,8 @@ import { INITIAL_STORAGE_WEBHOOK_PATH } from "./financialInitialStorageWebhook";
 import { previewInitialLoadedStorage } from "./financialInitialStorageService";
 import { getStorageReleasePolicy, prepareStorageReleasePolicy } from "./financialStorageRelease";
 import { previewStorageFinalisation } from "./financialStorageLifecycleService";
+import { getForHirePoEvents } from "./financialForHireDb";
+import { getForHireReadiness, previewInitialForHirePo, previewRecurringForHirePo } from "./financialForHireService";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
@@ -564,6 +566,30 @@ export const appRouter = router({
       .query(({ input }) => getFinancialWriterExecutions(input?.limit ?? 50)),
     initialStorageEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
       .query(({ input }) => listInitialStorageEvents(input?.limit ?? 50)),
+    forHirePoEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getForHirePoEvents(input?.limit ?? 100)),
+    forHireReadiness: adminProcedure.query(() => getForHireReadiness()),
+    previewForHire: adminProcedure.input(z.object({
+      exactContainerControl: z.string().trim().regex(/^(?:C\d{1,12}|\d+x\d{1,12})$/i),
+      lifecycle: z.enum(["initial", "recurring"]),
+    })).mutation(async ({ input }) => {
+      let recordId = input.exactContainerControl;
+      if (!/^\d+x\d+$/i.test(recordId)) {
+        const controlNumber = recordId.toUpperCase();
+        const lookup = await findExactFinancialCandidate({ sourceCategory: "container_control", businessNumber: controlNumber });
+        if (lookup.outcome !== "found" || lookup.candidates.length !== 1) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: lookup.message });
+        }
+        recordId = lookup.candidates[0]!.recordId;
+      }
+      const preview = input.lifecycle === "initial"
+        ? await previewInitialForHirePo(recordId)
+        : await previewRecurringForHirePo(recordId);
+      if (/^C\d+$/i.test(input.exactContainerControl) && preview.facts.controlNumber.toUpperCase() !== input.exactContainerControl.toUpperCase()) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "VTiger Container Control number no longer matches the exact lookup." });
+      }
+      return preview;
+    }),
     storageLifecycleReadiness: adminProcedure.query(async () => ({
       policy: await getStorageReleasePolicy(), automaticWriterEnabled: process.env.FINANCIAL_STORAGE_AUTOMATIC_ENABLED === "true",
       recurringRoute: "/api/scheduled/financial-writer/recurring_storage", recurringCron: "0 5 13 * * *",

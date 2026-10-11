@@ -95,3 +95,14 @@
 - [ ] Observe the first genuine post-cutover qualifying VTiger Deal webhook, then verify its three exact Xero Draft receipts and any post-success VTiger note.
 - [ ] Observe the first due AP-created recurring storage period and its two exact Draft receipts (customer invoice + GD PO; never a recurring JD PO).
 - [ ] Observe the first AP-created storage finalisation or keep legacy finalisation history held until a new AP storage root exists.
+
+## 2026-10-11 — For Hire Container Control PO readiness
+
+- [x] Added the AP-only `financial_for_hire_po_events` ledger (migration `0037_blue_doctor_doom`) for current-source preview/hold evidence and eventual AP-only Draft receipts. It does not import or adopt Operations history.
+- [x] Verified the actual VTiger module and metadata through authenticated reads: `vtcmcontainercontrols`, `vtcmcontainercontrolsnumber`, assigned Vendor reference, acquisition/status, container ID/type, Collection Date, Hire PM INCL GST, Purchase Price INCL GST and Lift & Booking Fees.
+- [x] Added exact, administrator-only Container Hire POs sidebar workspace with initial/recurring previews, Xero GET-only contact/item/PO checks, evidence hashes, clear hold reasons and AP lifecycle tracking.
+- [x] Implemented initial For Hire rules: `H<CC>`, account 312, HC 20/HC 40, configured Hire PM converted from inclusive GST or the $120/$240 ex-GST defaults, optional initial Lift & Booking Fees only, Collection Date through +30 days.
+- [x] Implemented recurring readiness logic: HC 20 E/HC 40 E current Xero purchase rate, ON HIRE/IDLE only, one 30-day consecutive period, `H<CC>-2` then only the next suffix, no catch-up/bulk history, no Lift fees and no JD PO. DEHIRED always stops future recurring work.
+- [x] Added the future authenticated webhook contract `/api/webhooks/vtiger/container-control-for-hire`, but deliberately did **not** register it. The exact recurring path/cron remains `/api/scheduled/financial-writer/recurring_for_hire` / `0 0 0 1 * *`, with zero For Hire Heartbeat jobs.
+- [x] Added regression coverage for rate/date/GST calculations, supplier/Vendor refresh, duplicate collision holds, AP-only recurrence continuity, no-write route contract, protected router/UI readiness and verified Container Control lookup fields. Full validation: TypeScript, 71 test files / 429 tests, and production build pass.
+- [ ] Before any For Hire activation: create/confirm a **separate VTiger FOR HIRE-only branch** (shared Container Control action also supports Asset and Customer Sale), provide the exact future event contract, confirm the legacy monthly `forHireMonthlyPo` job (`PtaAhkr5tHtixG7E4DTZhC`) is paused only for For Hire, then approve a named first PO and a separate For Hire-only release window.
