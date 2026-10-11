@@ -18,6 +18,7 @@ import { readBackFinancialDraft } from "./financialReadOnlyXeroService";
 import { financialSha256 } from "./financialProposalIntegrity";
 import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
 import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
+import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 
@@ -65,6 +66,15 @@ export async function executeGuardedFinancialWriterCommand(
   if (command.authorisation.storageAutomaticEventId !== undefined) {
     await verifyStorageAutomaticWriteAccess({ eventId: command.authorisation.storageAutomaticEventId,
       releaseKey: command.authorisation.storageReleaseKey!, payload: command.payload, workflowType: command.workflowType, preparedBy: command.preparedBy });
+  }
+  if (command.authorisation.forHireAutomaticEventId !== undefined) {
+    await verifyForHireAutomaticWriteAccess({
+      eventId: command.authorisation.forHireAutomaticEventId,
+      releaseKey: command.authorisation.forHireReleaseKey!,
+      payload: command.payload,
+      workflowType: command.workflowType as "initial_for_hire" | "recurring_for_hire",
+      preparedBy: command.preparedBy,
+    });
   }
   if (command.authorisation.storagePilotEventId !== undefined) {
     if (command.workflowType !== "storage_activation" || command.proposedAction !== "create_draft") {

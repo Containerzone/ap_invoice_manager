@@ -736,6 +736,13 @@ export const financialForHirePoEvents = mysqlTable("financial_for_hire_po_events
   proposal: json("proposal"),
   xeroPreflight: json("xeroPreflight"),
   xeroPurchaseOrderId: varchar("xeroPurchaseOrderId", { length: 128 }),
+  /** AP-only standing release and exact payload fingerprint; neither comes from VTiger. */
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  /** Per-period mutual exclusion token; never supplied by VTiger or a browser. */
+  processingToken: varchar("processingToken", { length: 128 }),
+  /** The local selector considers only AP-created predecessors due on this date. */
+  nextBillingDate: varchar("nextBillingDate", { length: 10 }),
   status: mysqlEnum("status", ["previewed", "held", "reserved", "drafts_created", "reconciliation_required", "dehired"] as const)
     .default("previewed")
     .notNull(),

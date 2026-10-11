@@ -10,6 +10,7 @@ import { registerMicrosoftGraphWebhook } from "../microsoftGraphWebhook";
 import { registerInvoicePdfProxy } from "../invoicePdfProxy";
 import { registerFinancialProposalWebhook } from "../financialProposalWebhook";
 import { registerInitialLoadedStorageWebhook } from "../financialInitialStorageWebhook";
+import { registerForHireWebhook } from "../financialForHireWebhook";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -46,6 +47,9 @@ async function startServer() {
   registerInvoicePdfProxy(app);
   registerFinancialProposalWebhook(app);
   registerInitialLoadedStorageWebhook(app);
+  // Receiver is mounted for the independent FOR HIRE branch only. It returns
+  // 503 without any source read or Xero call until the separate release gate is armed.
+  registerForHireWebhook(app);
   // tRPC API
   app.use(
     "/api/trpc",

@@ -14,6 +14,8 @@ import {
 import { preflightFinancialXeroIntents, type FinancialXeroPreflight } from "./financialReadOnlyXeroService";
 import { financialSha256, rulesSnapshotHash, sourceSnapshotHash } from "./financialProposalIntegrity";
 import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
+import { getFinancialWorkflowSchedules } from "./financialWorkflowDb";
+import { getForHireReleasePolicy } from "./financialForHireRelease";
 
 export const FOR_HIRE_VTIGER_MODULE = "vtcmcontainercontrols" as const;
 export const FOR_HIRE_FUTURE_WEBHOOK_PATH = "/api/webhooks/vtiger/container-control-for-hire" as const;
@@ -206,7 +208,7 @@ export async function previewInitialForHirePo(recordId: string): Promise<ForHire
 }
 
 /** Administrator-invoked, current-source, GET-only next extension preview. */
-export async function previewRecurringForHirePo(recordId: string): Promise<ForHirePreviewResult> {
+export async function previewRecurringForHirePo(recordId: string, now?: string): Promise<ForHirePreviewResult> {
   const facts = await readForHireContainerControl(recordId);
   const sourceHash = sourceSnapshotHash({ ...facts, rulesVersion: FOR_HIRE_RULES_VERSION });
   const prior = await lastVerifiedForHirePeriod(recordId);
@@ -230,22 +232,36 @@ export async function previewRecurringForHirePo(recordId: string): Promise<ForHi
       }
     }
   }
-  const preview = buildRecurringForHirePo({ facts, priorPeriodEnd: prior?.periodEnd ?? null, lastVerifiedExtensionSuffix: prior?.suffix ?? null, purchaseRate: rate, itemNativeDescription: nativeDescription });
+  const preview = buildRecurringForHirePo({ facts, priorPeriodEnd: prior?.periodEnd ?? null, lastVerifiedExtensionSuffix: prior?.suffix ?? null, purchaseRate: rate, itemNativeDescription: nativeDescription, now });
   return preflightPreview({ kind: "recurring", facts, sourceHash, preview });
 }
 
 /** Status-only contract for UI; it exposes neither secret nor an activation control. */
 export async function getForHireReadiness() {
-  const config = resolveFinancialAutomationRules();
+  const [config, policy, schedules] = await Promise.all([
+    Promise.resolve(resolveFinancialAutomationRules()),
+    getForHireReleasePolicy(),
+    getFinancialWorkflowSchedules(),
+  ]);
+  const schedule = schedules.find((item) => item.workflowType === "recurring_for_hire");
+  const writerEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true" && policy.enabled;
   return {
     module: FOR_HIRE_VTIGER_MODULE,
     futureWebhookPath: FOR_HIRE_FUTURE_WEBHOOK_PATH,
-    routeRegistered: false,
+    routeRegistered: true,
     webhookAuthenticationConfigured: Boolean(process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim()),
     recurringPath: FOR_HIRE_RECURRING_PATH,
     recurringCron: FOR_HIRE_RECURRING_CRON,
-    heartbeatRegistered: false,
-    writerEnabled: false,
+    heartbeatRegistered: Boolean(schedule?.enabled && schedule.taskUid),
+    writerEnabled,
+    policy: {
+      enabled: policy.enabled,
+      effectiveFrom: policy.effectiveFrom,
+      forHireOnlyVtigerBranch: policy.forHireOnlyVtigerBranch,
+      initialOperationsHandoff: policy.initialOperationsHandoff,
+      recurringOperationsHandoff: policy.recurringOperationsHandoff,
+      migrationScope: policy.migrationScope,
+    },
     sharedOperationsActionUntouched: true,
     legacyRecurringTask: { uid: "PtaAhkr5tHtixG7E4DTZhC", name: "forHireMonthlyPo", callback: "/api/scheduled/forHireMonthlyPo", cadence: "0 0 0 1 * *" },
     ruleSnapshotHash: rulesSnapshotHash(config),

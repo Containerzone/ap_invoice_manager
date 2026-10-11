@@ -51,10 +51,13 @@ function completeAuthorisation(overrides: Partial<Parameters<typeof assertFinanc
 
 describe("guarded financial production writer", () => {
   const originalEnabled = process.env.FINANCIAL_LIVE_WRITES_ENABLED;
+  const originalForHireEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED;
 
   afterEach(() => {
     if (originalEnabled === undefined) delete process.env.FINANCIAL_LIVE_WRITES_ENABLED;
     else process.env.FINANCIAL_LIVE_WRITES_ENABLED = originalEnabled;
+    if (originalForHireEnabled === undefined) delete process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED;
+    else process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED = originalForHireEnabled;
   });
 
   it("prepares a deterministic Draft-only GST-exclusive purchase-order shape without transmitting it", () => {
@@ -146,6 +149,22 @@ describe("guarded financial production writer", () => {
     } finally {
       delete process.env.FINANCIAL_INITIAL_STORAGE_ENABLED;
     }
+  });
+
+  it("permits only the isolated For Hire standing-release context while leaving the global writer disabled", () => {
+    delete process.env.FINANCIAL_LIVE_WRITES_ENABLED;
+    process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED = "true";
+    const forHire = completeAuthorisation({
+      workflowType: "initial_for_hire",
+      forHireAutomaticEventId: 31,
+      forHireReleaseKey: "FOR-HIRE-UNIT-TEST",
+      forHireApprovedBy: 7,
+    });
+    expect(() => assertFinancialDraftWriteAuthorised(forHire)).not.toThrow();
+    expect(() => assertFinancialDraftWriteAuthorised({ ...forHire, workflowType: "storage_activation" })).toThrow(/For Hire automatic release/i);
+    expect(() => assertFinancialDraftWriteAuthorised({ ...forHire, forHireAutomaticEventId: 0 })).toThrow(/For Hire automatic release/i);
+    expect(() => assertFinancialDraftWriteAuthorised({ ...forHire, forHireReleaseKey: undefined })).toThrow(/For Hire automatic release/i);
+    expect(() => assertFinancialDraftWriteAuthorised(completeAuthorisation())).toThrow(FinancialWriteDisabledError);
   });
 
   it("rejects storage-pilot updates and non-Draft create payloads before Xero authentication", async () => {

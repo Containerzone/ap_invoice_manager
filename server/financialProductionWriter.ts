@@ -8,6 +8,7 @@ import { getXeroReadAuthWithRefresh } from "./xeroService";
 import { runXeroRequest } from "./xeroRequestManager";
 import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
 import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
+import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -61,6 +62,10 @@ export type FinancialWriteAuthorisation = {
   storageAutomaticEventId?: number;
   storageReleaseKey?: string;
   storageApprovedBy?: number;
+  /** Isolated For Hire release event; no generic family can use this path. */
+  forHireAutomaticEventId?: number;
+  forHireReleaseKey?: string;
+  forHireApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -238,6 +243,17 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.forHireAutomaticEventId !== undefined) {
+    if (process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED !== "true" || !["initial_for_hire", "recurring_for_hire"].includes(context.workflowType) ||
+      !Number.isInteger(context.forHireAutomaticEventId) || context.forHireAutomaticEventId <= 0 || !context.forHireReleaseKey || !context.forHireApprovedBy ||
+      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete) {
+      throw new FinancialWriteDisabledError("For Hire automatic release gate is not valid.");
+    }
+    if (options.requireExecutionId !== false && (!context.executionId || context.executionId <= 0)) {
+      throw new FinancialWriteDisabledError("For Hire execution ledger is required.");
+    }
+    return;
+  }
   if (context.storageAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_STORAGE_AUTOMATIC_ENABLED !== "true" || !["storage_activation", "recurring_storage", "storage_finalisation"].includes(context.workflowType) ||
       !Number.isInteger(context.storageAutomaticEventId) || context.storageAutomaticEventId <= 0 || !context.storageReleaseKey || !context.storageApprovedBy ||
@@ -306,6 +322,23 @@ export async function executeFinancialDraftWrite(
   context: FinancialWriteAuthorisation,
 ): Promise<FinancialDraftWriteResult> {
   assertFinancialDraftWriteAuthorised(context);
+  if (context.forHireAutomaticEventId !== undefined) {
+    const rows = payload.body.PurchaseOrders;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (payload.method !== "POST" || payload.endpoint !== "/PurchaseOrders" || payload.documentFamily !== "purchase_order" || payload.expectedXeroDocumentId ||
+      !row || row.Status !== "DRAFT" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" ||
+      !Array.isArray(row.LineItems) || row.LineItems.length < 1 || row.LineItems.length > 2 ||
+      !row.LineItems.every((line: any) => String(line.AccountCode) === "312")) {
+      throw new FinancialWriteDisabledError("For Hire automatic release permits only an exact AUD Draft Purchase Order with account 312 lines.");
+    }
+    await verifyForHireAutomaticWriteAccess({
+      eventId: context.forHireAutomaticEventId,
+      releaseKey: context.forHireReleaseKey!,
+      preparedBy: context.forHireApprovedBy!,
+      payload,
+      workflowType: context.workflowType as "initial_for_hire" | "recurring_for_hire",
+    });
+  }
   if (context.storagePilotEventId !== undefined && (payload.method !== "POST" || payload.expectedXeroDocumentId
     || !["/Invoices", "/PurchaseOrders"].includes(payload.endpoint))) {
     throw new FinancialWriteDisabledError("Loaded-storage pilot permits only a new ACCREC or Purchase Order Draft POST.");

@@ -10,6 +10,8 @@ import { retryFinancialPostSuccessActions, isFinancialPostSuccessVtigerWriteEnab
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
 import { runAutomaticRecurringStorage } from "./financialStorageLifecycleService";
 import { getStorageReleasePolicy, assertStorageRelease } from "./financialStorageRelease";
+import { runAutomaticRecurringForHire } from "./financialForHireLiveService";
+import { getForHireReleasePolicy, assertForHireRelease } from "./financialForHireRelease";
 
 async function verifyFinancialSchedule(req: Request, expectedWorkflowType: string) {
   const user = await sdk.authenticateRequest(req);
@@ -87,6 +89,13 @@ export async function financialRecurringProposalHandler(req: Request, res: Respo
         vtigerWritesAttempted: 0,
         message: "Recognised AP financial schedule is disabled. No selector, source update or financial write was run.",
       });
+    }
+    if (workflowType === "recurring_for_hire" && process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true") {
+      const policy = await getForHireReleasePolicy();
+      assertForHireRelease(policy, "recurring");
+      const result = await runAutomaticRecurringForHire();
+      await recordFinancialWorkflowScheduleOutcome({ workflowType, taskUid, outcome: "for_hire_lifecycle_completed" });
+      return res.json(result);
     }
     if (workflowType === "recurring_storage" && process.env.FINANCIAL_STORAGE_AUTOMATIC_ENABLED === "true") {
       const policy = await getStorageReleasePolicy(); assertStorageRelease(policy, "recurring");

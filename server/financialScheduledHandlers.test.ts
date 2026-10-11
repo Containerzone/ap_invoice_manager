@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   shadow: vi.fn(),
   writerEnabled: vi.fn(),
   recurring: vi.fn(),
+  forHireRecurring: vi.fn(),
 }));
 
 vi.mock("./_core/sdk", () => ({ sdk: { authenticateRequest: mocks.authenticate } }));
@@ -22,6 +23,8 @@ vi.mock("./workflowAlertService", () => ({ reportWorkflowFailureSafely: mocks.re
 vi.mock("./financialLiveExecutionService", () => ({ isFinancialGlobalShadowModeEnabled: mocks.shadow }));
 vi.mock("./financialProductionWriter", () => ({ isFinancialLiveWriteEnvironmentEnabled: mocks.writerEnabled }));
 vi.mock("./financialStorageLifecycleService", () => ({ runAutomaticRecurringStorage: mocks.recurring }));
+vi.mock("./financialForHireLiveService", () => ({ runAutomaticRecurringForHire: mocks.forHireRecurring }));
+vi.mock("./financialForHireRelease", () => ({ getForHireReleasePolicy: vi.fn(async () => ({})), assertForHireRelease: vi.fn() }));
 
 import { financialPostSuccessRetryHandler, financialRecurringProposalHandler, isFirstSydneyCalendarDay } from "./financialScheduledHandlers";
 
@@ -65,6 +68,17 @@ describe("inactive financial scheduled handlers", () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: "disabled_no_write_audit", selectorAvailable: true, xeroWritesAttempted: 0 }));
     expect(mocks.recordOutcome).toHaveBeenCalledWith(expect.objectContaining({ outcome: "disabled_no_write_audit" }));
     expect(mocks.retry).not.toHaveBeenCalled();
+  });
+
+  it("executes only the registered enabled For Hire schedule through its isolated release processor", async () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", enabled: true });
+    mocks.forHireRecurring.mockResolvedValue({ ok: true, considered: 1, results: [], xeroWritesAttempted: 0 });
+    const res = response();
+    await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" } } as any, res as any);
+    expect(mocks.forHireRecurring).toHaveBeenCalledOnce();
+    expect(mocks.recurring).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ considered: 1 }));
   });
 
   it("uses the Australia/Sydney calendar boundary for recurring storage", () => {

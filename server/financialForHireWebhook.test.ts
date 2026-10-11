@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { disabledForHireWebhookHandler, parseForHireWebhookEnvelope } from "./financialForHireWebhook";
+import { disabledForHireWebhookHandler, parseForHireWebhookEnvelope, registerForHireWebhook } from "./financialForHireWebhook";
 
 describe("dormant For Hire webhook contract", () => {
   it("accepts only an exact VTiger Container Control ID or record_id", () => {
@@ -16,5 +16,20 @@ describe("dormant For Hire webhook contract", () => {
     expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "for-hire-route-not-activated", xeroWritesAttempted: 0 }));
     if (previous === undefined) delete process.env.FINANCIAL_AP_WEBHOOK_SECRET; else process.env.FINANCIAL_AP_WEBHOOK_SECRET = previous;
+  });
+
+  it("mounts the protected future route but returns a non-writing hold while the For Hire gate is off", async () => {
+    const previousSecret = process.env.FINANCIAL_AP_WEBHOOK_SECRET;
+    const previousGate = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED;
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET = "test-secret";
+    delete process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED;
+    const handlers = new Map<string, any>();
+    registerForHireWebhook({ post: (path: string, handler: any) => handlers.set(path, handler) } as any);
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() } as any;
+    await handlers.get("/api/webhooks/vtiger/container-control-for-hire")({ header: () => "test-secret", body: { id: "24x901" } }, res);
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "for-hire-release-disabled", xeroWritesAttempted: 0 }));
+    if (previousSecret === undefined) delete process.env.FINANCIAL_AP_WEBHOOK_SECRET; else process.env.FINANCIAL_AP_WEBHOOK_SECRET = previousSecret;
+    if (previousGate === undefined) delete process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED; else process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED = previousGate;
   });
 });
