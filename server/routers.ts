@@ -81,6 +81,8 @@ import { getStorageReleasePolicy, prepareStorageReleasePolicy } from "./financia
 import { previewStorageFinalisation } from "./financialStorageLifecycleService";
 import { getForHirePoEvents } from "./financialForHireDb";
 import { getForHireReadiness, previewInitialForHirePo, previewRecurringForHirePo } from "./financialForHireService";
+import { getAssetPurchasePoEvents } from "./financialAssetPurchaseDb";
+import { getAssetPurchaseReadiness, previewAssetPurchasePo } from "./financialAssetPurchaseService";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
@@ -569,6 +571,26 @@ export const appRouter = router({
     forHirePoEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getForHirePoEvents(input?.limit ?? 100)),
     forHireReadiness: adminProcedure.query(() => getForHireReadiness()),
+    assetPurchasePoEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getAssetPurchasePoEvents(input?.limit ?? 100)),
+    assetPurchaseReadiness: adminProcedure.query(() => getAssetPurchaseReadiness()),
+    previewAssetPurchase: adminProcedure.input(z.object({
+      exactContainerControl: z.string().trim().regex(/^(?:C\d{1,12}|\d+x\d{1,12})$/i),
+    })).mutation(async ({ input }) => {
+      let recordId = input.exactContainerControl;
+      if (!/^\d+x\d+$/i.test(recordId)) {
+        const lookup = await findExactFinancialCandidate({ sourceCategory: "container_control", businessNumber: recordId.toUpperCase() });
+        if (lookup.outcome !== "found" || lookup.candidates.length !== 1) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: lookup.message });
+        }
+        recordId = lookup.candidates[0]!.recordId;
+      }
+      const preview = await previewAssetPurchasePo(recordId);
+      if (/^C\d+$/i.test(input.exactContainerControl) && preview.facts.controlNumber.toUpperCase() !== input.exactContainerControl.toUpperCase()) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "VTiger Container Control number no longer matches the exact lookup." });
+      }
+      return preview;
+    }),
     previewForHire: adminProcedure.input(z.object({
       exactContainerControl: z.string().trim().regex(/^(?:C\d{1,12}|\d+x\d{1,12})$/i),
       lifecycle: z.enum(["initial", "recurring"]),

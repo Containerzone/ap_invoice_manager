@@ -133,3 +133,12 @@
 - [x] Verified initial For Hire lifecycle ledger and initial execution count remain zero immediately after activation. The first qualifying new VTiger For Hire Request will be independently re-read/preflighted and can create at most one exact Xero Draft PO; it cannot authorize, send, pay, void or delete.
 - [ ] After the first new qualifying event, check Container Hire POs for exact `H<ContainerControlNumber>` Draft read-back, contact, dates, account 312, GST, item/description and no legacy duplicate before expanding scope.
 - [ ] Future recurring release only after pausing Operations `forHireMonthlyPo`, separately setting `recurringEnabled=true`, creating/binding the AP monthly Heartbeat, and verifying the first extension/dehire path.
+
+## 2026-10-11 — Asset Container Control PO migration readiness
+
+- [x] Reviewed the authorised Operations Asset purchase-order implementation and aligned the AP rule with its source fields and reference convention.
+- [x] Added an isolated AP Asset PO lifecycle: exact current Container Control + assigned Vendor source refresh; `ASSET` + `REQUEST` eligibility; `A<Container Control>` reference; Xero `Container Asset` item; account `322`; GST-exclusive AUD conversion from VTiger Purchase Price INCL GST; exact GET-only Xero contact/item/collision preflight; exact Draft read-back and immutable event/payload reservation.
+- [x] Added the protected default-off `POST /api/webhooks/vtiger/container-control-asset` receiver, administrator **Container Asset POs** sidebar workspace, current-source read-only preview and lifecycle tracking. The receiver ignores body financial values and holds before a source read while the Asset gate is disabled.
+- [x] Applied additive migration `0039_superb_blackheart.sql`; Asset event ledger count is `0`, Draft count is `0`.
+- [x] Validated TypeScript, **75 test files / 450 tests**, production build and local unauthenticated receiver response (`401`).
+- [ ] Later Asset go-live requires a separate published checkpoint, Asset-only VTiger `REQUEST` branch, paused Operations Asset writer, explicit current-conversation approval for new events only, AP-local release approval and `FINANCIAL_ASSET_PURCHASE_AUTOMATIC_ENABLED=true`. Do not activate it as part of this implementation.

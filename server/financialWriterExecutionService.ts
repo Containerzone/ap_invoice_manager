@@ -19,6 +19,7 @@ import { financialSha256 } from "./financialProposalIntegrity";
 import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
 import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
 import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
+import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 
@@ -63,6 +64,14 @@ export async function executeGuardedFinancialWriterCommand(
 ): Promise<GuardedFinancialWriterOutcome> {
   // Reject before writing any local execution state or making any Xero call.
   assertFinancialDraftWriteAuthorised(command.authorisation, { requireExecutionId: false });
+  if (command.authorisation.assetPurchaseAutomaticEventId !== undefined) {
+    await verifyAssetPurchaseAutomaticWriteAccess({
+      eventId: command.authorisation.assetPurchaseAutomaticEventId,
+      releaseKey: command.authorisation.assetPurchaseReleaseKey!,
+      payload: command.payload,
+      preparedBy: command.preparedBy,
+    });
+  }
   if (command.authorisation.storageAutomaticEventId !== undefined) {
     await verifyStorageAutomaticWriteAccess({ eventId: command.authorisation.storageAutomaticEventId,
       releaseKey: command.authorisation.storageReleaseKey!, payload: command.payload, workflowType: command.workflowType, preparedBy: command.preparedBy });

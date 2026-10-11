@@ -761,6 +761,47 @@ export const financialForHirePoEvents = mysqlTable("financial_for_hire_po_events
 export type FinancialForHirePoEvent = typeof financialForHirePoEvents.$inferSelect;
 export type InsertFinancialForHirePoEvent = typeof financialForHirePoEvents.$inferInsert;
 
+// ─── Container Control Asset purchase PO lifecycle ──────────────────────────
+//
+// Separate from the shared Container Control action and the For Hire ledger.
+// AP only records a fresh Asset REQUEST preview or a read-back-verified Draft PO;
+// it deliberately never adopts historical Operations Asset purchase orders.
+export const financialAssetPurchasePoEvents = mysqlTable("financial_asset_purchase_po_events", {
+  id: int("id").autoincrement().primaryKey(),
+  containerControlId: varchar("containerControlId", { length: 128 }).notNull(),
+  containerControlNumber: varchar("containerControlNumber", { length: 128 }).notNull(),
+  proposedPoNumber: varchar("proposedPoNumber", { length: 128 }).notNull(),
+  containerNumber: varchar("containerNumber", { length: 128 }).notNull(),
+  containerType: varchar("containerType", { length: 80 }).notNull(),
+  supplierVtigerId: varchar("supplierVtigerId", { length: 128 }),
+  supplierName: varchar("supplierName", { length: 255 }),
+  purchaseDate: varchar("purchaseDate", { length: 10 }),
+  sourceRefreshedAt: timestamp("sourceRefreshedAt"),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }),
+  proposal: json("proposal"),
+  xeroPreflight: json("xeroPreflight"),
+  xeroPurchaseOrderId: varchar("xeroPurchaseOrderId", { length: 128 }),
+  /** AP-local standing release and immutable payload fingerprint. */
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "held", "reserved", "drafts_created", "reconciliation_required"] as const)
+    .default("previewed")
+    .notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  controlUnique: uniqueIndex("financial_asset_purchase_po_control_unique").on(table.containerControlId),
+  proposedPoUnique: uniqueIndex("financial_asset_purchase_po_proposed_number_unique").on(table.proposedPoNumber),
+}));
+
+export type FinancialAssetPurchasePoEvent = typeof financialAssetPurchasePoEvents.$inferSelect;
+export type InsertFinancialAssetPurchasePoEvent = typeof financialAssetPurchasePoEvents.$inferInsert;
+
 export const extraHireRuns = mysqlTable("extra_hire_runs", {
   id: int("id").autoincrement().primaryKey(),
   workflowRunId: int("workflowRunId"),

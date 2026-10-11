@@ -9,6 +9,7 @@ import { runXeroRequest } from "./xeroRequestManager";
 import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
 import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
 import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
+import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -66,6 +67,10 @@ export type FinancialWriteAuthorisation = {
   forHireAutomaticEventId?: number;
   forHireReleaseKey?: string;
   forHireApprovedBy?: number;
+  /** Isolated Container Control Asset purchase event; never available to generic financial families. */
+  assetPurchaseAutomaticEventId?: number;
+  assetPurchaseReleaseKey?: string;
+  assetPurchaseApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -243,6 +248,17 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.assetPurchaseAutomaticEventId !== undefined) {
+    if (process.env.FINANCIAL_ASSET_PURCHASE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "asset_purchase" ||
+      !Number.isInteger(context.assetPurchaseAutomaticEventId) || context.assetPurchaseAutomaticEventId <= 0 || !context.assetPurchaseReleaseKey || !context.assetPurchaseApprovedBy ||
+      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete) {
+      throw new FinancialWriteDisabledError("Asset purchase automatic release gate is not valid.");
+    }
+    if (options.requireExecutionId !== false && (!context.executionId || context.executionId <= 0)) {
+      throw new FinancialWriteDisabledError("Asset purchase execution ledger is required.");
+    }
+    return;
+  }
   if (context.forHireAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED !== "true" || !["initial_for_hire", "recurring_for_hire"].includes(context.workflowType) ||
       !Number.isInteger(context.forHireAutomaticEventId) || context.forHireAutomaticEventId <= 0 || !context.forHireReleaseKey || !context.forHireApprovedBy ||
@@ -322,6 +338,21 @@ export async function executeFinancialDraftWrite(
   context: FinancialWriteAuthorisation,
 ): Promise<FinancialDraftWriteResult> {
   assertFinancialDraftWriteAuthorised(context);
+  if (context.assetPurchaseAutomaticEventId !== undefined) {
+    const rows = payload.body.PurchaseOrders;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (payload.method !== "POST" || payload.endpoint !== "/PurchaseOrders" || payload.documentFamily !== "purchase_order" || payload.expectedXeroDocumentId ||
+      !row || row.Status !== "DRAFT" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" ||
+      !Array.isArray(row.LineItems) || row.LineItems.length !== 1 || !row.LineItems.every((line: any) => String(line.AccountCode) === "322")) {
+      throw new FinancialWriteDisabledError("Asset automatic release permits only one exact AUD Draft Purchase Order with account 322.");
+    }
+    await verifyAssetPurchaseAutomaticWriteAccess({
+      eventId: context.assetPurchaseAutomaticEventId,
+      releaseKey: context.assetPurchaseReleaseKey!,
+      preparedBy: context.assetPurchaseApprovedBy!,
+      payload,
+    });
+  }
   if (context.forHireAutomaticEventId !== undefined) {
     const rows = payload.body.PurchaseOrders;
     const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;

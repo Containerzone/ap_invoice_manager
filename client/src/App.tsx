@@ -25,6 +25,7 @@ import OperationalFailures from "./pages/OperationalFailures";
 import FinancialOperations from "./pages/FinancialOperations";
 import StorageAutomation from "./pages/StorageAutomation";
 import ContainerHirePos from "./pages/ContainerHirePos";
+import ContainerAssetPos from "./pages/ContainerAssetPos";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -92,6 +93,9 @@ function AppRoutes() {
               </Route>
               <Route path="/container-hire-pos">
                 <AdminGuard><ContainerHirePos /></AdminGuard>
+              </Route>
+              <Route path="/container-asset-pos">
+                <AdminGuard><ContainerAssetPos /></AdminGuard>
               </Route>
               <Route path="/operational-failures">
                 <AdminGuard><OperationalFailures /></AdminGuard>
