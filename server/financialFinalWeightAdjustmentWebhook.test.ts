@@ -32,6 +32,16 @@ describe("Final weight independent default-off dual release", () => {
     for (const secret of ["", "wrong", "private-tess"]) { const res = response(); await handler(direction)({ header: () => secret, body: { id: "5x77" } }, res); expect(res.status).toHaveBeenCalledWith(401); }
     expect(m.policy).not.toHaveBeenCalled(); expect(m.process).not.toHaveBeenCalled();
   });
+  it.each(["overweight", "underweight"] as const)("%s accepts the existing VTiger JSON secret envelope and still holds while disabled", async direction => {
+    vi.stubEnv("FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED", ""); const res = response();
+    await handler(direction)({ header: () => "", body: { id: "5x77", secret: "private-test", dryRun: true, amount: -999 } }, res);
+    expect(res.status).toHaveBeenCalledWith(503); expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ direction, xeroWritesAttempted: 0 }));
+    expect(m.policy).not.toHaveBeenCalled(); expect(m.process).not.toHaveBeenCalled();
+  });
+  it.each(["overweight", "underweight"] as const)("%s rejects an incorrect VTiger JSON secret before policy/source/DB/Xero calls", async direction => {
+    const res = response(); await handler(direction)({ header: () => "", body: { id: "5x77", secret: "wrong", dryRun: true } }, res);
+    expect(res.status).toHaveBeenCalledWith(401); expect(m.policy).not.toHaveBeenCalled(); expect(m.process).not.toHaveBeenCalled();
+  });
   it.each(["overweight", "underweight"] as const)("%s unset flag is authenticated 503 with zero DB/upstream impact", async direction => {
     vi.stubEnv("FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED", ""); const res = response();
     await handler(direction)({ header: () => "private-test", body: { deal_id: "5x77", amount: 999 } }, res);

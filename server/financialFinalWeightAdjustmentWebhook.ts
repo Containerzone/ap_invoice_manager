@@ -11,10 +11,22 @@ export function parseFinalWeightEnvelope(body: unknown): { recordId: string } {
   // All other body fields (including direction, amount, date and customer) are ignored.
   return { recordId: (ids[0] as string).trim() };
 }
-export function hasFinalWeightSecret(req: Pick<Request, "header">) {
+function secretMatches(expected: Buffer, supplied: unknown) {
+  if (typeof supplied !== "string") return false;
+  const candidate = Buffer.from(supplied.trim());
+  return Boolean(expected.length && expected.length === candidate.length && timingSafeEqual(expected, candidate));
+}
+/**
+ * VTiger's existing Operations actions place the private value in JSON `secret`.
+ * Accept that legacy envelope as a constant-time alternative to the normal HTTP
+ * header. Its other JSON fields, including `dryRun`, are never trusted.
+ */
+export function hasFinalWeightSecret(req: Pick<Request, "header" | "body">) {
   const expected = Buffer.from(process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim() ?? "");
-  const supplied = Buffer.from(req.header("x-financial-webhook-secret")?.trim() ?? "");
-  return Boolean(expected.length && expected.length === supplied.length && timingSafeEqual(expected, supplied));
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : null;
+  return secretMatches(expected, req.header("x-financial-webhook-secret")) || secretMatches(expected, body?.secret);
 }
 export function registerFinalWeightAdjustmentWebhooks(app: Express) {
   for (const direction of ["overweight", "underweight"] as FinalWeightDirection[]) {

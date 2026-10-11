@@ -4,7 +4,7 @@
 
 **Default-off implementation/readiness only. Not activated or published.** Work is isolated to `/home/ubuntu/ap_invoice_manager`.
 
-- Two dedicated private POST routes: `/api/webhooks/vtiger/final-weight-overweight` and `/api/webhooks/vtiger/final-weight-underweight`.
+- Two dedicated private POST routes: `/api/webhooks/vtiger/final-weight-overweight` and `/api/webhooks/vtiger/final-weight-underweight`. Each accepts either the standard `x-financial-webhook-secret` header or the existing VTiger JSON `secret` field; the private value is compared in constant time and never stored or logged. `dryRun` is accepted only for VTiger body compatibility and is never trusted as an AP safety control.
 - Standalone administrator sidebar page **Final Weight Adjustments**, `/final-weight-adjustments`: branch status cards, exact named Deal GET-only preview, source mappings/full original and expected Draft payload evidence, and event/hold tracking. No browser mutation/release button.
 - Administrator-only tRPC **query** procedures: `financialOperations.finalWeightReadiness`, `finalWeightEvents`, `previewFinalWeightAdjustment`. Preview does **not** insert/update final-weight evidence, execution or policy. Existing read helpers may refresh OAuth authentication/cache GET responses; this is not financial ledger evidence or CRM/accounting document mutation.
 - Pure source/rules modules, isolated immutable event/claim database module and service; dedicated Draft-only PUT authorization in `financialProductionWriter`; existing exact Xero GET readback extended only with final-weight full retained-payload validation.
