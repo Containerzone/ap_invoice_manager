@@ -4,6 +4,7 @@ const m = vi.hoisted(() => ({
   policy: vi.fn(),
   assert: vi.fn(),
   alert: vi.fn(),
+  candidate: vi.fn(),
 }));
 vi.mock("./financialExtraHireInvoiceService", () => ({
   EXTRA_HIRE_WEBHOOK_PATH: "/api/webhooks/vtiger/extra-hire-invoice",
@@ -16,10 +17,14 @@ vi.mock("./financialExtraHireInvoiceRelease", () => ({
 vi.mock("./workflowAlertService", () => ({
   reportWorkflowFailureSafely: m.alert,
 }));
+vi.mock("./vtigerFinancialCandidateService", () => ({
+  findExactFinancialCandidate: m.candidate,
+}));
 import {
   hasExtraHireSecret,
   parseExtraHireWebhookEnvelope,
   registerExtraHireInvoiceWebhook,
+  resolveExtraHireWebhookRecord,
 } from "./financialExtraHireInvoiceWebhook";
 const handler = () => {
   let fn: any;
@@ -36,6 +41,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   m.assert.mockReset();
   m.policy.mockResolvedValue({ enabled: false });
+  m.candidate.mockResolvedValue({
+    outcome: "found",
+    candidates: [{ recordId: "5x77" }],
+    message: "exact match",
+  });
   vi.stubEnv("FINANCIAL_AP_WEBHOOK_SECRET", "synthetic-secret");
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -56,13 +66,14 @@ describe("Extra Hire dedicated private route", () => {
     await handler()(
       {
         header: () => undefined,
-        body: { id: "5x77", secret: "synthetic-secret", dryRun: true },
+        body: { id: "D77", secret: "synthetic-secret", dryRun: true },
       },
       res
     );
     expect(res.status).toHaveBeenCalledWith(503);
     expect(m.policy).not.toHaveBeenCalled();
     expect(m.process).not.toHaveBeenCalled();
+    expect(m.candidate).not.toHaveBeenCalled();
   });
   it("compares the legacy body secret without trusting other body values", () => {
     expect(
@@ -142,15 +153,48 @@ describe("Extra Hire dedicated private route", () => {
     expect(m.process).toHaveBeenCalledWith("5x77");
     expect(res.status).toHaveBeenCalledWith(202);
   });
+  it("resolves the legacy potential_no D-number through one bounded exact lookup", async () => {
+    await expect(
+      resolveExtraHireWebhookRecord({ recordId: null, dealNumber: "D77" })
+    ).resolves.toBe("5x77");
+    expect(m.candidate).toHaveBeenCalledWith({
+      sourceCategory: "deal",
+      businessNumber: "D77",
+    });
+  });
+  it.each(["not_found", "ambiguous", "blocked"])(
+    "holds legacy D-number resolution when VTiger is %s",
+    async outcome => {
+      m.candidate.mockResolvedValueOnce({
+        outcome,
+        candidates:
+          outcome === "ambiguous"
+            ? [{ recordId: "5x1" }, { recordId: "5x2" }]
+            : [],
+        message: "no exact unambiguous Deal",
+      });
+      await expect(
+        resolveExtraHireWebhookRecord({ recordId: null, dealNumber: "D77" })
+      ).rejects.toThrow(new RegExp(outcome));
+    }
+  );
   it.each([
     {},
     [],
-    { deal_id: "D77" },
     { deal_id: 77 },
     { id: "5x77", deal_id: "5x88" },
   ])("rejects ambiguous/non-ID envelope %j", body =>
-    expect(() => parseExtraHireWebhookEnvelope(body)).toThrow(/exact named/)
+    expect(() => parseExtraHireWebhookEnvelope(body)).toThrow(/named Deal/)
   );
+  it("accepts only an exact D-number as the legacy potential_no envelope", () => {
+    expect(parseExtraHireWebhookEnvelope({ id: "D77" })).toEqual({
+      recordId: null,
+      dealNumber: "D77",
+    });
+    expect(() =>
+      parseExtraHireWebhookEnvelope({ id: "potential_no" })
+    ).toThrow(/webservice ID or D-number/);
+  });
   it("unknown failure never falsely asserts zero transport attempts", async () => {
     vi.stubEnv("FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED", "true");
     m.process.mockRejectedValue(new Error("timeout"));

@@ -8,8 +8,16 @@ import {
   processAutomaticExtraHireInvoice,
   EXTRA_HIRE_WEBHOOK_PATH,
 } from "./financialExtraHireInvoiceService";
+import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
+
+export type ExtraHireWebhookEnvelope = {
+  recordId: string | null;
+  dealNumber: string | null;
+};
+
 export function parseExtraHireWebhookEnvelope(body: unknown): {
-  recordId: string;
+  recordId: string | null;
+  dealNumber: string | null;
 } {
   const raw =
     body && typeof body === "object" && !Array.isArray(body)
@@ -18,17 +26,43 @@ export function parseExtraHireWebhookEnvelope(body: unknown): {
   const values = [raw.deal_id, raw.record_id, raw.id].filter(
     v => v !== undefined
   );
-  if (
-    !values.length ||
-    values.some(
-      v => typeof v !== "string" || !/^\d+x\d{1,12}$/.test(v.trim())
-    ) ||
-    new Set(values.map(v => (v as string).trim())).size !== 1
-  )
+  if (!values.length || values.some(v => typeof v !== "string"))
     throw new Error(
-      "Extra Hire requires one exact named Deal webservice ID; conflicting IDs are rejected."
+      "Extra Hire requires one exact named Deal webservice ID or D-number."
     );
-  return { recordId: (values[0] as string).trim() };
+  const id = (values[0] as string).trim();
+  if (new Set(values.map(v => (v as string).trim())).size !== 1)
+    throw new Error(
+      "Extra Hire requires one unambiguous named Deal reference; conflicting IDs are rejected."
+    );
+  if (/^\d+x\d{1,12}$/i.test(id)) return { recordId: id, dealNumber: null };
+  if (/^D\d{1,12}$/i.test(id))
+    return { recordId: null, dealNumber: id.toUpperCase() };
+  throw new Error(
+    "Extra Hire requires one exact Deal webservice ID or D-number; arbitrary values are rejected."
+  );
+}
+
+/**
+ * The legacy Operations action sends Potentials.potential_no (D<number>) rather
+ * than a webservice ID. Resolve only that exact number through the bounded AP
+ * finder; zero or multiple matches always hold and can never select a Deal.
+ */
+export async function resolveExtraHireWebhookRecord(
+  envelope: ExtraHireWebhookEnvelope
+): Promise<string> {
+  if (envelope.recordId) return envelope.recordId;
+  if (!envelope.dealNumber)
+    throw new Error("Extra Hire contains no exact Deal reference.");
+  const lookup = await findExactFinancialCandidate({
+    sourceCategory: "deal",
+    businessNumber: envelope.dealNumber,
+  });
+  if (lookup.outcome !== "found" || lookup.candidates.length !== 1)
+    throw new Error(
+      `Extra Hire D-number lookup is ${lookup.outcome}: ${lookup.message}`
+    );
+  return lookup.candidates[0]!.recordId;
 }
 
 function secretMatches(expected: Buffer, supplied: unknown): boolean {
@@ -84,7 +118,7 @@ export function registerExtraHireInvoiceWebhook(app: Express) {
     } catch {
       return disabled();
     }
-    let envelope: { recordId: string };
+    let envelope: ExtraHireWebhookEnvelope;
     try {
       envelope = parseExtraHireWebhookEnvelope(req.body);
     } catch (e) {
@@ -95,8 +129,22 @@ export function registerExtraHireInvoiceWebhook(app: Express) {
           error: e instanceof Error ? e.message : "invalid-extra-hire-webhook",
         });
     }
+    let recordId: string;
     try {
-      const result = await processAutomaticExtraHireInvoice(envelope.recordId);
+      recordId = await resolveExtraHireWebhookRecord(envelope);
+    } catch (error) {
+      return res.status(202).json({
+        ok: false,
+        status: "held",
+        warning:
+          error instanceof Error
+            ? error.message
+            : "Extra Hire exact Deal lookup is held.",
+        xeroWritesAttempted: 0,
+      });
+    }
+    try {
+      const result = await processAutomaticExtraHireInvoice(recordId);
       return res.status(result.ok ? 200 : 202).json(result);
     } catch {
       return res

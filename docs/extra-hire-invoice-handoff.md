@@ -5,7 +5,7 @@
 The AP application contains an isolated **Extra Hire Invoices** administrator workspace. Its source preview, release state and AP event tracking are read-only; there is no browser control to release or create an invoice.
 
 - Protected receiver: `POST /api/webhooks/vtiger/extra-hire-invoice`
-- Authentication: existing `x-financial-webhook-secret` header **or** the established VTiger JSON `secret` body value, both compared in constant time. A request needs one exact VTiger Deal webservice ID (`deal_id`, `record_id` or `id`). Body amount, rate, date, customer and `dryRun` values are ignored.
+- Authentication: existing `x-financial-webhook-secret` header **or** the established VTiger JSON `secret` body value, both compared in constant time. A request may carry one exact VTiger Deal webservice ID (`deal_id`, `record_id` or `id`) **or** the existing `potential_no` D-number. The D-number path does one bounded exact AP-side Deal lookup and holds if it is missing or ambiguous; it never searches broadly or selects a record by guesswork. Body amount, rate, date, customer and `dryRun` values are ignored.
 - Independent writer gate: `FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED`. When unset/not exactly `true`, an authenticated receiver returns `503` before source, Xero, ledger or alert work.
 - Independent policy key: `financial-automation.extra-hire-invoice-release`. No policy has been created or enabled.
 - Extra Hire CRM writeback is deliberately **not** active. The postcondition is held even if the general storage post-success setting is enabled. `FINANCIAL_EXTRA_HIRE_POST_SUCCESS_ENABLED` is only a future prerequisite; it does not release any conditional VTiger update by itself.
