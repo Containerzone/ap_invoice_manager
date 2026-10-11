@@ -82,7 +82,7 @@
 - [x] Reviewed and applied additive migration 0036; existing Deal/period and Deal/suffix uniqueness retained.
 - [x] Current D702885 GET-only facts: stage 16 REVIEW REQUEST, Storage Required NO, Date In 5 October, delivery 6 October, Date Out blank. Current preview holds correctly; historical fixture reference remains available. No new financial documents or history import attempted.
 - [x] Final validation: TypeScript, **67 files / 411 tests**, production build and diff checks pass. Unauthenticated local finalisation returns 401. AP storage lifecycle events remain 0; only prior one-off writer execution exists. Read-only Heartbeat inspection found the same 3 mailbox/monitoring jobs and no financial task; all storage/broad live-write flags remain off. See `docs/loaded-storage-draft-handoff.md`.
-- [ ] **External release pending:** publish AP checkpoint; pause/drain only matching Operations storage activation/finalisation actions and monthly task 4rB9Yofib8MRLRbijj4z9k; preserve task mapping; redirect VTiger to AP contracts; approve/enable only storage standing policy/deployment gate and register/bind AP monthly Heartbeat after publication. None performed by this implementation.
+- [x] **Superseded by the recorded storage-only live activation below:** AP was published, the declared storage handovers and new-events-only policy were recorded, the storage-only deployment gate and AP monthly Heartbeat were enabled, and existing legacy records stayed out of AP automation. First-event observation remains open below.
 
 ## 2026-10-11 — Storage-only live activation
 
