@@ -85,6 +85,8 @@ import { getAssetPurchasePoEvents } from "./financialAssetPurchaseDb";
 import { getAssetPurchaseReadiness, previewAssetPurchasePo } from "./financialAssetPurchaseService";
 import { getCustomerSalePurchasePoEvents } from "./financialCustomerSalePurchaseDb";
 import { getCustomerSalePurchaseReadiness, previewCustomerSalePurchasePo } from "./financialCustomerSalePurchaseService";
+import { getMainCustomerInvoiceEvents } from "./financialMainCustomerInvoiceDb";
+import { getMainCustomerInvoiceReadiness, previewMainCustomerInvoice } from "./financialMainCustomerInvoiceService";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
@@ -610,6 +612,26 @@ export const appRouter = router({
       const preview = await previewCustomerSalePurchasePo(recordId);
       if (/^C\d+$/i.test(input.exactContainerControl) && preview.facts.controlNumber.toUpperCase() !== input.exactContainerControl.toUpperCase()) {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: "VTiger Container Control number no longer matches the exact lookup." });
+      }
+      return preview;
+    }),
+    mainCustomerInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getMainCustomerInvoiceEvents(input?.limit ?? 100)),
+    mainCustomerInvoiceReadiness: adminProcedure.query(() => getMainCustomerInvoiceReadiness()),
+    previewMainCustomerInvoice: adminProcedure.input(z.object({
+      exactDeal: z.string().trim().regex(/^(?:D\d{1,12}|\d+x\d{1,12})$/i),
+    })).mutation(async ({ input }) => {
+      let recordId = input.exactDeal;
+      if (!/^\d+x\d+$/i.test(recordId)) {
+        const lookup = await findExactFinancialCandidate({ sourceCategory: "deal", businessNumber: recordId.toUpperCase() });
+        if (lookup.outcome !== "found" || lookup.candidates.length !== 1) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: lookup.message });
+        }
+        recordId = lookup.candidates[0]!.recordId;
+      }
+      const preview = await previewMainCustomerInvoice(recordId);
+      if (/^D\d+$/i.test(input.exactDeal) && preview.facts.dealNumber.toUpperCase() !== input.exactDeal.toUpperCase()) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "VTiger Deal number no longer matches the exact lookup." });
       }
       return preview;
     }),

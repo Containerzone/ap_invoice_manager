@@ -153,3 +153,12 @@
 - [x] Added protected default-off `POST /api/webhooks/vtiger/container-control-customer-sale`, administrator **Customer Sale POs** sidebar workspace, read-only current-source preview and lifecycle tracking. Local unauthenticated receiver test returns `401`; event and Draft counts are `0`.
 - [x] Added policy, rule and webhook coverage including isolated writer authorisation. Validated TypeScript, **77 test files / 456 tests**, production build and `git diff --check`.
 - [ ] Separate Customer Sale cutover only: publish this checkpoint, create a Customer Sale + Request-only VTiger AP action, pause the Operations Customer Sale writer for future events, approve new-events-only Draft creation in the current conversation, record the AP release policy, then set only `FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED=true`. Verify the first new exact `S…` Draft PO before treating the family as operational.
+
+## 2026-10-11 — Main Customer Invoice migration readiness
+
+- [x] Reviewed the authorised Operations Main Customer Invoice implementation and recorded its Deal → Quote → Service rule in `docs/operations-main-customer-invoice-alignment.md`.
+- [x] Added isolated AP Main Customer Invoice lifecycle, dedicated sidebar workspace, read-only exact Deal preview, protected default-off `POST /api/webhooks/vtiger/main-customer-invoice`, immutable event/payload ledger and dedicated writer gate.
+- [x] Applied additive migration `0041_curly_molecule_man.sql`. The ledger and `main_customer_invoice` execution count are both `0` immediately after implementation.
+- [x] Rules: re-read Deal, linked Quote, exact customer and every Service; create at most one AUD GST-exclusive `ACCREC` **Draft** with reference `INV-<Deal>` and account 200 lines; duplicate/ambiguous exact invoice evidence is held without adoption, suffixing or retry.
+- [x] Validated TypeScript, **81 test files / 464 tests**, production build and `git diff --check`. The family flag remains not true and default shadow mode remains active when unset (`FINANCIAL_GLOBAL_SHADOW_MODE !== "false"`). No Xero document, VTiger record/action or Operations setting was changed.
+- [ ] Separate Main Customer Invoice go-live requires publication, dedicated VTiger Main Invoice endpoint branch, Operations Main Invoice writer handover for future events, new-events-only approval, AP release policy and only `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true`; then check first exact `INV-…` Draft in the new sidebar workspace.

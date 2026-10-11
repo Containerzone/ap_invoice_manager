@@ -11,6 +11,7 @@ import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb
 import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
 import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
+import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -76,6 +77,10 @@ export type FinancialWriteAuthorisation = {
   customerSalePurchaseAutomaticEventId?: number;
   customerSalePurchaseReleaseKey?: string;
   customerSalePurchaseApprovedBy?: number;
+  /** Isolated Main Customer Invoice event; never available to other financial families. */
+  mainCustomerInvoiceAutomaticEventId?: number;
+  mainCustomerInvoiceReleaseKey?: string;
+  mainCustomerInvoiceApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -253,6 +258,17 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.mainCustomerInvoiceAutomaticEventId !== undefined) {
+    if (process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "main_customer_invoice" ||
+      !Number.isInteger(context.mainCustomerInvoiceAutomaticEventId) || context.mainCustomerInvoiceAutomaticEventId <= 0 || !context.mainCustomerInvoiceReleaseKey || !context.mainCustomerInvoiceApprovedBy ||
+      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete) {
+      throw new FinancialWriteDisabledError("Main Customer Invoice automatic release gate is not valid.");
+    }
+    if (options.requireExecutionId !== false && (!context.executionId || context.executionId <= 0)) {
+      throw new FinancialWriteDisabledError("Main Customer Invoice execution ledger is required.");
+    }
+    return;
+  }
   if (context.assetPurchaseAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_ASSET_PURCHASE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "asset_purchase" ||
       !Number.isInteger(context.assetPurchaseAutomaticEventId) || context.assetPurchaseAutomaticEventId <= 0 || !context.assetPurchaseReleaseKey || !context.assetPurchaseApprovedBy ||
@@ -354,6 +370,21 @@ export async function executeFinancialDraftWrite(
   context: FinancialWriteAuthorisation,
 ): Promise<FinancialDraftWriteResult> {
   assertFinancialDraftWriteAuthorised(context);
+  if (context.mainCustomerInvoiceAutomaticEventId !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (payload.method !== "POST" || payload.endpoint !== "/Invoices" || payload.documentFamily !== "customer_invoice" || payload.expectedXeroDocumentId ||
+      !row || row.Status !== "DRAFT" || row.Type !== "ACCREC" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" ||
+      !Array.isArray(row.LineItems) || row.LineItems.length < 1 || !row.LineItems.every((line: any) => String(line.AccountCode) === "200")) {
+      throw new FinancialWriteDisabledError("Main Customer Invoice automatic release permits only a new exact AUD Exclusive Draft ACCREC with account 200 lines.");
+    }
+    await verifyMainCustomerInvoiceAutomaticWriteAccess({
+      eventId: context.mainCustomerInvoiceAutomaticEventId,
+      releaseKey: context.mainCustomerInvoiceReleaseKey!,
+      preparedBy: context.mainCustomerInvoiceApprovedBy!,
+      payload,
+    });
+  }
   if (context.assetPurchaseAutomaticEventId !== undefined) {
     const rows = payload.body.PurchaseOrders;
     const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;

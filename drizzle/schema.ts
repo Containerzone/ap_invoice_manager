@@ -842,6 +842,46 @@ export const financialCustomerSalePurchasePoEvents = mysqlTable("financial_custo
 export type FinancialCustomerSalePurchasePoEvent = typeof financialCustomerSalePurchasePoEvents.$inferSelect;
 export type InsertFinancialCustomerSalePurchasePoEvent = typeof financialCustomerSalePurchasePoEvents.$inferInsert;
 
+// ─── Main Customer Invoice lifecycle ──────────────────────────────────────
+//
+// An AP-owned receipt for the current Deal → Quote → Service-line evidence.
+// It is deliberately separate from purchase orders and never adopts a legacy
+// Operations invoice: a fresh source and exact Xero preflight are required.
+export const financialMainCustomerInvoiceEvents = mysqlTable("financial_main_customer_invoice_events", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  quoteId: varchar("quoteId", { length: 128 }),
+  quoteNumber: varchar("quoteNumber", { length: 128 }),
+  proposedInvoiceNumber: varchar("proposedInvoiceNumber", { length: 128 }).notNull(),
+  customerVtigerId: varchar("customerVtigerId", { length: 128 }),
+  customerName: varchar("customerName", { length: 255 }),
+  sourceRefreshedAt: timestamp("sourceRefreshedAt"),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }),
+  proposal: json("proposal"),
+  xeroPreflight: json("xeroPreflight"),
+  xeroInvoiceId: varchar("xeroInvoiceId", { length: 128 }),
+  /** AP-local release key plus the exact Draft POST fingerprint. */
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "held", "reserved", "drafts_created", "reconciliation_required"] as const)
+    .default("previewed")
+    .notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  dealUnique: uniqueIndex("financial_main_customer_invoice_deal_unique").on(table.dealId),
+  invoiceNumberUnique: uniqueIndex("financial_main_customer_invoice_number_unique").on(table.proposedInvoiceNumber),
+}));
+
+export type FinancialMainCustomerInvoiceEvent = typeof financialMainCustomerInvoiceEvents.$inferSelect;
+export type InsertFinancialMainCustomerInvoiceEvent = typeof financialMainCustomerInvoiceEvents.$inferInsert;
+
 export const extraHireRuns = mysqlTable("extra_hire_runs", {
   id: int("id").autoincrement().primaryKey(),
   workflowRunId: int("workflowRunId"),

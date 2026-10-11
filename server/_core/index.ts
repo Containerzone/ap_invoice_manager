@@ -13,6 +13,7 @@ import { registerInitialLoadedStorageWebhook } from "../financialInitialStorageW
 import { registerForHireWebhook } from "../financialForHireWebhook";
 import { registerAssetPurchaseWebhook } from "../financialAssetPurchaseWebhook";
 import { registerCustomerSalePurchaseWebhook } from "../financialCustomerSalePurchaseWebhook";
+import { registerMainCustomerInvoiceWebhook } from "../financialMainCustomerInvoiceWebhook";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -58,6 +59,9 @@ async function startServer() {
   // Receiver is mounted for a dedicated Customer Sale / REQUEST branch only.
   // It remains held before any VTiger read or Xero call until separately released.
   registerCustomerSalePurchaseWebhook(app);
+  // Receiver is mounted for a dedicated Main Customer Invoice action only. It
+  // remains held before any Deal/Quote read or Xero call until separately released.
+  registerMainCustomerInvoiceWebhook(app);
   // tRPC API
   app.use(
     "/api/trpc",
