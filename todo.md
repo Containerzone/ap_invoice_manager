@@ -83,3 +83,15 @@
 - [x] Current D702885 GET-only facts: stage 16 REVIEW REQUEST, Storage Required NO, Date In 5 October, delivery 6 October, Date Out blank. Current preview holds correctly; historical fixture reference remains available. No new financial documents or history import attempted.
 - [x] Final validation: TypeScript, **67 files / 411 tests**, production build and diff checks pass. Unauthenticated local finalisation returns 401. AP storage lifecycle events remain 0; only prior one-off writer execution exists. Read-only Heartbeat inspection found the same 3 mailbox/monitoring jobs and no financial task; all storage/broad live-write flags remain off. See `docs/loaded-storage-draft-handoff.md`.
 - [ ] **External release pending:** publish AP checkpoint; pause/drain only matching Operations storage activation/finalisation actions and monthly task 4rB9Yofib8MRLRbijj4z9k; preserve task mapping; redirect VTiger to AP contracts; approve/enable only storage standing policy/deployment gate and register/bind AP monthly Heartbeat after publication. None performed by this implementation.
+
+## 2026-10-11 — Storage-only live activation
+
+- [x] Published and verified both protected AP storage receivers: activation and finalisation return JSON `401` without the private header, and the configured header is accepted without processing a Deal.
+- [x] Enabled the **AP storage-only** release policy effective 2026-10-11T06:45:56.776Z with all three declared legacy handovers (activation, recurring and finalisation), `new_events_only` scope, and controlled legacy recovery disabled. Existing active storage Deals and their history stay outside AP automation.
+- [x] Enabled only `FINANCIAL_STORAGE_AUTOMATIC_ENABLED` and `FINANCIAL_VTIGER_POST_SUCCESS_ENABLED`; global financial writer flags remain off.
+- [x] Validated the existing VTiger Accounts task assignee (`20x9`) and module fields; enabled the AP mapping for post-readback storage notes and the `Finalise Storage Invoice` Accounts task only. Hire End Date updates remain disabled.
+- [x] Created and bound AP Heartbeat `financial-storage-recurring` (`dErqHfAEZWztdXLU9u5Yur`) to `/api/scheduled/financial-writer/recurring_storage`, cron `0 5 13 * * *`. It processes only the first Australia/Sydney calendar day and only AP-created storage roots.
+- [x] Confirmed two configured workflow-failure email recipients. Existing Operations/legacy storage records were not altered by AP.
+- [ ] Observe the first genuine post-cutover qualifying VTiger Deal webhook, then verify its three exact Xero Draft receipts and any post-success VTiger note.
+- [ ] Observe the first due AP-created recurring storage period and its two exact Draft receipts (customer invoice + GD PO; never a recurring JD PO).
+- [ ] Observe the first AP-created storage finalisation or keep legacy finalisation history held until a new AP storage root exists.

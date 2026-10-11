@@ -50,11 +50,14 @@ export async function validateDisabledPostSuccessMapping(value: unknown): Promis
     { module: configuration.hireEndUpdate.module, requiredFields: [configuration.hireEndUpdate.fieldName] },
   ];
   try {
-    const modules = await Promise.all(requirements.map(async (requirement) => {
+    const modules = [] as Array<{ module: string; requiredFields: string[]; missingFields: string[] }>;
+    // VTiger issues short-lived sessions; validate descriptions sequentially so a
+    // configured user with one-session semantics is not falsely reported blocked.
+    for (const requirement of requirements) {
       const metadata = await describeVtigerFinancialModule(requirement.module);
       const available = new Set(metadata.fields.map((field) => field.toLowerCase()));
-      return { module: requirement.module, requiredFields: requirement.requiredFields, missingFields: requirement.requiredFields.filter((field) => !available.has(field.toLowerCase())) };
-    }));
+      modules.push({ module: requirement.module, requiredFields: requirement.requiredFields, missingFields: requirement.requiredFields.filter((field) => !available.has(field.toLowerCase())) });
+    }
     const formatValid = configuration.assignedUserId === null || /^\d+x\d+$/i.test(configuration.assignedUserId);
     const fieldsValid = modules.every((module) => module.missingFields.length === 0);
     const assignedConfigured = Boolean(configuration.assignedUserId);
