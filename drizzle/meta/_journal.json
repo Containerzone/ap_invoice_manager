@@ -316,6 +316,13 @@
       "when": 1791717964087,
       "tag": "0044_curved_baron_strucker",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "5",
+      "when": 1791719575119,
+      "tag": "0045_slow_archangel",
+      "breakpoints": true
     }
   ]
 }

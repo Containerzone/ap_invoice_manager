@@ -191,6 +191,8 @@ import { parse as parseCookie } from "cookie";
 import { poRequests } from "../drizzle/schema";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { getWarrantyReadiness, previewWarrantyAviso } from "./financialWarrantyAvisoService";
+import { getWarrantyEvents } from "./financialWarrantyAvisoDb";
 
 // ─── Admin guard ──────────────────────────────────────────────────────────────
 
@@ -624,6 +626,11 @@ export const appRouter = router({
     mainCustomerInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getMainCustomerInvoiceEvents(input?.limit ?? 100)),
     mainCustomerInvoiceReadiness: adminProcedure.query(() => getMainCustomerInvoiceReadiness()),
+    warrantyAvisoEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getWarrantyEvents(input?.limit ?? 100)),
+    warrantyAvisoReadiness: adminProcedure.query(() => getWarrantyReadiness()),
+    previewWarrantyAviso: adminProcedure.input(z.object({ exactDealId: z.string().regex(/^\d+x\d{1,12}$/) }))
+      .query(({ input }) => previewWarrantyAviso(input.exactDealId)),
     depositInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getDepositInvoiceEvents(input?.limit ?? 100)),
     extraHireInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())

@@ -31,6 +31,7 @@ import MainCustomerInvoices from "./pages/MainCustomerInvoices";
 import DepositInvoices from "./pages/DepositInvoices";
 import FinalWeightAdjustments from "./pages/FinalWeightAdjustments";
 import ExtraHireInvoices from "./pages/ExtraHireInvoices";
+import WarrantyAviso from "./pages/WarrantyAviso";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -116,6 +117,9 @@ function AppRoutes() {
               </Route>
               <Route path="/extra-hire-invoices">
                 <AdminGuard><ExtraHireInvoices /></AdminGuard>
+              </Route>
+              <Route path="/warranty-aviso">
+                <AdminGuard><WarrantyAviso /></AdminGuard>
               </Route>
               <Route path="/operational-failures">
                 <AdminGuard><OperationalFailures /></AdminGuard>

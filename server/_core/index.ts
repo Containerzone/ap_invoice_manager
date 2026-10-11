@@ -17,6 +17,7 @@ import { registerMainCustomerInvoiceWebhook } from "../financialMainCustomerInvo
 import { registerDepositInvoiceWebhook } from "../financialDepositInvoiceWebhook";
 import { registerFinalWeightAdjustmentWebhooks } from "../financialFinalWeightAdjustmentWebhook";
 import { registerExtraHireInvoiceWebhook } from "../financialExtraHireInvoiceWebhook";
+import { registerWarrantyAvisoWebhook } from "../financialWarrantyAvisoWebhook";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -71,6 +72,8 @@ async function startServer() {
   registerFinalWeightAdjustmentWebhooks(app);
   // Event-driven Extra Hire only. No Heartbeat; flag AND exact approved policy are required.
   registerExtraHireInvoiceWebhook(app);
+  // Independent Warranty-only receiver, default-off before any evidence work.
+  registerWarrantyAvisoWebhook(app);
   // tRPC API
   app.use(
     "/api/trpc",

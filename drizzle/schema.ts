@@ -1502,3 +1502,32 @@ export const financialExtraHireInvoiceEvents = mysqlTable("financial_extra_hire_
   invoiceUnique: uniqueIndex("financial_extra_hire_invoice_claim_unique").on(table.claimedInvoiceNumber),
 }));
 export type FinancialExtraHireInvoiceEvent = typeof financialExtraHireInvoiceEvents.$inferSelect;
+
+// Warranty & Aviso: immutable AP-only evidence, authority, attempt and receipt entries.
+// Application never UPDATEs/DELETEs these rows and never imports warranty_documents.
+export const financialWarrantyAvisoEvents = mysqlTable("financial_warranty_aviso_events", {
+  id: int("id").autoincrement().primaryKey(),
+  eventKey: varchar("eventKey", { length: 160 }).notNull(),
+  claimKey: varchar("claimKey", { length: 128 }),
+  executionGroup: varchar("executionGroup", { length: 128 }),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "held", "reserved", "main_submitted", "main_receipt", "po_submitted", "po_receipt", "drafts_created", "reconciliation_required"] as const).notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }),
+  sourceMappingsHash: varchar("sourceMappingsHash", { length: 64 }),
+  addedServicesMappingHash: varchar("addedServicesMappingHash", { length: 64 }),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }),
+  sourceSnapshot: json("sourceSnapshot"),
+  xeroPreflight: json("xeroPreflight"),
+  proposal: json("proposal"),
+  authorisedPayload: json("authorisedPayload"),
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  approvedBy: int("approvedBy"),
+  receipt: json("receipt"),
+  holdReason: text("holdReason"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => ({
+  eventUnique: uniqueIndex("financial_warranty_aviso_event_unique").on(table.eventKey),
+  dealClaimUnique: uniqueIndex("financial_warranty_aviso_claim_unique").on(table.claimKey),
+}));
+export type FinancialWarrantyAvisoEvent = typeof financialWarrantyAvisoEvents.$inferSelect;

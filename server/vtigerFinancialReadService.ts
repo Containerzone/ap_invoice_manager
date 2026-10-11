@@ -122,6 +122,7 @@ export async function describeVtigerFinancialModule(moduleName: string): Promise
 /** Authenticated metadata-only describe; labels/picklist values come from VTiger, not guessed field aliases. */
 export async function describeVtigerFinancialModuleFields(moduleName: string): Promise<{
   name: string;
+  idPrefix?: string;
   fields: Array<{ name: string; label: string; type: Record<string, unknown>; mandatory: boolean }>;
 }> {
   const normalized = moduleName.trim();
@@ -132,13 +133,14 @@ export async function describeVtigerFinancialModuleFields(moduleName: string): P
   const challenge = await vtigerRequest<{ token: string }>({ operation: "getchallenge", username });
   const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
   const login = await vtigerLogin<{ sessionName: string }>({ operation: "login", username, accessKey: accessKeyHash });
-  const described = await vtigerRequest<{ name?: string; fields?: Array<{ name?: string; label?: string; type?: Record<string, unknown>; mandatory?: boolean }> }>({
+  const described = await vtigerRequest<{ name?: string; idPrefix?: string; fields?: Array<{ name?: string; label?: string; type?: Record<string, unknown>; mandatory?: boolean }> }>({
     operation: "describe",
     elementType: normalized,
     sessionName: login.sessionName,
   });
   return {
     name: typeof described?.name === "string" ? described.name : normalized,
+    ...(described?.idPrefix ? { idPrefix: String(described.idPrefix) } : {}),
     fields: (described?.fields ?? []).filter((field): field is typeof field & { name: string } => typeof field?.name === "string" && Boolean(field.name))
       .map((field) => ({ name: field.name, label: field.label ?? "", type: field.type ?? {}, mandatory: field.mandatory === true })),
   };
