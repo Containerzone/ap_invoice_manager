@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { planFinancialPostSuccessActions } from "./financialPostSuccessPlan";
+afterEach(() => vi.unstubAllEnvs());
 
 const document = {
   documentFamily: "customer_invoice" as const,
@@ -49,6 +50,7 @@ describe("document-specific financial post-success planning", () => {
   });
 
   it("sets the Extra Hire end date to a 30-day calendar extension", () => {
+    vi.stubEnv("FINANCIAL_EXTRA_HIRE_POST_SUCCESS_ENABLED", "true");
     expect(planFinancialPostSuccessActions({
       workflowType: "extra_hire",
       document,

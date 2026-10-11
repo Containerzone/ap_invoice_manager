@@ -1,4 +1,5 @@
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
+import { extendExtraHireDate, extraHireDate } from "./financialExtraHireInvoiceRules";
 
 export type PlannedFinancialPostSuccessAction = {
   actionType: "vtiger_note" | "vtiger_task" | "vtiger_hire_end_update";
@@ -74,14 +75,16 @@ export function planFinancialPostSuccessActions(input: {
       return actions;
     }
     case "extra_hire": {
-      const currentHireEnd = asDate(input.sourceData.hireEndDate);
+      if (process.env.FINANCIAL_EXTRA_HIRE_POST_SUCCESS_ENABLED !== "true") return [];
+      const currentHireEnd = extraHireDate(input.sourceData.hireEndDate);
       if (!currentHireEnd) return [];
       return [{
         actionType: "vtiger_hire_end_update",
         safePayloadSummary: {
           ...common,
           purpose: "extra_hire_end_date_update",
-          nextHireEndDate: isoDate(plusCalendarDays(currentHireEnd, 30)),
+          previousHireEndDate: currentHireEnd,
+          nextHireEndDate: extendExtraHireDate(currentHireEnd),
         },
       }];
     }

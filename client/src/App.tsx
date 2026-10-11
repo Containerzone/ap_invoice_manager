@@ -30,6 +30,7 @@ import ContainerCustomerSalePos from "./pages/ContainerCustomerSalePos";
 import MainCustomerInvoices from "./pages/MainCustomerInvoices";
 import DepositInvoices from "./pages/DepositInvoices";
 import FinalWeightAdjustments from "./pages/FinalWeightAdjustments";
+import ExtraHireInvoices from "./pages/ExtraHireInvoices";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -112,6 +113,9 @@ function AppRoutes() {
               </Route>
               <Route path="/final-weight-adjustments">
                 <AdminGuard><FinalWeightAdjustments /></AdminGuard>
+              </Route>
+              <Route path="/extra-hire-invoices">
+                <AdminGuard><ExtraHireInvoices /></AdminGuard>
               </Route>
               <Route path="/operational-failures">
                 <AdminGuard><OperationalFailures /></AdminGuard>

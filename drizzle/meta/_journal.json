@@ -309,6 +309,13 @@
       "when": 1791716557645,
       "tag": "0043_glamorous_vampiro",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "5",
+      "when": 1791717964087,
+      "tag": "0044_curved_baron_strucker",
+      "breakpoints": true
     }
   ]
 }

@@ -151,6 +151,13 @@ export async function runFinancialPostSuccessAction(actionId: number): Promise<{
   if (!action) throw new Error("Financial post-success action was not found.");
   if (action.status === "succeeded") return { outcome: "succeeded", message: "Post-success action was already completed." };
   if (action.status === "reconciliation_required") return { outcome: "failed", message: "Post-success action requires manual reconciliation." };
+  if (action.workflowType === "extra_hire" || action.actionType === "vtiger_hire_end_update") {
+    // A dedicated flag is necessary but not sufficient: conditional current-source writeback
+    // and immutable readback-linked queue authorization are not released in this readiness migration.
+    return { outcome: "failed", message: process.env.FINANCIAL_EXTRA_HIRE_POST_SUCCESS_ENABLED !== "true"
+      ? "Extra Hire dedicated post-success gate is disabled; no CRM action claimed or written."
+      : "Extra Hire post-success remains held pending a separately reviewed conditional-write implementation." };
+  }
 
   const claimed = await claimFinancialPostSuccessAction(actionId);
   if (!claimed) return { outcome: "failed", message: "Post-success action is already running, completed, or unavailable for retry." };

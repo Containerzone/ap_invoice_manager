@@ -364,7 +364,8 @@ export async function readBackFinancialDraft(input: {
       return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0,10) : null;
     };
     if (document.Contact?.ContactID !== expected.partySourceId || document.LineAmountTypes !== (expected.gstTreatment === "GST_INCLUSIVE" ? "Inclusive" : "Exclusive") ||
-      (expected.sourceWorkflow === "deposit_invoice" && (document.CurrencyCode !== "AUD" || Math.abs(Number(document.TotalTax) - expected.taxAmount) > 0.01 || !Number.isFinite(Number(document.TotalTax)))) ||
+      (["deposit_invoice", "extra_hire"].includes(expected.sourceWorkflow ?? "") && (document.CurrencyCode !== "AUD" || Math.abs(Number(document.TotalTax) - expected.taxAmount) > 0.01 || !Number.isFinite(Number(document.TotalTax)))) ||
+      (expected.sourceWorkflow === "extra_hire" && (documentNumber !== expectedNumber || document.Reference !== expected.reference || document.DueDate || document.DueDateString)) ||
       (expected.documentFamily === "customer_invoice" && document.Type !== "ACCREC") ||
       (expected.issueDate && dateOnly(document.DateString ?? document.Date) !== expected.issueDate.toISOString().slice(0,10)) ||
       (expected.dueDate && dateOnly(document.DueDateString ?? document.DueDate) !== expected.dueDate.toISOString().slice(0,10)) ||
@@ -372,7 +373,9 @@ export async function readBackFinancialDraft(input: {
       Math.abs(Number(document.SubTotal) - expected.subtotal) > 0.01 || Math.abs(Number(document.Total) - expected.total) > 0.01 ||
       lines.length !== expected.lineItems.length || lines.some((line: any, index: number) => {
         const wanted = expected.lineItems[index]!;
-        return (expected.sourceWorkflow === "deposit_invoice" && line.ItemCode !== wanted.itemCode) || line.Description !== wanted.description || String(line.AccountCode) !== String(wanted.accountCode) ||
+        return (["deposit_invoice", "extra_hire"].includes(expected.sourceWorkflow ?? "") && line.ItemCode !== wanted.itemCode) ||
+          (expected.sourceWorkflow === "extra_hire" && (!Number.isFinite(Number(line.LineAmount)) || Math.abs(Number(line.LineAmount) - wanted.lineAmount) > 0.001 || !Number.isFinite(Number(line.TaxAmount)) || Math.abs(Number(line.TaxAmount) - expected.taxAmount) > 0.01)) ||
+          line.Description !== wanted.description || String(line.AccountCode) !== String(wanted.accountCode) ||
           !Number.isFinite(Number(line.UnitAmount)) ||
           Number(line.Quantity) !== wanted.quantity || Math.abs(Number(line.UnitAmount) - wanted.unitAmount) > 0.001 ||
           line.TaxType !== (expected.documentFamily === "purchase_order" ? "INPUT" : "OUTPUT");

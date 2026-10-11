@@ -1,6 +1,7 @@
 import {
   assertFinancialDraftWriteAuthorised,
   executeFinancialDraftWrite,
+  prepareFinancialDraftPayload,
   type FinancialDraftPayload,
   type FinancialDraftWriteResult,
   type FinancialWriteAuthorisation,
@@ -25,6 +26,7 @@ import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCu
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
 import { verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
+import { verifyExtraHireAutomaticWriteAccess } from "./financialExtraHireInvoiceDb";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export type GuardedFinancialWriterCommand = {
@@ -69,6 +71,16 @@ export async function executeGuardedFinancialWriterCommand(
 ): Promise<GuardedFinancialWriterOutcome> {
   // Reject before writing any local execution state or making any Xero call.
   assertFinancialDraftWriteAuthorised(command.authorisation, { requireExecutionId: false });
+  if (command.workflowType === "extra_hire" || command.authorisation.extraHireAutomaticEventId !== undefined) {
+    if (command.workflowType !== "extra_hire" || command.proposedAction !== "create_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
+      command.preparedBy !== command.authorisation.extraHireApprovedBy || !command.expectedDraftDocument || command.expectedDraftDocument.sourceWorkflow !== "extra_hire" ||
+      command.expectedDraftDocument.documentType !== "extra_hire" || command.expectedFinalWeightDraft) throw new Error("Extra Hire execution permits only its isolated Draft with exact readback; CRM post-success queue/write remains separately held, regardless of global/storage flags.");
+    const expectedPayload = prepareFinancialDraftPayload(command.expectedDraftDocument, "extra-hire-readback-binding");
+    (expectedPayload.body.Invoices as any[])[0].CurrencyCode = "AUD";
+    if (financialSha256(expectedPayload.body) !== financialSha256(command.payload.body)) throw new Error("Extra Hire exact readback proposal must match the immutable authorized POST body.");
+    await verifyExtraHireAutomaticWriteAccess({ eventId: command.authorisation.extraHireAutomaticEventId!, releaseKey: command.authorisation.extraHireReleaseKey!, payload: command.payload, preparedBy: command.preparedBy });
+  }
+  if (/^INV-\d+-EH/i.test(command.payload.documentNumber) && command.authorisation.extraHireAutomaticEventId === undefined) throw new Error("Extra Hire EH series cannot be executed by a generic or other-family command.");
   if (command.authorisation.finalWeightAutomaticEventId !== undefined) {
     if (command.workflowType !== "final_weight_adjustment" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
       command.preparedBy !== command.authorisation.finalWeightApprovedBy || !command.expectedFinalWeightDraft || command.expectedDraftDocument ||
@@ -199,6 +211,7 @@ export async function executeGuardedFinancialWriterCommand(
     }
     if (command.sourceRecordId) {
       for (const action of command.postSuccessPlan ?? []) {
+        if ((command.workflowType === "extra_hire" || action.actionType === "vtiger_hire_end_update") && process.env.FINANCIAL_EXTRA_HIRE_POST_SUCCESS_ENABLED !== "true") continue;
         await createFinancialPostSuccessAction({
           executionId: prepared.execution.id,
           workflowType: command.workflowType,

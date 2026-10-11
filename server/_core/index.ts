@@ -16,6 +16,7 @@ import { registerCustomerSalePurchaseWebhook } from "../financialCustomerSalePur
 import { registerMainCustomerInvoiceWebhook } from "../financialMainCustomerInvoiceWebhook";
 import { registerDepositInvoiceWebhook } from "../financialDepositInvoiceWebhook";
 import { registerFinalWeightAdjustmentWebhooks } from "../financialFinalWeightAdjustmentWebhook";
+import { registerExtraHireInvoiceWebhook } from "../financialExtraHireInvoiceWebhook";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -68,6 +69,8 @@ async function startServer() {
   registerDepositInvoiceWebhook(app);
   // Independent dual final-weight routes: default off, existing Draft amendment only.
   registerFinalWeightAdjustmentWebhooks(app);
+  // Event-driven Extra Hire only. No Heartbeat; flag AND exact approved policy are required.
+  registerExtraHireInvoiceWebhook(app);
   // tRPC API
   app.use(
     "/api/trpc",

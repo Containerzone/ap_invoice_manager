@@ -1461,3 +1461,44 @@ export const financialWebhookEvents = mysqlTable("financial_webhook_events", {
 
 export type FinancialWebhookEvent = typeof financialWebhookEvents.$inferSelect;
 export type InsertFinancialWebhookEvent = typeof financialWebhookEvents.$inferInsert;
+
+// Extra Hire: immutable current receiver evidence, NEVER populated from extra_hire_runs shadow rows.
+// Evidence columns remain insert-only; only one-way lifecycle/claim/receipt columns are updated.
+export const financialExtraHireInvoiceEvents = mysqlTable("financial_extra_hire_invoice_events", {
+  id: int("id").autoincrement().primaryKey(),
+  evidenceKey: varchar("evidenceKey", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  sourceHireEndDate: varchar("sourceHireEndDate", { length: 10 }),
+  ordinal: int("ordinal"),
+  proposedInvoiceNumber: varchar("proposedInvoiceNumber", { length: 128 }),
+  customerName: varchar("customerName", { length: 255 }),
+  sourceRefreshedAt: timestamp("sourceRefreshedAt"),
+  preflightAt: timestamp("preflightAt").notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }),
+  sourceSnapshot: json("sourceSnapshot").notNull(),
+  proposal: json("proposal"),
+  xeroPreflight: json("xeroPreflight"),
+  claimedPeriodKey: varchar("claimedPeriodKey", { length: 160 }),
+  claimedOrdinalKey: varchar("claimedOrdinalKey", { length: 160 }),
+  claimedInvoiceNumber: varchar("claimedInvoiceNumber", { length: 128 }),
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "held", "reserved", "submitted", "drafts_created", "reconciliation_required"] as const).default("held").notNull(),
+  holdReason: text("holdReason"),
+  postconditionHold: text("postconditionHold").notNull(),
+  executionId: int("executionId"),
+  xeroInvoiceId: varchar("xeroInvoiceId", { length: 128 }),
+  submittedAt: timestamp("submittedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => ({
+  evidenceUnique: uniqueIndex("financial_extra_hire_evidence_unique").on(table.evidenceKey),
+  periodUnique: uniqueIndex("financial_extra_hire_period_claim_unique").on(table.claimedPeriodKey),
+  ordinalUnique: uniqueIndex("financial_extra_hire_ordinal_claim_unique").on(table.claimedOrdinalKey),
+  invoiceUnique: uniqueIndex("financial_extra_hire_invoice_claim_unique").on(table.claimedInvoiceNumber),
+}));
+export type FinancialExtraHireInvoiceEvent = typeof financialExtraHireInvoiceEvents.$inferSelect;

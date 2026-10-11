@@ -15,6 +15,7 @@ import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCu
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
 import { consumeFinalWeightPayload, verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
 import type { FinalWeightDirection } from "./financialFinalWeightAdjustmentRules";
+import { consumeExtraHirePayload, verifyExtraHireAutomaticWriteAccess } from "./financialExtraHireInvoiceDb";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -93,6 +94,10 @@ export type FinancialWriteAuthorisation = {
   finalWeightDirection?: FinalWeightDirection;
   finalWeightReleaseKey?: string;
   finalWeightApprovedBy?: number;
+  /** Independent current-source Extra Hire claim; never available to a generic bridge. */
+  extraHireAutomaticEventId?: number;
+  extraHireReleaseKey?: string;
+  extraHireApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -270,6 +275,19 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.workflowType === "extra_hire" || context.extraHireAutomaticEventId !== undefined) {
+    if (process.env.FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "extra_hire" ||
+      !Number.isInteger(context.extraHireAutomaticEventId) || Number(context.extraHireAutomaticEventId) <= 0 || !context.extraHireReleaseKey ||
+      !Number.isInteger(context.extraHireApprovedBy) || Number(context.extraHireApprovedBy) <= 0 || context.approvalReference !== context.extraHireReleaseKey ||
+      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
+      [context.finalWeightAutomaticEventId, context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId,
+        context.assetPurchaseAutomaticEventId, context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId,
+        context.storageAutomaticEventId, context.storagePilotEventId].some(value => value !== undefined)) {
+      throw new FinancialWriteDisabledError("Extra Hire independent Draft gate is invalid; global/storage/other invoice gates cannot enable it.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) throw new FinancialWriteDisabledError("Extra Hire execution ledger is required.");
+    return;
+  }
   if (context.workflowType === "final_weight_adjustment" || context.finalWeightAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "final_weight_adjustment" ||
       !Number.isInteger(context.finalWeightAutomaticEventId) || Number(context.finalWeightAutomaticEventId) <= 0 ||
@@ -407,6 +425,22 @@ export async function executeFinancialDraftWrite(
   context: FinancialWriteAuthorisation,
 ): Promise<FinancialDraftWriteResult> {
   assertFinancialDraftWriteAuthorised(context);
+  if (/^INV-\d+-EH/i.test(payload.documentNumber) && context.extraHireAutomaticEventId === undefined) throw new FinancialWriteDisabledError("Extra Hire EH series requires its independent event claim; another family cannot create or amend it.");
+  if (context.extraHireAutomaticEventId !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    const line = row && Array.isArray(row.LineItems) && row.LineItems.length === 1 ? row.LineItems[0] : null;
+    if (payload.method !== "POST" || payload.endpoint !== "/Invoices" || payload.documentFamily !== "customer_invoice" || payload.expectedXeroDocumentId ||
+      !/^INV-\d{1,12}-EH[1-9]\d*$/.test(payload.documentNumber) || Object.keys(payload.body).length !== 1 || !row || row.InvoiceID || row.InvoiceNumber !== payload.documentNumber ||
+      row.Type !== "ACCREC" || row.Status !== "DRAFT" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" || !row.Contact?.ContactID ||
+      !row.Date || row.DueDate || !row.Reference || !line || !["20' Hire", "40' Hire"].includes(line.ItemCode) || line.Quantity !== 4.286 ||
+      typeof line.UnitAmount !== "number" || !Number.isFinite(line.UnitAmount) || line.UnitAmount <= 0 || !String(line.AccountCode ?? "").trim() || line.TaxType !== "OUTPUT" ||
+      line.Description !== `${line.ItemCode.replace(" Hire", "")} Extra Hire — ${row.Reference}`) {
+      throw new FinancialWriteDisabledError("Extra Hire permits only one exact EH-series AUD Exclusive Draft ACCREC with a 4.286-week current hire item line; other creates/updates/POs are rejected.");
+    }
+    await verifyExtraHireAutomaticWriteAccess({ eventId: context.extraHireAutomaticEventId, releaseKey: context.extraHireReleaseKey!, preparedBy: context.extraHireApprovedBy!, payload });
+    await consumeExtraHirePayload(context.extraHireAutomaticEventId, context.executionId!);
+  }
   if (context.finalWeightAutomaticEventId !== undefined) {
     const rows = payload.body.Invoices;
     const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
@@ -541,7 +575,7 @@ export async function executeFinancialDraftWrite(
     return payload.method === "POST"
       ? axios.post(url, payload.body, { headers })
       : axios.put(url, payload.body, { headers });
-  }, { retryTransientGatewayFailures: context.finalWeightAutomaticEventId === undefined });
+  }, { retryTransientGatewayFailures: context.finalWeightAutomaticEventId === undefined && context.extraHireAutomaticEventId === undefined });
   const result = responseDocument(payload, response.data);
   return {
     xeroDocumentId: result.returnedId,
