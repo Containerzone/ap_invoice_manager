@@ -39,6 +39,14 @@ describe("narrow VTiger Deal storage webhook", () => {
     await handler({ header: () => "test-storage-secret", body: { event: "deal.updated", record_id: "5x123" } }, res);
     expect(body.status).toBe(400);
   });
+  it("accepts the existing authenticated VTiger id/dryRun body and ignores dryRun as a financial instruction", async () => {
+    const { processInitialLoadedStorage } = await import("./financialInitialStorageService");
+    vi.mocked(processInitialLoadedStorage).mockResolvedValueOnce({ ok: false, status: "held", dealNumber: "D123", location: "origin", warning: "Gate off." });
+    const { body, res } = response();
+    await handler({ header: () => "test-storage-secret", body: { id: "5x123", dryRun: true } }, res);
+    expect(body.status).toBe(202);
+    expect(processInitialLoadedStorage).toHaveBeenCalledWith("5x123");
+  });
   it("reports a safely held Deal without calling any Xero writer itself", async () => {
     const { processInitialLoadedStorage } = await import("./financialInitialStorageService");
     vi.mocked(processInitialLoadedStorage).mockResolvedValueOnce({ ok: false, status: "held", dealNumber: "D123", location: "origin", warning: "Exact pilot approval required." });
@@ -73,6 +81,14 @@ describe("narrow VTiger Deal storage webhook", () => {
     await finalHandler({ header: () => "test-storage-secret", body: { record_id: "5x123", event: "deal.storage-finalised" } }, second.res);
     expect(second.body.status).toBe(400);
     expect(lifecycle.processStorageFinalisation).not.toHaveBeenCalled();
+  });
+  it("accepts the existing id/dryRun finalisation body when the mandatory location branch is retained", async () => {
+    const lifecycle = await import("./financialStorageLifecycleService");
+    vi.mocked(lifecycle.processStorageFinalisation).mockResolvedValueOnce({ ok: true, status: "duplicate_replay", eventId: 7 });
+    const { body, res } = response();
+    await finalHandler({ header: () => "test-storage-secret", body: { id: "5x123", dryRun: true, storageLocation: "destination" } }, res);
+    expect(body.status).toBeUndefined();
+    expect(lifecycle.processStorageFinalisation).toHaveBeenCalledWith("5x123", "destination");
   });
   it("forwards only the exact record/location and holds rejected release without exposing upstream data", async () => {
     const lifecycle = await import("./financialStorageLifecycleService");

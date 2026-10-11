@@ -6,6 +6,14 @@ import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
 export const INITIAL_STORAGE_WEBHOOK_PATH = "/api/webhooks/vtiger/deal-storage";
 
+/** The pre-existing VTiger action sends `id` and `dryRun`; the AP route owns the
+ * event meaning and never trusts any supplied financial values or dry-run flag. */
+function storageRecordId(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const value = (body as Record<string, unknown>).record_id ?? (body as Record<string, unknown>).id;
+  return typeof value === "string" && /^\d+x\d+$/.test(value) ? value : null;
+}
+
 export function registerInitialLoadedStorageWebhook(app: Express): void {
   app.post(INITIAL_STORAGE_WEBHOOK_PATH, async (req: Request, res: Response) => {
     const configured = process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim();
@@ -14,9 +22,9 @@ export function registerInitialLoadedStorageWebhook(app: Express): void {
     const a = Buffer.from(configured);
     const b = Buffer.from(supplied);
     if (a.length !== b.length || !timingSafeEqual(a, b)) return res.status(401).json({ ok: false, error: "Unauthorized storage webhook." });
-    const recordId = req.body?.record_id;
-    if (req.body?.event !== "deal.storage-stage-changed" || typeof recordId !== "string" || !/^\d+x\d+$/.test(recordId)) {
-      return res.status(400).json({ ok: false, error: "A VTiger Deal record_id and storage-stage event are required." });
+    const recordId = storageRecordId(req.body);
+    if ((req.body?.event !== undefined && req.body.event !== "deal.storage-stage-changed") || !recordId) {
+      return res.status(400).json({ ok: false, error: "A VTiger Deal record ID is required for storage activation." });
     }
     try {
       const result = process.env.FINANCIAL_STORAGE_AUTOMATIC_ENABLED === "true"
@@ -41,8 +49,8 @@ export function registerInitialLoadedStorageWebhook(app: Express): void {
     const supplied = req.header("x-financial-webhook-secret")?.trim() ?? "";
     const a = Buffer.from(configured); const b = Buffer.from(supplied);
     if (a.length !== b.length || !timingSafeEqual(a,b)) return res.status(401).json({ ok: false, error: "Unauthorized storage webhook." });
-    const id = req.body?.record_id; const location = req.body?.storageLocation;
-    if (req.body?.event !== "deal.storage-finalised" || typeof id !== "string" || !/^5x\d+$/.test(id) || !["origin", "destination"].includes(location)) return res.status(400).json({ ok: false, error: "Exact Deal ID, finalisation event and origin/destination storageLocation are required." });
+    const id = storageRecordId(req.body); const location = req.body?.storageLocation;
+    if ((req.body?.event !== undefined && req.body.event !== "deal.storage-finalised") || !id || !["origin", "destination"].includes(location)) return res.status(400).json({ ok: false, error: "Exact Deal ID and origin/destination storageLocation are required for storage finalisation." });
     try { return res.json(await processStorageFinalisation(id, location)); }
     catch {
       reportWorkflowFailureSafely({ workflowType: "storage-finalisation", recordKey: `storage-finalisation:${id}:${location}`, title: "Storage finalisation held", errorMessage: "Storage finalisation requires source/release or document reconciliation.", details: { recordId: id, location }, severity: "error" });
