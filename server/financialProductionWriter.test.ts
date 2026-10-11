@@ -52,12 +52,15 @@ function completeAuthorisation(overrides: Partial<Parameters<typeof assertFinanc
 describe("guarded financial production writer", () => {
   const originalEnabled = process.env.FINANCIAL_LIVE_WRITES_ENABLED;
   const originalForHireEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED;
+  const originalCustomerSaleEnabled = process.env.FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED;
 
   afterEach(() => {
     if (originalEnabled === undefined) delete process.env.FINANCIAL_LIVE_WRITES_ENABLED;
     else process.env.FINANCIAL_LIVE_WRITES_ENABLED = originalEnabled;
     if (originalForHireEnabled === undefined) delete process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED;
     else process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED = originalForHireEnabled;
+    if (originalCustomerSaleEnabled === undefined) delete process.env.FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED;
+    else process.env.FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED = originalCustomerSaleEnabled;
   });
 
   it("prepares a deterministic Draft-only GST-exclusive purchase-order shape without transmitting it", () => {
@@ -164,6 +167,22 @@ describe("guarded financial production writer", () => {
     expect(() => assertFinancialDraftWriteAuthorised({ ...forHire, workflowType: "storage_activation" })).toThrow(/For Hire automatic release/i);
     expect(() => assertFinancialDraftWriteAuthorised({ ...forHire, forHireAutomaticEventId: 0 })).toThrow(/For Hire automatic release/i);
     expect(() => assertFinancialDraftWriteAuthorised({ ...forHire, forHireReleaseKey: undefined })).toThrow(/For Hire automatic release/i);
+    expect(() => assertFinancialDraftWriteAuthorised(completeAuthorisation())).toThrow(FinancialWriteDisabledError);
+  });
+
+  it("permits only the isolated Customer Sale standing-release context while leaving other families locked", () => {
+    delete process.env.FINANCIAL_LIVE_WRITES_ENABLED;
+    process.env.FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED = "true";
+    const customerSale = completeAuthorisation({
+      workflowType: "customer_sale_purchase",
+      customerSalePurchaseAutomaticEventId: 52,
+      customerSalePurchaseReleaseKey: "CUSTOMER-SALE-UNIT-TEST",
+      customerSalePurchaseApprovedBy: 7,
+    });
+    expect(() => assertFinancialDraftWriteAuthorised(customerSale)).not.toThrow();
+    expect(() => assertFinancialDraftWriteAuthorised({ ...customerSale, workflowType: "asset_purchase" })).toThrow(/Customer Sale purchase automatic release/i);
+    expect(() => assertFinancialDraftWriteAuthorised({ ...customerSale, customerSalePurchaseAutomaticEventId: 0 })).toThrow(/Customer Sale purchase automatic release/i);
+    expect(() => assertFinancialDraftWriteAuthorised({ ...customerSale, customerSalePurchaseReleaseKey: undefined })).toThrow(/Customer Sale purchase automatic release/i);
     expect(() => assertFinancialDraftWriteAuthorised(completeAuthorisation())).toThrow(FinancialWriteDisabledError);
   });
 

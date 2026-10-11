@@ -20,6 +20,7 @@ import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageD
 import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
 import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
 import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
+import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 
@@ -68,6 +69,14 @@ export async function executeGuardedFinancialWriterCommand(
     await verifyAssetPurchaseAutomaticWriteAccess({
       eventId: command.authorisation.assetPurchaseAutomaticEventId,
       releaseKey: command.authorisation.assetPurchaseReleaseKey!,
+      payload: command.payload,
+      preparedBy: command.preparedBy,
+    });
+  }
+  if (command.authorisation.customerSalePurchaseAutomaticEventId !== undefined) {
+    await verifyCustomerSalePurchaseAutomaticWriteAccess({
+      eventId: command.authorisation.customerSalePurchaseAutomaticEventId,
+      releaseKey: command.authorisation.customerSalePurchaseReleaseKey!,
       payload: command.payload,
       preparedBy: command.preparedBy,
     });

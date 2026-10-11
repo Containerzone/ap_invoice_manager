@@ -10,6 +10,7 @@ import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageD
 import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
 import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
 import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
+import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -71,6 +72,10 @@ export type FinancialWriteAuthorisation = {
   assetPurchaseAutomaticEventId?: number;
   assetPurchaseReleaseKey?: string;
   assetPurchaseApprovedBy?: number;
+  /** Isolated Container Control Customer Sale purchase event; never available to other families. */
+  customerSalePurchaseAutomaticEventId?: number;
+  customerSalePurchaseReleaseKey?: string;
+  customerSalePurchaseApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -259,6 +264,17 @@ export function assertFinancialDraftWriteAuthorised(
     }
     return;
   }
+  if (context.customerSalePurchaseAutomaticEventId !== undefined) {
+    if (process.env.FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "customer_sale_purchase" ||
+      !Number.isInteger(context.customerSalePurchaseAutomaticEventId) || context.customerSalePurchaseAutomaticEventId <= 0 || !context.customerSalePurchaseReleaseKey || !context.customerSalePurchaseApprovedBy ||
+      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete) {
+      throw new FinancialWriteDisabledError("Customer Sale purchase automatic release gate is not valid.");
+    }
+    if (options.requireExecutionId !== false && (!context.executionId || context.executionId <= 0)) {
+      throw new FinancialWriteDisabledError("Customer Sale purchase execution ledger is required.");
+    }
+    return;
+  }
   if (context.forHireAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED !== "true" || !["initial_for_hire", "recurring_for_hire"].includes(context.workflowType) ||
       !Number.isInteger(context.forHireAutomaticEventId) || context.forHireAutomaticEventId <= 0 || !context.forHireReleaseKey || !context.forHireApprovedBy ||
@@ -350,6 +366,21 @@ export async function executeFinancialDraftWrite(
       eventId: context.assetPurchaseAutomaticEventId,
       releaseKey: context.assetPurchaseReleaseKey!,
       preparedBy: context.assetPurchaseApprovedBy!,
+      payload,
+    });
+  }
+  if (context.customerSalePurchaseAutomaticEventId !== undefined) {
+    const rows = payload.body.PurchaseOrders;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (payload.method !== "POST" || payload.endpoint !== "/PurchaseOrders" || payload.documentFamily !== "purchase_order" || payload.expectedXeroDocumentId ||
+      !row || row.Status !== "DRAFT" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" ||
+      !Array.isArray(row.LineItems) || row.LineItems.length !== 1 || !row.LineItems.every((line: any) => String(line.AccountCode) === "322")) {
+      throw new FinancialWriteDisabledError("Customer Sale automatic release permits only one exact AUD Draft Purchase Order with account 322.");
+    }
+    await verifyCustomerSalePurchaseAutomaticWriteAccess({
+      eventId: context.customerSalePurchaseAutomaticEventId,
+      releaseKey: context.customerSalePurchaseReleaseKey!,
+      preparedBy: context.customerSalePurchaseApprovedBy!,
       payload,
     });
   }
