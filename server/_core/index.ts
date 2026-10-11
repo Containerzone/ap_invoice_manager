@@ -14,6 +14,7 @@ import { registerForHireWebhook } from "../financialForHireWebhook";
 import { registerAssetPurchaseWebhook } from "../financialAssetPurchaseWebhook";
 import { registerCustomerSalePurchaseWebhook } from "../financialCustomerSalePurchaseWebhook";
 import { registerMainCustomerInvoiceWebhook } from "../financialMainCustomerInvoiceWebhook";
+import { registerDepositInvoiceWebhook } from "../financialDepositInvoiceWebhook";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -62,6 +63,8 @@ async function startServer() {
   // Receiver is mounted for a dedicated Main Customer Invoice action only. It
   // remains held before any Deal/Quote read or Xero call until separately released.
   registerMainCustomerInvoiceWebhook(app);
+  // Deposit is an isolated named-Deal receiver; held before any read/write by default.
+  registerDepositInvoiceWebhook(app);
   // tRPC API
   app.use(
     "/api/trpc",

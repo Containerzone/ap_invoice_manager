@@ -882,6 +882,42 @@ export const financialMainCustomerInvoiceEvents = mysqlTable("financial_main_cus
 export type FinancialMainCustomerInvoiceEvent = typeof financialMainCustomerInvoiceEvents.$inferSelect;
 export type InsertFinancialMainCustomerInvoiceEvent = typeof financialMainCustomerInvoiceEvents.$inferInsert;
 
+// Deposit evidence is append-only; only reservation/execution state can change.
+// Nullable unique claim keys prevent any second write for a Deal or exact -D number.
+export const financialDepositInvoiceEvents = mysqlTable("financial_deposit_invoice_events", {
+  id: int("id").autoincrement().primaryKey(),
+  evidenceKey: varchar("evidenceKey", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  proposedInvoiceNumber: varchar("proposedInvoiceNumber", { length: 128 }).notNull(),
+  customerVtigerId: varchar("customerVtigerId", { length: 128 }),
+  customerName: varchar("customerName", { length: 255 }),
+  sourceRefreshedAt: timestamp("sourceRefreshedAt"),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }),
+  sourceSnapshot: json("sourceSnapshot").notNull(),
+  proposal: json("proposal"),
+  xeroPreflight: json("xeroPreflight"),
+  postconditionHold: text("postconditionHold").notNull(),
+  claimedDealId: varchar("claimedDealId", { length: 128 }),
+  claimedInvoiceNumber: varchar("claimedInvoiceNumber", { length: 128 }),
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "held", "reserved", "drafts_created", "reconciliation_required"] as const).default("held").notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  xeroInvoiceId: varchar("xeroInvoiceId", { length: 128 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  evidenceUnique: uniqueIndex("financial_deposit_invoice_evidence_unique").on(table.evidenceKey),
+  claimedDealUnique: uniqueIndex("financial_deposit_invoice_claimed_deal_unique").on(table.claimedDealId),
+  claimedNumberUnique: uniqueIndex("financial_deposit_invoice_claimed_number_unique").on(table.claimedInvoiceNumber),
+}));
+export type FinancialDepositInvoiceEvent = typeof financialDepositInvoiceEvents.$inferSelect;
+
 export const extraHireRuns = mysqlTable("extra_hire_runs", {
   id: int("id").autoincrement().primaryKey(),
   workflowRunId: int("workflowRunId"),

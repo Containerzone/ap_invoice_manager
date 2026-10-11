@@ -22,6 +22,7 @@ import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
 import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
+import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 
@@ -66,6 +67,17 @@ export async function executeGuardedFinancialWriterCommand(
 ): Promise<GuardedFinancialWriterOutcome> {
   // Reject before writing any local execution state or making any Xero call.
   assertFinancialDraftWriteAuthorised(command.authorisation, { requireExecutionId: false });
+  if ((command.workflowType === "deposit_invoice" || /^INV-\d+-D$/i.test(command.payload.documentNumber)) && command.authorisation.depositInvoiceAutomaticEventId === undefined) {
+    throw new Error("Deposit commands and exact -D documents require the independent Deposit event, not a generic or other-family approval.");
+  }
+  if (command.authorisation.depositInvoiceAutomaticEventId !== undefined) {
+    if (command.workflowType !== "deposit_invoice" || command.proposedAction !== "create_draft" || command.postSuccessPlan?.length ||
+      command.preparedBy !== command.authorisation.depositInvoiceApprovedBy || !command.expectedDraftDocument || command.expectedDraftDocument.sourceWorkflow !== "deposit_invoice") {
+      throw new Error("Deposit execution cannot amend a main invoice, execute another family, or queue CRM post-success changes.");
+    }
+    await verifyDepositInvoiceAutomaticWriteAccess({ eventId: command.authorisation.depositInvoiceAutomaticEventId,
+      releaseKey: command.authorisation.depositInvoiceReleaseKey!, payload: command.payload, preparedBy: command.preparedBy });
+  }
   if (command.authorisation.mainCustomerInvoiceAutomaticEventId !== undefined) {
     await verifyMainCustomerInvoiceAutomaticWriteAccess({
       eventId: command.authorisation.mainCustomerInvoiceAutomaticEventId,

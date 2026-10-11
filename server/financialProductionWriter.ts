@@ -12,6 +12,7 @@ import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
 import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
+import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -81,6 +82,10 @@ export type FinancialWriteAuthorisation = {
   mainCustomerInvoiceAutomaticEventId?: number;
   mainCustomerInvoiceReleaseKey?: string;
   mainCustomerInvoiceApprovedBy?: number;
+  /** Dedicated Deposit release only; the generic all-family gate cannot enable it. */
+  depositInvoiceAutomaticEventId?: number;
+  depositInvoiceReleaseKey?: string;
+  depositInvoiceApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -258,6 +263,18 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.workflowType === "deposit_invoice" || context.depositInvoiceAutomaticEventId !== undefined) {
+    if (process.env.FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "deposit_invoice" ||
+      !Number.isInteger(context.depositInvoiceAutomaticEventId) || Number(context.depositInvoiceAutomaticEventId) <= 0 || !context.depositInvoiceReleaseKey ||
+      !Number.isInteger(context.depositInvoiceApprovedBy) || Number(context.depositInvoiceApprovedBy) <= 0 || context.approvalReference !== context.depositInvoiceReleaseKey ||
+      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
+      [context.mainCustomerInvoiceAutomaticEventId, context.assetPurchaseAutomaticEventId, context.customerSalePurchaseAutomaticEventId,
+        context.forHireAutomaticEventId, context.storageAutomaticEventId, context.storagePilotEventId].some(value => value !== undefined)) {
+      throw new FinancialWriteDisabledError("Deposit Invoice automatic release gate is not valid; global or other-family gates cannot enable it.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) throw new FinancialWriteDisabledError("Deposit Invoice execution ledger is required.");
+    return;
+  }
   if (context.mainCustomerInvoiceAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "main_customer_invoice" ||
       !Number.isInteger(context.mainCustomerInvoiceAutomaticEventId) || context.mainCustomerInvoiceAutomaticEventId <= 0 || !context.mainCustomerInvoiceReleaseKey || !context.mainCustomerInvoiceApprovedBy ||
@@ -370,6 +387,22 @@ export async function executeFinancialDraftWrite(
   context: FinancialWriteAuthorisation,
 ): Promise<FinancialDraftWriteResult> {
   assertFinancialDraftWriteAuthorised(context);
+  if (/^INV-\d+-D$/i.test(payload.documentNumber) && context.depositInvoiceAutomaticEventId === undefined) {
+    throw new FinancialWriteDisabledError("Exact Deposit -D invoices require their independent Deposit release; another family cannot create or amend them.");
+  }
+  if (context.depositInvoiceAutomaticEventId !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (payload.method !== "POST" || payload.endpoint !== "/Invoices" || payload.documentFamily !== "customer_invoice" || payload.expectedXeroDocumentId ||
+      !/^INV-\d{1,12}-D$/.test(payload.documentNumber) || !row || row.InvoiceID || row.InvoiceNumber !== payload.documentNumber ||
+      row.Status !== "DRAFT" || row.Type !== "ACCREC" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Inclusive" ||
+      !row.Contact?.ContactID || !Array.isArray(row.LineItems) || row.LineItems.length !== 1 || !row.LineItems.every((line: any) =>
+        line.ItemCode === "Deposit Required" && line.Description === "Deposit Required" && line.Quantity === 1 && typeof line.UnitAmount === "number" &&
+        Number.isFinite(line.UnitAmount) && line.UnitAmount > 0 && String(line.AccountCode ?? "").trim() && line.TaxType === "OUTPUT")) {
+      throw new FinancialWriteDisabledError("Deposit release permits only one new exact AUD Inclusive Draft ACCREC -D with a positive Deposit Required line; amendments and deductions are excluded.");
+    }
+    await verifyDepositInvoiceAutomaticWriteAccess({ eventId: context.depositInvoiceAutomaticEventId, releaseKey: context.depositInvoiceReleaseKey!, preparedBy: context.depositInvoiceApprovedBy!, payload });
+  }
   if (context.mainCustomerInvoiceAutomaticEventId !== undefined) {
     const rows = payload.body.Invoices;
     const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;

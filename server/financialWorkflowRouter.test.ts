@@ -100,6 +100,14 @@ vi.mock("./financialForHireDb", () => ({
   getForHirePoEvents: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("./financialDepositInvoiceDb", () => ({
+  getDepositInvoiceEvents: vi.fn().mockResolvedValue([]),
+}));
+vi.mock("./financialDepositInvoiceService", () => ({
+  getDepositInvoiceReadiness: vi.fn().mockResolvedValue({ writerEnabled: false, noWrites: true, webhookPath: "/api/webhooks/vtiger/deposit-invoice" }),
+  previewDepositInvoice: vi.fn().mockResolvedValue({ state: "held", noWrites: true, holdReason: "Mapping needs confirmation" }),
+}));
+
 vi.mock("./financialForHireService", () => ({
   getForHireReadiness: vi.fn().mockResolvedValue({ routeRegistered: false, heartbeatRegistered: false, writerEnabled: false, noWrites: true }),
   previewInitialForHirePo: vi.fn().mockResolvedValue({ facts: { controlNumber: "C1860" }, kind: "initial", noWrites: true }),
@@ -124,6 +132,28 @@ function context(role: "admin" | "user"): TrpcContext {
 
 describe("financial operations tRPC safeguards", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("keeps all Deposit procedures administrator-only queries with no browser write/release endpoint", async () => {
+    const { appRouter } = await import("./routers");
+    const { previewDepositInvoice } = await import("./financialDepositInvoiceService");
+    const staff = appRouter.createCaller(context("user")).financialOperations;
+    await expect(staff.depositInvoiceReadiness()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(staff.depositInvoiceEvents()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(staff.previewDepositInvoice({ exactDeal: "5x77" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const admin = appRouter.createCaller(context("admin")).financialOperations;
+    await expect(admin.previewDepositInvoice({ exactDeal: "D%" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(previewDepositInvoice).not.toHaveBeenCalled();
+    expect(await admin.depositInvoiceReadiness()).toMatchObject({ writerEnabled: false, noWrites: true });
+    expect(await admin.previewDepositInvoice({ exactDeal: "D702903" })).toMatchObject({ state: "held", noWrites: true });
+    expect(previewDepositInvoice).toHaveBeenCalledWith("4x702903", "D702903");
+    const procedures = appRouter._def.procedures as any;
+    for (const name of ["depositInvoiceReadiness", "depositInvoiceEvents", "previewDepositInvoice"]) {
+      expect(procedures[`financialOperations.${name}`]._def.type).toBe("query");
+    }
+    expect(Object.keys(procedures).filter(key => /deposit/i.test(key))).toEqual([
+      "financialOperations.depositInvoiceEvents", "financialOperations.depositInvoiceReadiness", "financialOperations.previewDepositInvoice",
+    ]);
+  });
 
   it("keeps evidence-only records visible when no trigger evaluation has run", async () => {
     const { appRouter } = await import("./routers");

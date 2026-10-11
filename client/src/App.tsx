@@ -28,6 +28,7 @@ import ContainerHirePos from "./pages/ContainerHirePos";
 import ContainerAssetPos from "./pages/ContainerAssetPos";
 import ContainerCustomerSalePos from "./pages/ContainerCustomerSalePos";
 import MainCustomerInvoices from "./pages/MainCustomerInvoices";
+import DepositInvoices from "./pages/DepositInvoices";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -104,6 +105,9 @@ function AppRoutes() {
               </Route>
               <Route path="/main-customer-invoices">
                 <AdminGuard><MainCustomerInvoices /></AdminGuard>
+              </Route>
+              <Route path="/deposit-invoices">
+                <AdminGuard><DepositInvoices /></AdminGuard>
               </Route>
               <Route path="/operational-failures">
                 <AdminGuard><OperationalFailures /></AdminGuard>

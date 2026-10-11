@@ -87,6 +87,8 @@ import { getCustomerSalePurchasePoEvents } from "./financialCustomerSalePurchase
 import { getCustomerSalePurchaseReadiness, previewCustomerSalePurchasePo } from "./financialCustomerSalePurchaseService";
 import { getMainCustomerInvoiceEvents } from "./financialMainCustomerInvoiceDb";
 import { getMainCustomerInvoiceReadiness, previewMainCustomerInvoice } from "./financialMainCustomerInvoiceService";
+import { getDepositInvoiceEvents } from "./financialDepositInvoiceDb";
+import { getDepositInvoiceReadiness, previewDepositInvoice } from "./financialDepositInvoiceService";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
@@ -618,6 +620,20 @@ export const appRouter = router({
     mainCustomerInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getMainCustomerInvoiceEvents(input?.limit ?? 100)),
     mainCustomerInvoiceReadiness: adminProcedure.query(() => getMainCustomerInvoiceReadiness()),
+    depositInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getDepositInvoiceEvents(input?.limit ?? 100)),
+    depositInvoiceReadiness: adminProcedure.query(() => getDepositInvoiceReadiness()),
+    previewDepositInvoice: adminProcedure.input(z.object({ exactDeal: z.string().trim().regex(/^(?:D\d{1,12}|\d+x\d{1,12})$/i) }))
+      .query(async ({ input }) => {
+        let recordId = input.exactDeal;
+        const expectedDealNumber = /^D\d+$/i.test(recordId) ? recordId.toUpperCase() : undefined;
+        if (expectedDealNumber) {
+          const lookup = await findExactFinancialCandidate({ sourceCategory: "deal", businessNumber: expectedDealNumber });
+          if (lookup.outcome !== "found" || lookup.candidates.length !== 1) throw new TRPCError({ code: "PRECONDITION_FAILED", message: lookup.message });
+          recordId = lookup.candidates[0]!.recordId;
+        }
+        return previewDepositInvoice(recordId, expectedDealNumber);
+      }),
     previewMainCustomerInvoice: adminProcedure.input(z.object({
       exactDeal: z.string().trim().regex(/^(?:D\d{1,12}|\d+x\d{1,12})$/i),
     })).mutation(async ({ input }) => {
