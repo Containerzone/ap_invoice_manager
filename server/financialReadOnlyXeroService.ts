@@ -3,6 +3,7 @@ import { getXeroToken } from "./db";
 import { runCachedXeroGet, XERO_CACHE_TTL, type XeroRequestAuth } from "./xeroRequestManager";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 import { EXPECTED_AP_XERO_TENANT_LABEL, getXeroReadAuthWithRefresh } from "./xeroService";
+import { assertFinalWeightReadback, type FinalWeightDirection, type FinalWeightXeroEvidence } from "./financialFinalWeightAdjustmentRules";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const XERO_IDENTITY_BASE = "https://api.xero.com/connections";
@@ -323,6 +324,7 @@ export async function readBackFinancialDraft(input: {
   documentNumber: string;
   expectedXeroDocumentId: string;
   expectedDocument?: ProposedFinancialDocument;
+  expectedFinalWeightDraft?: Record<string, any>;
 }): Promise<FinancialDraftReadBack> {
   const auth = await readOnlyAuth();
   await assertExpectedFinancialTenant(auth);
@@ -343,6 +345,10 @@ export async function readBackFinancialDraft(input: {
   const status = String(document?.Status ?? "").trim().toUpperCase();
   if (!document || xeroDocumentId !== input.expectedXeroDocumentId || documentNumber.toUpperCase() !== expectedNumber.toUpperCase() || status !== "DRAFT") {
     throw new Error(`Xero Draft read-back did not verify the exact expected document ${expectedNumber}.`);
+  }
+  if (input.expectedFinalWeightDraft) {
+    if (input.documentFamily !== "customer_invoice" || documentNumber !== expectedNumber || document.Type !== "ACCREC") throw new Error("Final-weight readback must be the exact main ACCREC invoice.");
+    assertFinalWeightReadback(document, input.expectedFinalWeightDraft);
   }
   const numeric = (value: unknown): number | null => {
     const parsed = typeof value === "number" ? value : Number(value);
@@ -382,6 +388,33 @@ export async function readBackFinancialDraft(input: {
     total: numeric(document?.Total),
     lineCount: Array.isArray(document?.LineItems) ? document.LineItems.length : 0,
   };
+}
+
+/** Final weight: exact number search INCLUDING all statuses, followed by exact ID full-line GET. */
+export async function readFinalWeightXeroEvidence(invoiceNumber: string, customerName: string, direction: FinalWeightDirection): Promise<FinalWeightXeroEvidence> {
+  if (!/^INV-\d{1,12}$/.test(invoiceNumber)) throw new Error("Final-weight requires an exact main INV-number.");
+  const auth = await readOnlyAuth();
+  await assertExpectedFinancialTenant(auth);
+  const response = await xeroRead<any>(auth, `final-weight-number:${invoiceNumber}`, `${XERO_API_BASE}/Invoices`, { InvoiceNumbers: invoiceNumber });
+  const exactMatches = (Array.isArray(response?.Invoices) ? response.Invoices : []).filter((row: any) => String(row.InvoiceNumber ?? "").trim().toUpperCase() === invoiceNumber);
+  let invoice: Record<string, any> | null = null;
+  if (exactMatches.length === 1 && exactMatches[0].InvoiceID && exactMatches[0].Status === "DRAFT" && exactMatches[0].Type === "ACCREC") {
+    const detail = await xeroRead<any>(auth, `final-weight-id:${exactMatches[0].InvoiceID}`, `${XERO_API_BASE}/Invoices/${encodeURIComponent(exactMatches[0].InvoiceID)}`);
+    if (Array.isArray(detail?.Invoices) && detail.Invoices.length === 1) invoice = detail.Invoices[0];
+  }
+  const contact = await preflightContact(auth, customerName);
+  let ser70: FinalWeightXeroEvidence["ser70"] = null;
+  if (direction === "overweight" && invoice) {
+    const items = await xeroRead<any>(auth, "final-weight-SER70", `${XERO_API_BASE}/Items/SER70`);
+    const matches = (Array.isArray(items?.Items) ? items.Items : []).filter((row: any) => row.Code === "SER70");
+    const item = matches.length === 1 ? matches[0] : null;
+    const accountCode = String(item?.SalesDetails?.AccountCode ?? "").trim();
+    if (item?.IsSold === true && accountCode && item.SalesDetails?.TaxType === "OUTPUT") {
+      const accounts = await xeroRead<any>(auth, "final-weight-SER70-account", `${XERO_API_BASE}/Accounts`);
+      if ((accounts?.Accounts ?? []).filter((row: any) => String(row.Code) === accountCode && row.Status === "ACTIVE").length === 1) ser70 = { itemCode: "SER70", accountCode, taxType: "OUTPUT" };
+    }
+  }
+  return { exactMatches, invoice, contact: { count: contact.count ?? 0, contactId: contact.contactId, partyName: customerName }, ser70 };
 }
 
 function historicalFamily(reference: string): HistoricalXeroPreviewRow["inferredFamily"] {

@@ -43,6 +43,7 @@ const menuItems = [
   { icon: Handshake,       label: "Customer Sale POs", path: "/container-customer-sale-pos", adminOnly: true },
   { icon: FileText,        label: "Main Customer Invoices", path: "/main-customer-invoices", adminOnly: true },
   { icon: FileText,        label: "Deposit Invoices", path: "/deposit-invoices", adminOnly: true },
+  { icon: FileText,        label: "Final Weight Adjustments", path: "/final-weight-adjustments", adminOnly: true },
   { icon: Siren,           label: "Operational Failures", path: "/operational-failures", adminOnly: true },
   { icon: Building2,       label: "Suppliers",   path: "/suppliers",   adminOnly: false },
   { icon: Users,           label: "Users",       path: "/users",       adminOnly: true  },

@@ -15,6 +15,7 @@ import { registerAssetPurchaseWebhook } from "../financialAssetPurchaseWebhook";
 import { registerCustomerSalePurchaseWebhook } from "../financialCustomerSalePurchaseWebhook";
 import { registerMainCustomerInvoiceWebhook } from "../financialMainCustomerInvoiceWebhook";
 import { registerDepositInvoiceWebhook } from "../financialDepositInvoiceWebhook";
+import { registerFinalWeightAdjustmentWebhooks } from "../financialFinalWeightAdjustmentWebhook";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -65,6 +66,8 @@ async function startServer() {
   registerMainCustomerInvoiceWebhook(app);
   // Deposit is an isolated named-Deal receiver; held before any read/write by default.
   registerDepositInvoiceWebhook(app);
+  // Independent dual final-weight routes: default off, existing Draft amendment only.
+  registerFinalWeightAdjustmentWebhooks(app);
   // tRPC API
   app.use(
     "/api/trpc",

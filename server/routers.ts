@@ -89,6 +89,8 @@ import { getMainCustomerInvoiceEvents } from "./financialMainCustomerInvoiceDb";
 import { getMainCustomerInvoiceReadiness, previewMainCustomerInvoice } from "./financialMainCustomerInvoiceService";
 import { getDepositInvoiceEvents } from "./financialDepositInvoiceDb";
 import { getDepositInvoiceReadiness, previewDepositInvoice } from "./financialDepositInvoiceService";
+import { getFinalWeightEvents } from "./financialFinalWeightAdjustmentDb";
+import { getFinalWeightReadiness, previewFinalWeightAdjustment } from "./financialFinalWeightAdjustmentService";
 import { createGraphMessageSubscription, deleteGraphMessageSubscription } from "./microsoftGraphService";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { getGstExclusiveUnitAmount } from "./invoiceLineAmounts";
@@ -622,6 +624,20 @@ export const appRouter = router({
     mainCustomerInvoiceReadiness: adminProcedure.query(() => getMainCustomerInvoiceReadiness()),
     depositInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getDepositInvoiceEvents(input?.limit ?? 100)),
+    finalWeightEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getFinalWeightEvents(input?.limit ?? 100)),
+    finalWeightReadiness: adminProcedure.query(() => getFinalWeightReadiness()),
+    previewFinalWeightAdjustment: adminProcedure.input(z.object({ exactDeal: z.string().trim().regex(/^(?:D\d{1,12}|\d+x\d{1,12})$/i), direction: z.enum(["overweight", "underweight"]) }))
+      .query(async ({ input }) => {
+        let recordId = input.exactDeal;
+        const expectedDealNumber = /^D\d+$/i.test(recordId) ? recordId.toUpperCase() : undefined;
+        if (expectedDealNumber) {
+          const lookup = await findExactFinancialCandidate({ sourceCategory: "deal", businessNumber: expectedDealNumber });
+          if (lookup.outcome !== "found" || lookup.candidates.length !== 1) throw new TRPCError({ code: "PRECONDITION_FAILED", message: lookup.message });
+          recordId = lookup.candidates[0]!.recordId;
+        }
+        return previewFinalWeightAdjustment(recordId, input.direction, expectedDealNumber);
+      }),
     depositInvoiceReadiness: adminProcedure.query(() => getDepositInvoiceReadiness()),
     previewDepositInvoice: adminProcedure.input(z.object({ exactDeal: z.string().trim().regex(/^(?:D\d{1,12}|\d+x\d{1,12})$/i) }))
       .query(async ({ input }) => {

@@ -23,6 +23,7 @@ import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchas
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
+import { verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 
@@ -44,6 +45,7 @@ export type GuardedFinancialWriterCommand = {
   verifiedSourceData?: Record<string, unknown>;
   postSuccessPlan?: PlannedFinancialPostSuccessAction[];
   expectedDraftDocument?: ProposedFinancialDocument;
+  expectedFinalWeightDraft?: Record<string, any>;
 };
 
 export type GuardedFinancialWriterOutcome =
@@ -67,6 +69,13 @@ export async function executeGuardedFinancialWriterCommand(
 ): Promise<GuardedFinancialWriterOutcome> {
   // Reject before writing any local execution state or making any Xero call.
   assertFinancialDraftWriteAuthorised(command.authorisation, { requireExecutionId: false });
+  if (command.authorisation.finalWeightAutomaticEventId !== undefined) {
+    if (command.workflowType !== "final_weight_adjustment" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
+      command.preparedBy !== command.authorisation.finalWeightApprovedBy || !command.expectedFinalWeightDraft || command.expectedDraftDocument ||
+      financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedFinalWeightDraft])) throw new Error("Final-weight execution permits only its exact existing Draft amendment, retained readback evidence and no CRM action.");
+    await verifyFinalWeightAutomaticWriteAccess({ eventId: command.authorisation.finalWeightAutomaticEventId, direction: command.authorisation.finalWeightDirection!,
+      releaseKey: command.authorisation.finalWeightReleaseKey!, payload: command.payload, preparedBy: command.preparedBy });
+  } else if (command.expectedFinalWeightDraft) throw new Error("Final-weight readback evidence requires its independent amendment release.");
   if ((command.workflowType === "deposit_invoice" || /^INV-\d+-D$/i.test(command.payload.documentNumber)) && command.authorisation.depositInvoiceAutomaticEventId === undefined) {
     throw new Error("Deposit commands and exact -D documents require the independent Deposit event, not a generic or other-family approval.");
   }
@@ -170,6 +179,7 @@ export async function executeGuardedFinancialWriterCommand(
       documentNumber: command.payload.documentNumber,
       expectedXeroDocumentId: result.xeroDocumentId,
       expectedDocument: command.expectedDraftDocument,
+      expectedFinalWeightDraft: command.expectedFinalWeightDraft,
     });
     await markFinancialWriterExecutionSucceeded(prepared.execution.id, result);
     if (command.sourceRecordId && command.verifiedSourceData) {

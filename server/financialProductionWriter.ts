@@ -13,6 +13,8 @@ import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchas
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
+import { consumeFinalWeightPayload, verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
+import type { FinalWeightDirection } from "./financialFinalWeightAdjustmentRules";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -86,6 +88,11 @@ export type FinancialWriteAuthorisation = {
   depositInvoiceAutomaticEventId?: number;
   depositInvoiceReleaseKey?: string;
   depositInvoiceApprovedBy?: number;
+  /** Dedicated existing-main-Draft amendment only; never a Main Invoice create release. */
+  finalWeightAutomaticEventId?: number;
+  finalWeightDirection?: FinalWeightDirection;
+  finalWeightReleaseKey?: string;
+  finalWeightApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -263,6 +270,19 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.workflowType === "final_weight_adjustment" || context.finalWeightAutomaticEventId !== undefined) {
+    if (process.env.FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "final_weight_adjustment" ||
+      !Number.isInteger(context.finalWeightAutomaticEventId) || Number(context.finalWeightAutomaticEventId) <= 0 ||
+      !["overweight", "underweight"].includes(context.finalWeightDirection ?? "") || !context.finalWeightReleaseKey ||
+      !Number.isInteger(context.finalWeightApprovedBy) || Number(context.finalWeightApprovedBy) <= 0 || context.approvalReference !== context.finalWeightReleaseKey ||
+      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
+      [context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId, context.assetPurchaseAutomaticEventId,
+        context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId, context.storageAutomaticEventId, context.storagePilotEventId].some(value => value !== undefined)) {
+      throw new FinancialWriteDisabledError("Final-weight independent amendment gate is invalid; Main Invoice/global/other family cannot enable it.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) throw new FinancialWriteDisabledError("Final-weight execution ledger is required.");
+    return;
+  }
   if (context.workflowType === "deposit_invoice" || context.depositInvoiceAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "deposit_invoice" ||
       !Number.isInteger(context.depositInvoiceAutomaticEventId) || Number(context.depositInvoiceAutomaticEventId) <= 0 || !context.depositInvoiceReleaseKey ||
@@ -387,6 +407,20 @@ export async function executeFinancialDraftWrite(
   context: FinancialWriteAuthorisation,
 ): Promise<FinancialDraftWriteResult> {
   assertFinancialDraftWriteAuthorised(context);
+  if (context.finalWeightAutomaticEventId !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (payload.method !== "PUT" || !payload.expectedXeroDocumentId || payload.endpoint !== `/Invoices/${encodeURIComponent(payload.expectedXeroDocumentId)}` ||
+      payload.documentFamily !== "customer_invoice" || !/^INV-\d{1,12}$/.test(payload.documentNumber) || Object.keys(payload.body).length !== 1 ||
+      !row || row.InvoiceID !== payload.expectedXeroDocumentId || row.InvoiceNumber !== payload.documentNumber || row.Status !== "DRAFT" || row.Type !== "ACCREC" ||
+      row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" || !row.Contact?.ContactID || !row.Date || !row.DueDate || !Array.isArray(row.LineItems) || !row.LineItems.length) {
+      throw new FinancialWriteDisabledError("Final-weight permits only a specific existing exact AUD Exclusive Draft main invoice PUT; no create or other update type.");
+    }
+    if (!/^[a-f0-9]{64}$/.test(payload.idempotencyKey)) throw new FinancialWriteDisabledError("Final-weight exact deterministic payload key is required.");
+    const input = { eventId: context.finalWeightAutomaticEventId, direction: context.finalWeightDirection!, releaseKey: context.finalWeightReleaseKey!, preparedBy: context.finalWeightApprovedBy!, payload };
+    await verifyFinalWeightAutomaticWriteAccess(input);
+    await consumeFinalWeightPayload(input, context.executionId!);
+  }
   if (/^INV-\d+-D$/i.test(payload.documentNumber) && context.depositInvoiceAutomaticEventId === undefined) {
     throw new FinancialWriteDisabledError("Exact Deposit -D invoices require their independent Deposit release; another family cannot create or amend them.");
   }
@@ -507,7 +541,7 @@ export async function executeFinancialDraftWrite(
     return payload.method === "POST"
       ? axios.post(url, payload.body, { headers })
       : axios.put(url, payload.body, { headers });
-  }, { retryTransientGatewayFailures: true });
+  }, { retryTransientGatewayFailures: context.finalWeightAutomaticEventId === undefined });
   const result = responseDocument(payload, response.data);
   return {
     xeroDocumentId: result.returnedId,

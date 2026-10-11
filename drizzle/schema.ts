@@ -918,6 +918,47 @@ export const financialDepositInvoiceEvents = mysqlTable("financial_deposit_invoi
 }));
 export type FinancialDepositInvoiceEvent = typeof financialDepositInvoiceEvents.$inferSelect;
 
+// Final weight evidence never changes after insert. Both directions share a
+// per-document one-time exclusive claim, NOT Main Invoice's release or ledger.
+export const financialFinalWeightAdjustmentEvents = mysqlTable("financial_final_weight_adjustment_events", {
+  id: int("id").autoincrement().primaryKey(),
+  evidenceKey: varchar("evidenceKey", { length: 64 }).notNull(),
+  direction: mysqlEnum("direction", ["overweight", "underweight"] as const).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  invoiceNumber: varchar("invoiceNumber", { length: 128 }),
+  xeroInvoiceId: varchar("xeroInvoiceId", { length: 128 }),
+  sourceRefreshedAt: timestamp("sourceRefreshedAt"),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }),
+  sourceSnapshot: json("sourceSnapshot").notNull(),
+  xeroPreflight: json("xeroPreflight"),
+  originalDraft: json("originalDraft"),
+  expectedDraft: json("expectedDraft"),
+  originalDraftHash: varchar("originalDraftHash", { length: 64 }),
+  expectedDraftHash: varchar("expectedDraftHash", { length: 64 }),
+  claimedDealId: varchar("claimedDealId", { length: 128 }),
+  claimedInvoiceId: varchar("claimedInvoiceId", { length: 128 }),
+  claimedInvoiceNumber: varchar("claimedInvoiceNumber", { length: 128 }),
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "held", "reserved", "submitted", "draft_updated", "reconciliation_required"] as const).default("held").notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  submittedAt: timestamp("submittedAt"),
+  readbackEvidence: json("readbackEvidence"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => ({
+  evidenceUnique: uniqueIndex("financial_final_weight_evidence_unique").on(table.evidenceKey),
+  dealClaimUnique: uniqueIndex("financial_final_weight_deal_claim_unique").on(table.claimedDealId),
+  invoiceClaimUnique: uniqueIndex("financial_final_weight_invoice_claim_unique").on(table.claimedInvoiceId),
+  numberClaimUnique: uniqueIndex("financial_final_weight_number_claim_unique").on(table.claimedInvoiceNumber),
+}));
+export type FinancialFinalWeightAdjustmentEvent = typeof financialFinalWeightAdjustmentEvents.$inferSelect;
+
 export const extraHireRuns = mysqlTable("extra_hire_runs", {
   id: int("id").autoincrement().primaryKey(),
   workflowRunId: int("workflowRunId"),
