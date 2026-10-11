@@ -38,9 +38,9 @@ describe("For Hire Container Control PO drafts", () => {
   });
 
   it("builds one exact 30-day extension with current purchase rate and no lift/JD line", () => {
-    const result = buildRecurringForHirePo({ facts: base({ status: "IDLE" }), priorPeriodEnd: "2026-10-31", lastVerifiedExtensionSuffix: null, purchaseRate: 8.25, now: "2026-11-01" });
+    const result = buildRecurringForHirePo({ facts: base({ status: "IDLE", containerType: "20 Foot Standard" }), priorPeriodEnd: "2026-10-31", lastVerifiedExtensionSuffix: null, purchaseRate: 8.25, now: "2026-11-01" });
     expect(result).toMatchObject({ eligible: true, proposedPoNumber: "HC1860-2", periodStart: "2026-11-01", periodEnd: "2026-11-30" });
-    expect(result.document?.lineItems).toEqual([expect.objectContaining({ itemCode: "HC 20 E", quantity: 30, unitAmount: 8.25, accountCode: "312", description: "TGHU1234567, 20' Container Extended Hire @ $8.25 per day from 01/11/26 to 30/11/26" })]);
+    expect(result.document?.lineItems).toEqual([expect.objectContaining({ itemCode: "HC 20 E", quantity: 30, unitAmount: 8.25, accountCode: "312", description: "TGHU1234567, 20 Foot Standard Extended Hire @ $8.25 per day from 01/11/26 to 30/11/26" })]);
     expect(result.document?.lineItems.some((line) => line.description.includes("Lift") || line.itemCode.startsWith("JD"))).toBe(false);
   });
 

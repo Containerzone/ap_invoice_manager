@@ -215,7 +215,10 @@ export function buildRecurringForHirePo(input: {
   if (!priorEnd) return { kind: "recurring", eligible: false, holdReason: "No verified AP initial or prior extension receipt exists; AP will not import Operations history or infer a first extension.", periodStart: null, periodEnd: null, proposedPoNumber: null, document: null, itemNativeDescription: null };
   const start = priorEnd.add({ days: 1 });
   const end = start.add({ days: 29 });
-  const now = plainDate(input.now ?? new Date().toISOString().slice(0, 10));
+  // Operations evaluates due periods using the Sydney business date. Preserve
+  // that behavior here so the midnight UTC boundary cannot create an early or
+  // deferred monthly extension. Explicit test input remains a plain date.
+  const now = plainDate(input.now ?? Temporal.Now.zonedDateTimeISO("Australia/Sydney").toPlainDate().toString());
   if (now && Temporal.PlainDate.compare(start, now) > 0) return { kind: "recurring", eligible: false, holdReason: "The next consecutive extension period is not due.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: null };
   if (now && Temporal.PlainDate.compare(start, now.subtract({ days: 30 })) < 0) return { kind: "recurring", eligible: false, holdReason: "The next extension is historical; no catch-up or bulk extension is allowed.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: null };
   if (input.purchaseRate === null || !Number.isFinite(input.purchaseRate) || input.purchaseRate <= 0) return { kind: "recurring", eligible: false, holdReason: "Current Xero HC extension purchase rate is unavailable.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: input.itemNativeDescription ?? null };
@@ -223,7 +226,7 @@ export function buildRecurringForHirePo(input: {
   const itemCode = eligibility.feet === 20 ? "HC 20 E" : "HC 40 E";
   const rate = money(input.purchaseRate);
   const period = `${formatForHireDate(start.toString())} to ${formatForHireDate(end.toString())}`;
-  const extensionLine = { itemCode, description: `${input.facts.containerNumber}, ${eligibility.feet}' Container Extended Hire @ $${rate.toFixed(2)} per day from ${period}`, quantity: 30, unitAmount: rate, accountCode: ACCOUNT_CODE, taxRate: 10, gstTreatment: "GST_EXCLUSIVE" as const };
+  const extensionLine = { itemCode, description: `${input.facts.containerNumber}, ${text(input.facts.containerType)} Extended Hire @ $${rate.toFixed(2)} per day from ${period}`, quantity: 30, unitAmount: rate, accountCode: ACCOUNT_CODE, taxRate: 10, gstTreatment: "GST_EXCLUSIVE" as const };
   return {
     kind: "recurring", eligible: true, holdReason: null, periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: poNumber,
     document: documentFromLines({ kind: "recurring", facts: input.facts, poNumber, issueDate: start, lines: [line(extensionLine)] }),
