@@ -1,6 +1,6 @@
 # For Hire Container Control POs — AP Production Cutover
 
-**Status:** Code-complete and tested. The approved current scope is **initial For Hire Draft POs only**; recurring extensions remain disabled until the separate Operations monthly-job handover.
+**Status:** **Initial For Hire Draft POs are active for new events only** from 11 October 2026 20:20:52 Australia/Sydney. Recurring extensions remain disabled until the separate Operations monthly-job handover.
 
 This handover covers only **For Hire Container Control Purchase Orders**. It does not affect Asset acquisition, Customer Sale, recurring storage, finalisation, or other Financial Operations families.
 
@@ -49,9 +49,10 @@ The For Hire sender ignores financial values supplied by the webhook. It retriev
 
 ## Current non-live checks
 
-- The initial receiver requires `FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED=true` and an AP-local initial-only release policy; its default remains disabled.
-- No AP For Hire Heartbeat is required or permitted for the initial-only release.
-- AP recurring remains disabled until the Operations monthly job handover is separately confirmed.
+- The initial receiver has `FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED=true` and an AP-local initial-only release policy, with new-events-only scope and the recorded Sydney cutover time.
+- No AP For Hire Heartbeat exists or is permitted for the initial-only release.
+- AP recurring remains disabled; Operations `forHireMonthlyPo` remains active until its later separate handover.
+- The initial AP For Hire ledger and its writer-execution count were both zero immediately after activation. The first qualifying event requires fresh VTiger/Xero evidence before it may create one exact Draft PO.
 - The application has a top-level **Container Hire POs** administrator workspace for current-source/Xero previews and the AP-only lifecycle ledger.
 
 ## Validation completed

@@ -103,7 +103,7 @@ export async function approveForHireReleasePolicy(input: {
     effectiveFrom: input.effectiveFrom,
     forHireOnlyVtigerBranch: true,
     initialOperationsHandoff: true,
-    recurringOperationsHandoff: true,
+    recurringOperationsHandoff: input.recurringOperationsHandoff,
     migrationScope: "new_events_only",
   };
   await upsertFinancialWorkflowConfig(FOR_HIRE_RELEASE_KEY, policy, input.recurringOperationsHandoff

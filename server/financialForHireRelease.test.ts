@@ -74,7 +74,7 @@ describe("For Hire standing release policy", () => {
   });
 
   it("permits an initial-only release while recurring remains disabled", async () => {
-    await expect(approveForHireReleasePolicy({ approvedBy: 9, effectiveFrom: "2026-10-02T00:00:00.000Z", forHireOnlyVtigerBranch: true, initialOperationsHandoff: true, recurringOperationsHandoff: false })).resolves.toMatchObject({ enabled: true, initialEnabled: true, recurringEnabled: false, approvedBy: 9 });
+    await expect(approveForHireReleasePolicy({ approvedBy: 9, effectiveFrom: "2026-10-02T00:00:00.000Z", forHireOnlyVtigerBranch: true, initialOperationsHandoff: true, recurringOperationsHandoff: false })).resolves.toMatchObject({ enabled: true, initialEnabled: true, recurringEnabled: false, recurringOperationsHandoff: false, approvedBy: 9 });
     await expect(approveForHireReleasePolicy({ approvedBy: 9, effectiveFrom: "2026-10-02T00:00:00.000Z", forHireOnlyVtigerBranch: true, initialOperationsHandoff: true, recurringOperationsHandoff: true })).resolves.toMatchObject({ enabled: true, initialEnabled: true, recurringEnabled: true, approvedBy: 9 });
   });
 

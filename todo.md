@@ -123,3 +123,13 @@
 - [x] Updated Container Hire POs and the handover record to state the real boundary: AP initial receiver may be enabled; AP recurring schedule/Heartbeat must remain absent while Operations monthly billing continues.
 - [x] Validated TypeScript, **73 test files / 445 tests**, production build and diff checks. No AP policy, For Hire deployment flag, Heartbeat, schedule or Xero For Hire PO was created while applying this scope split.
 - [ ] Publish the initial-only release checkpoint, then record the approved AP initial-only policy and enable `FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED=true`. Do not create an AP recurring Heartbeat or pause Operations `forHireMonthlyPo` in this scope.
+
+## 2026-10-11 — Initial-only For Hire release activated
+
+- [x] User confirmed the legacy VTiger For Hire initial action is paused and the dedicated AP For Hire branch is saved; Asset and Customer Sale remain on their Operations path.
+- [x] Published release verified: protected AP receiver accepts the private header and rejects an invalid ID with `400` before any VTiger/Xero action.
+- [x] Recorded AP-local For Hire policy effective `2026-10-11T20:20:52+11:00`: `initialEnabled=true`, `recurringEnabled=false`, `initialOperationsHandoff=true`, `recurringOperationsHandoff=false`, migration scope `new_events_only`.
+- [x] Enabled only `FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED=true`. Global financial writes remain off; AP recurring has no schedule/Heartbeat; the legacy Operations `forHireMonthlyPo` job remains active and is not modified.
+- [x] Verified initial For Hire lifecycle ledger and initial execution count remain zero immediately after activation. The first qualifying new VTiger For Hire Request will be independently re-read/preflighted and can create at most one exact Xero Draft PO; it cannot authorize, send, pay, void or delete.
+- [ ] After the first new qualifying event, check Container Hire POs for exact `H<ContainerControlNumber>` Draft read-back, contact, dates, account 312, GST, item/description and no legacy duplicate before expanding scope.
+- [ ] Future recurring release only after pausing Operations `forHireMonthlyPo`, separately setting `recurringEnabled=true`, creating/binding the AP monthly Heartbeat, and verifying the first extension/dehire path.
