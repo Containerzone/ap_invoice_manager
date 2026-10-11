@@ -244,7 +244,8 @@ export async function getForHireReadiness() {
     getFinancialWorkflowSchedules(),
   ]);
   const schedule = schedules.find((item) => item.workflowType === "recurring_for_hire");
-  const writerEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true" && policy.enabled;
+  const writerEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true" && policy.initialEnabled;
+  const recurringEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true" && policy.recurringEnabled && Boolean(schedule?.enabled && schedule.taskUid);
   return {
     module: FOR_HIRE_VTIGER_MODULE,
     futureWebhookPath: FOR_HIRE_FUTURE_WEBHOOK_PATH,
@@ -254,8 +255,11 @@ export async function getForHireReadiness() {
     recurringCron: FOR_HIRE_RECURRING_CRON,
     heartbeatRegistered: Boolean(schedule?.enabled && schedule.taskUid),
     writerEnabled,
+    recurringEnabled,
     policy: {
       enabled: policy.enabled,
+      initialEnabled: policy.initialEnabled,
+      recurringEnabled: policy.recurringEnabled,
       effectiveFrom: policy.effectiveFrom,
       forHireOnlyVtigerBranch: policy.forHireOnlyVtigerBranch,
       initialOperationsHandoff: policy.initialOperationsHandoff,

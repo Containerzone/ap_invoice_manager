@@ -116,3 +116,10 @@
 - [x] Updated Container Hire POs to show actual protected receiver, deployment/policy/Heartbeat readiness, and lifecycle receipts without a browser-side activation control.
 - [x] Validated TypeScript, **73 test files / 444 tests**, production build and local receiver authentication. The AP For Hire ledger has 0 events / 0 Drafts / 0 reservations; no release policy, AP For Hire schedule or For Hire Heartbeat exists.
 - [ ] Later named cutover only: publish this checkpoint, create and verify a separate VTiger FOR HIRE Request branch, pause Operations `forHireMonthlyPo` only for For Hire, explicitly approve the policy/effective time, enable the For Hire-only deployment flag, create/bind the AP monthly Heartbeat, then verify the first new `H<CC>` Draft.
+
+## 2026-10-11 — Approved initial-only For Hire cutover scope
+
+- [x] Refined the For Hire release policy into independent **initial** and **recurring** gates. Initial Draft POs can be released after the dedicated VTiger For Hire branch and initial Operations handover; recurring remains independently disabled until the separate `forHireMonthlyPo` handover.
+- [x] Updated Container Hire POs and the handover record to state the real boundary: AP initial receiver may be enabled; AP recurring schedule/Heartbeat must remain absent while Operations monthly billing continues.
+- [x] Validated TypeScript, **73 test files / 445 tests**, production build and diff checks. No AP policy, For Hire deployment flag, Heartbeat, schedule or Xero For Hire PO was created while applying this scope split.
+- [ ] Publish the initial-only release checkpoint, then record the approved AP initial-only policy and enable `FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED=true`. Do not create an AP recurring Heartbeat or pause Operations `forHireMonthlyPo` in this scope.

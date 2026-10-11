@@ -22,6 +22,8 @@ function released(overrides: Partial<ForHireReleasePolicy> = {}): ForHireRelease
     releaseKey: "FOR-HIRE-UNIT-TEST",
     rulesHash: FOR_HIRE_RULES_HASH,
     enabled: true,
+    initialEnabled: true,
+    recurringEnabled: true,
     approvedBy: 9,
     approvedAt: "2026-10-01T00:00:00.000Z",
     effectiveFrom: "2026-10-02T00:00:00.000Z",
@@ -45,6 +47,7 @@ describe("For Hire standing release policy", () => {
   it("defaults off with no VTiger or Operations handover", () => {
     expect(resolveForHireRelease(null)).toEqual({
       releaseKey: "", rulesHash: FOR_HIRE_RULES_HASH, enabled: false, approvedBy: null, approvedAt: null, effectiveFrom: null,
+      initialEnabled: false, recurringEnabled: false,
       forHireOnlyVtigerBranch: false, initialOperationsHandoff: false, recurringOperationsHandoff: false, migrationScope: "new_events_only",
     });
     expect(() => assertForHireRelease(resolveForHireRelease(null), "initial")).toThrow(/disabled/i);
@@ -70,8 +73,14 @@ describe("For Hire standing release policy", () => {
     expect(workflowDb.upsertFinancialWorkflowConfig).toHaveBeenCalledWith(FOR_HIRE_RELEASE_KEY, policy, expect.stringMatching(/disabled/i), 9);
   });
 
-  it("requires all named handovers to record an approval", async () => {
-    await expect(approveForHireReleasePolicy({ approvedBy: 9, effectiveFrom: "2026-10-02T00:00:00.000Z", forHireOnlyVtigerBranch: true, initialOperationsHandoff: true, recurringOperationsHandoff: false })).rejects.toThrow(/both Operations handovers/i);
-    await expect(approveForHireReleasePolicy({ approvedBy: 9, effectiveFrom: "2026-10-02T00:00:00.000Z", forHireOnlyVtigerBranch: true, initialOperationsHandoff: true, recurringOperationsHandoff: true })).resolves.toMatchObject({ enabled: true, approvedBy: 9 });
+  it("permits an initial-only release while recurring remains disabled", async () => {
+    await expect(approveForHireReleasePolicy({ approvedBy: 9, effectiveFrom: "2026-10-02T00:00:00.000Z", forHireOnlyVtigerBranch: true, initialOperationsHandoff: true, recurringOperationsHandoff: false })).resolves.toMatchObject({ enabled: true, initialEnabled: true, recurringEnabled: false, approvedBy: 9 });
+    await expect(approveForHireReleasePolicy({ approvedBy: 9, effectiveFrom: "2026-10-02T00:00:00.000Z", forHireOnlyVtigerBranch: true, initialOperationsHandoff: true, recurringOperationsHandoff: true })).resolves.toMatchObject({ enabled: true, initialEnabled: true, recurringEnabled: true, approvedBy: 9 });
+  });
+
+  it("rejects recurring processing even when the initial-only policy is active", () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    expect(() => assertForHireRelease(released({ recurringEnabled: false, recurringOperationsHandoff: false }), "initial")).not.toThrow();
+    expect(() => assertForHireRelease(released({ recurringEnabled: false, recurringOperationsHandoff: false }), "recurring")).toThrow(/recurring/i);
   });
 });
