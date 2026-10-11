@@ -17,6 +17,7 @@ vi.mock("./workflowAlertService", () => ({
   reportWorkflowFailureSafely: m.alert,
 }));
 import {
+  hasExtraHireSecret,
   parseExtraHireWebhookEnvelope,
   registerExtraHireInvoiceWebhook,
 } from "./financialExtraHireInvoiceWebhook";
@@ -50,6 +51,33 @@ describe("Extra Hire dedicated private route", () => {
       expect(m.alert).not.toHaveBeenCalled();
     }
   );
+  it("accepts the existing VTiger JSON body secret and ignores dryRun", async () => {
+    const res = response();
+    await handler()(
+      {
+        header: () => undefined,
+        body: { id: "5x77", secret: "synthetic-secret", dryRun: true },
+      },
+      res
+    );
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(m.policy).not.toHaveBeenCalled();
+    expect(m.process).not.toHaveBeenCalled();
+  });
+  it("compares the legacy body secret without trusting other body values", () => {
+    expect(
+      hasExtraHireSecret({
+        header: () => undefined,
+        body: { secret: "synthetic-secret", amount: 9999, customer: "forged" },
+      } as any)
+    ).toBe(true);
+    expect(
+      hasExtraHireSecret({
+        header: () => undefined,
+        body: { secret: "wrong" },
+      } as any)
+    ).toBe(false);
+  });
   it.each(["", "false", "TRUE", "1"])(
     "503 before any body/source/ledger/alert work while flag %s",
     async flag => {

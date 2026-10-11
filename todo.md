@@ -207,3 +207,5 @@
 - [ ] Separately coordinate the Warranty-only VTiger branch, Operations/Make warranty writer handover and Main Invoice warranty-entry path; explicitly approve isolated Draft amendment/New Events/no-CRM-mutation scope. Keep held/default-off until new explicit authority exists. No suffix/non-Draft alternative, legacy adoption, blind retry, claim reset or CRM post-success write is implemented.
 
 - [x] Final Weight receivers now accept the existing VTiger JSON envelope (`id`, `secret`, `dryRun`) as a constant-time body-secret alternative to the normal AP header. `dryRun` and all financial body fields remain ignored; the URL alone determines Overweight or Underweight. Focused 46 tests plus the full 113-file / 1165-test suite and production build pass.
+
+- [x] Extra Hire now accepts the existing VTiger JSON envelope (`id`, `secret`, `dryRun`) as a constant-time body-secret alternative to the AP header. Amount/rate/date/customer/dryRun body values remain ignored; only the exact Deal webservice ID is used. TypeScript, the 18-test webhook contract, the full 113-file / 1167-test suite and production build pass.
