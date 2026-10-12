@@ -4,46 +4,86 @@ import {
   DEPOSIT_INVOICE_WEBHOOK_PATH,
   processAutomaticDepositInvoice,
 } from "./financialDepositInvoiceService";
+import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
 
 export const DEPOSIT_INVOICE_WEBHOOK_SECRET_HEADER =
   "x-financial-webhook-secret" as const;
-export type DepositInvoiceWebhookEnvelope = { recordId: string };
-/** Only a named exact Deal ID; all finance/status/date/customer payload values are ignored. */
+export type DepositInvoiceWebhookEnvelope = {
+  recordId: string | null;
+  dealNumber: string | null;
+};
+/**
+ * Only one exact Deal webservice ID or legacy D-number is accepted. Financial,
+ * customer, date and `dryRun` body values are intentionally ignored.
+ */
 export function parseDepositInvoiceWebhookEnvelope(
   body: unknown
 ): DepositInvoiceWebhookEnvelope {
   if (!body || typeof body !== "object" || Array.isArray(body))
-    throw new Error("Deposit webhook requires an exact named VTiger Deal ID.");
+    throw new Error("Deposit webhook requires an exact named VTiger Deal ID or D-number.");
   const source = body as Record<string, unknown>;
   const values = [source.deal_id, source.record_id, source.id].filter(
     value => value !== undefined
   );
   if (
     !values.length ||
-    values.some(
-      value =>
-        typeof value !== "string" || !/^\d+x\d{1,12}$/i.test(value.trim())
-    ) ||
+    values.some(value => typeof value !== "string") ||
     new Set(values.map(value => (value as string).trim())).size !== 1
   )
     throw new Error(
-      "Deposit webhook requires one unambiguous exact VTiger Deal ID (deal_id, record_id or id)."
+      "Deposit webhook requires one unambiguous exact VTiger Deal ID or D-number (deal_id, record_id or id)."
     );
-  return { recordId: (values[0] as string).trim() };
+  const id = (values[0] as string).trim();
+  if (/^\d+x\d{1,12}$/i.test(id))
+    return { recordId: id, dealNumber: null };
+  if (/^D\d{1,12}$/i.test(id))
+    return { recordId: null, dealNumber: id.toUpperCase() };
+  throw new Error(
+    "Deposit webhook requires one exact VTiger Deal ID or D-number; arbitrary values are rejected."
+  );
 }
+
+/** Resolve a legacy Operations potential number with one bounded exact lookup. */
+export async function resolveDepositInvoiceWebhookRecord(
+  envelope: DepositInvoiceWebhookEnvelope
+): Promise<string> {
+  if (envelope.recordId) return envelope.recordId;
+  if (!envelope.dealNumber)
+    throw new Error("Deposit webhook contains no exact Deal reference.");
+  const lookup = await findExactFinancialCandidate({
+    sourceCategory: "deal",
+    businessNumber: envelope.dealNumber,
+  });
+  if (lookup.outcome !== "found" || lookup.candidates.length !== 1)
+    throw new Error(
+      `Deposit D-number lookup is ${lookup.outcome}: ${lookup.message}`
+    );
+  return lookup.candidates[0]!.recordId;
+}
+
+function secretMatches(expected: Buffer, supplied: unknown): boolean {
+  if (typeof supplied !== "string") return false;
+  const candidate = Buffer.from(supplied.trim());
+  return Boolean(
+    expected.length &&
+      expected.length === candidate.length &&
+      timingSafeEqual(expected, candidate)
+  );
+}
+
 export function hasDepositInvoiceWebhookSecret(
-  req: Pick<Request, "header">
+  req: Pick<Request, "header" | "body">
 ): boolean {
   const expected = Buffer.from(
     process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim() ?? ""
   );
-  const supplied = Buffer.from(
-    req.header(DEPOSIT_INVOICE_WEBHOOK_SECRET_HEADER)?.trim() ?? ""
-  );
-  return Boolean(
-    expected.length &&
-      expected.length === supplied.length &&
-      timingSafeEqual(expected, supplied)
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? (req.body as Record<string, unknown>)
+      : null;
+  return (
+    secretMatches(expected, req.header(DEPOSIT_INVOICE_WEBHOOK_SECRET_HEADER)) ||
+    secretMatches(expected, body?.secret)
   );
 }
 export function registerDepositInvoiceWebhook(app: Express): void {
@@ -83,9 +123,10 @@ export function registerDepositInvoiceWebhook(app: Express): void {
             xeroWritesAttempted: 0,
           });
       try {
-        const result = await processAutomaticDepositInvoice(envelope.recordId);
+        const recordId = await resolveDepositInvoiceWebhookRecord(envelope);
+        const result = await processAutomaticDepositInvoice(recordId);
         return res.status(result.ok ? 200 : 202).json(result);
-      } catch {
+      } catch (error) {
         // Never claim zero attempts after an unknown transport failure; immutable ledger is authoritative.
         return res
           .status(202)
@@ -94,7 +135,9 @@ export function registerDepositInvoiceWebhook(app: Express): void {
             status: "held",
             recordId: envelope.recordId,
             warning:
-              "Deposit source, policy or execution is held; inspect the AP immutable ledger before retry. No main-invoice or CRM mutation is permitted.",
+              error instanceof Error
+                ? error.message
+                : "Deposit source, policy or execution is held; inspect the AP immutable ledger before retry. No main-invoice or CRM mutation is permitted.",
           });
       }
     }
