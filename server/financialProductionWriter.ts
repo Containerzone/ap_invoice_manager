@@ -99,7 +99,7 @@ export type FinancialWriteAuthorisation = {
   extraHireReleaseKey?: string;
   extraHireApprovedBy?: number;
   /** One-off Deposit/main Draft correction; never available to webhooks or generic writers. */
-  depositDraftCorrectionKind?: "deposit_description" | "main_deduction";
+  depositDraftCorrectionKind?: "deposit_description" | "main_deduction" | "main_deduction_rounding";
   depositDraftCorrectionReleaseKey?: string;
   depositDraftCorrectionApprovedBy?: number;
 };
@@ -488,10 +488,15 @@ export async function executeFinancialDraftWrite(
       if (!/-D$/.test(payload.documentNumber) || row.LineAmountTypes !== "Inclusive" || !line || line.ItemCode !== "Deposit Required" || line.Quantity !== 1 || !(typeof line.UnitAmount === "number" && line.UnitAmount > 0) || !/^Deposit for Q\d{1,12} from INV-\d{1,12}$/.test(String(line.Description ?? "")) || !String(line.Description).endsWith(`from ${payload.documentNumber.replace(/-D$/, "")}`)) {
         throw new FinancialWriteDisabledError("Deposit correction permits only the exact native Deposit description on its existing inclusive -D Draft.");
       }
-    } else {
+    } else if (context.depositDraftCorrectionKind === "main_deduction") {
       const deductions = row.LineItems.filter((line: any) => line?.Description === `Deposit deduction — ${payload.documentNumber}-D` && line.Quantity === 1 && Number(line.UnitAmount) < 0 && String(line.AccountCode) === "200" && line.TaxType === "OUTPUT");
       if (!/^INV-\d{1,12}$/.test(payload.documentNumber) || row.LineAmountTypes !== "Exclusive" || deductions.length !== 1) {
         throw new FinancialWriteDisabledError("Deposit correction permits only one negative exclusive Deposit deduction line on the exact existing main Draft.");
+      }
+    } else {
+      const deductions = row.LineItems.filter((line: any) => line?.Description === "Deposit deduction — INV-702933-D" && line.Quantity === 1 && Number(line.UnitAmount) === -454.55 && Number(line.LineAmount) === -454.55 && Number(line.TaxAmount) === -45.45 && String(line.AccountCode) === "200" && line.TaxType === "OUTPUT");
+      if (context.depositDraftCorrectionKind !== "main_deduction_rounding" || payload.documentNumber !== "INV-702933" || row.LineAmountTypes !== "Exclusive" || deductions.length !== 1) {
+        throw new FinancialWriteDisabledError("Deposit rounding correction permits only the approved -$45.45 tax override on the exact D702933 Draft deduction line.");
       }
     }
   }

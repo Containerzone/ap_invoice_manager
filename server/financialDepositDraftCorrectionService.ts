@@ -71,7 +71,7 @@ function writableDraft(invoice: XeroInvoice): XeroInvoice {
   return out;
 }
 
-function payload(invoice: XeroInvoice, sourceHash: string, correction: "deposit_description" | "main_deduction"): FinancialDraftPayload {
+function payload(invoice: XeroInvoice, sourceHash: string, correction: "deposit_description" | "main_deduction" | "main_deduction_rounding"): FinancialDraftPayload {
   const documentNumber = presentString(invoice.InvoiceNumber);
   const invoiceId = presentString(invoice.InvoiceID);
   return {
@@ -144,4 +144,33 @@ export async function applyApprovedDepositDraftCorrection(dealId: string) {
   const mainResult = await executeGuardedFinancialWriterCommand({ workflowType: "deposit_draft_correction", proposedAction: "update_draft", payload: second.mainPayload, preparedBy: policy.approvedBy!, authorisation: context("main_deduction"), expectedExactDraft: (second.mainPayload.body.Invoices as Record<string, any>[])[0]! });
   if (mainResult.outcome !== "succeeded") return { ok: false as const, stage: "main_deduction" as const, outcome: mainResult };
   return { ok: true as const, depositExecutionId: depositResult.executionId, mainExecutionId: mainResult.executionId, depositInvoiceNumber: first.depositPayload.documentNumber, mainInvoiceNumber: first.mainPayload.documentNumber, mainTotalBefore: first.mainTotalBefore, mainTotalAfter: first.mainTotalAfter };
+}
+
+/**
+ * Incident-only reconciliation for the already-created D702933 deduction line.
+ * It replaces no retained line and changes only the Xero-supported TaxAmount
+ * override from -45.46 to -45.45 so the approved inclusive deduction is $500.00.
+ */
+export async function applyApprovedMainDepositRoundingCorrection(dealId: string) {
+  const policy = await getDepositInvoiceReleasePolicy();
+  assertDepositInvoiceRelease(policy);
+  const preview = await previewDepositDraftCorrection(dealId);
+  if (preview.dealNumber !== "D702933" || preview.depositInvoice.LineItems?.[0]?.Description !== preview.depositDescription) {
+    throw new Error("Only the verified D702933 Deposit correction state may receive this one-cent rounding correction.");
+  }
+  const current = completeInvoice(preview.mainInvoice, "INV-702933");
+  const corrected = writableDraft(current);
+  const deductions = corrected.LineItems.filter((line: any) => line?.Description === "Deposit deduction — INV-702933-D");
+  if (deductions.length !== 1) throw new Error("Exactly one existing D702933 Deposit deduction line is required; no line will be guessed or duplicated.");
+  const deduction = deductions[0]!;
+  if (deduction.Quantity !== 1 || Number(deduction.UnitAmount) !== -454.55 || Number(deduction.LineAmount) !== -454.55 || Number(deduction.TaxAmount) !== -45.46 || String(deduction.AccountCode) !== "200" || deduction.TaxType !== "OUTPUT") {
+    throw new Error("Current D702933 Deposit deduction evidence does not match the approved one-cent correction.");
+  }
+  deduction.TaxAmount = -45.45;
+  const sourceHash = financialSha256({ dealId, current, correction: "D702933-approved-tax-rounding--45.46-to--45.45" });
+  const correctionPayload = payload(corrected, sourceHash, "main_deduction_rounding");
+  const authorisation = { workflowType: "deposit_draft_correction", approvalReference: policy.releaseKey, globalShadowMode: false, familyLiveEnabled: true, releaseManifestApproved: true, cutoverPackApproved: true, currentDocumentPreflightPassed: true, legacyWriterHandoffComplete: true, depositDraftCorrectionKind: "main_deduction_rounding" as const, depositDraftCorrectionReleaseKey: policy.releaseKey, depositDraftCorrectionApprovedBy: policy.approvedBy! };
+  const outcome = await executeGuardedFinancialWriterCommand({ workflowType: "deposit_draft_correction", proposedAction: "update_draft", payload: correctionPayload, preparedBy: policy.approvedBy!, authorisation, expectedExactDraft: (correctionPayload.body.Invoices as Record<string, any>[])[0]! });
+  if (outcome.outcome !== "succeeded") return { ok: false as const, outcome };
+  return { ok: true as const, executionId: outcome.executionId, documentNumber: correctionPayload.documentNumber, totalBefore: Number(current.Total), totalAfter: 5417.35 };
 }

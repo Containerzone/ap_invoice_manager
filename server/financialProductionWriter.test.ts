@@ -198,6 +198,21 @@ describe("guarded financial production writer", () => {
     }
   });
 
+  it("rejects a Deposit rounding correction unless it carries the exact approved tax override", async () => {
+    process.env.FINANCIAL_LIVE_WRITES_ENABLED = "true";
+    const correction = {
+      endpoint: "/Invoices/main-id" as const,
+      method: "POST" as const,
+      documentFamily: "customer_invoice" as const,
+      documentNumber: "INV-702933",
+      expectedXeroDocumentId: "main-id",
+      idempotencyKey: "c".repeat(64),
+      body: { Invoices: [{ InvoiceID: "main-id", InvoiceNumber: "INV-702933", Type: "ACCREC", Status: "DRAFT", CurrencyCode: "AUD", LineAmountTypes: "Exclusive", Contact: { ContactID: "customer" }, Date: "2026-10-12", LineItems: [{ Description: "Deposit deduction — INV-702933-D", Quantity: 1, UnitAmount: -454.55, LineAmount: -454.55, TaxAmount: -45.46, AccountCode: "200", TaxType: "OUTPUT" }] }] },
+    };
+    const authorisation = completeAuthorisation({ workflowType: "deposit_draft_correction", approvalReference: "DEPOSIT-CORRECTION", depositDraftCorrectionKind: "main_deduction_rounding", depositDraftCorrectionReleaseKey: "DEPOSIT-CORRECTION", depositDraftCorrectionApprovedBy: 1 });
+    await expect(executeFinancialDraftWrite(correction, authorisation)).rejects.toThrow(/rounding correction/i);
+  });
+
   it("never prepares held or pending-GST proposals", () => {
     expect(() => prepareFinancialDraftPayload(proposal({ validationStatus: "held" }), "workflow-key")).toThrow(/held/i);
     expect(() => prepareFinancialDraftPayload(proposal({ gstTreatment: "PENDING_CONFIGURATION", documentFamily: "customer_invoice" }), "workflow-key")).toThrow(/GST treatment/i);
