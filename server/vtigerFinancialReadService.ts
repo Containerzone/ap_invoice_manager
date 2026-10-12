@@ -1,5 +1,6 @@
 import axios from "axios";
 import { createHash } from "node:crypto";
+import { retryReadOnceWhen } from "./transientReadRetry";
 
 export type VtigerFinancialConnectionStatus = {
   configured: boolean;
@@ -61,6 +62,47 @@ async function vtigerLogin<T>(params: Record<string, string>): Promise<T> {
   return response.data.result as T;
 }
 
+function isTransientVtigerLoginRejection(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /invalid username or password/i.test(error.message)
+  );
+}
+
+/**
+ * Retries only VTiger's intermittent login-rejection response, using a new
+ * challenge token. This helper is read-only: it cannot retry a CRM or Xero
+ * write, and a second rejection still propagates as a hold.
+ */
+async function readOnlyVtigerSession(): Promise<string> {
+  const { username, accessKey } = config();
+  const status = getVtigerFinancialConnectionStatus();
+  if (!status.configured || !username || !accessKey)
+    throw new Error("VTiger is not configured for read-only financial evaluation.");
+  return retryReadOnceWhen(
+    async () => {
+      const challenge = await vtigerRequest<{ token?: string }>({
+        operation: "getchallenge",
+        username,
+      });
+      if (!challenge?.token)
+        throw new Error("VTiger challenge did not return a usable temporary token.");
+      const accessKeyHash = createHash("md5")
+        .update(`${challenge.token}${accessKey}`)
+        .digest("hex");
+      const login = await vtigerLogin<{ sessionName?: string }>({
+        operation: "login",
+        username,
+        accessKey: accessKeyHash,
+      });
+      if (!login?.sessionName)
+        throw new Error("VTiger read-only login did not return a usable session.");
+      return login.sessionName;
+    },
+    isTransientVtigerLoginRejection,
+  );
+}
+
 function safeMessage(error: unknown): string {
   const response = (error as any)?.response;
   if (response?.status === 401 || response?.status === 403) return "VTiger rejected the configured AP Management credentials.";
@@ -80,12 +122,7 @@ export async function testVtigerFinancialConnection(): Promise<VtigerFinancialCo
   const checkedAt = new Date();
   if (!status.configured) return { ...status, outcome: "blocked", checkedAt, message: "VTiger read-only configuration is incomplete." };
   try {
-    const { username, accessKey } = config();
-    const challenge = await vtigerRequest<{ token?: string }>({ operation: "getchallenge", username });
-    if (!challenge?.token) throw new Error("VTiger challenge did not return a usable temporary token.");
-    const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
-    const login = await vtigerLogin<{ sessionName?: string }>({ operation: "login", username, accessKey: accessKeyHash });
-    if (!login?.sessionName) throw new Error("VTiger read-only login did not return a usable session.");
+    await readOnlyVtigerSession();
     return { ...status, outcome: "passed", checkedAt, message: "Read-only VTiger challenge and documented form-login passed. No CRM record, workflow URL or schedule was changed." };
   } catch (error) {
     return { ...status, outcome: "failed", checkedAt, message: safeMessage(error) };
@@ -99,14 +136,8 @@ export async function testVtigerFinancialConnection(): Promise<VtigerFinancialCo
  */
 export async function retrieveCurrentVtigerFinancialRecord(recordId: string): Promise<Record<string, unknown>> {
   if (!validRecordId(recordId)) throw new Error("VTiger record ID must use the standard moduleId x recordId format");
-  const { username, accessKey } = config();
-  const status = getVtigerFinancialConnectionStatus();
-  if (!status.configured || !username || !accessKey) throw new Error("VTiger is not configured for read-only financial shadow evaluation");
-
-  const challenge = await vtigerRequest<{ token: string }>({ operation: "getchallenge", username });
-  const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
-  const login = await vtigerLogin<{ sessionName: string }>({ operation: "login", username, accessKey: accessKeyHash });
-  return vtigerRequest<Record<string, unknown>>({ operation: "retrieve", id: recordId.trim(), sessionName: login.sessionName });
+  const sessionName = await readOnlyVtigerSession();
+  return vtigerRequest<Record<string, unknown>>({ operation: "retrieve", id: recordId.trim(), sessionName });
 }
 
 /**
@@ -127,16 +158,11 @@ export async function describeVtigerFinancialModuleFields(moduleName: string): P
 }> {
   const normalized = moduleName.trim();
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(normalized)) throw new Error("VTiger module name is invalid.");
-  const { username, accessKey } = config();
-  const status = getVtigerFinancialConnectionStatus();
-  if (!status.configured || !username || !accessKey) throw new Error("VTiger is not configured for read-only financial metadata validation.");
-  const challenge = await vtigerRequest<{ token: string }>({ operation: "getchallenge", username });
-  const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
-  const login = await vtigerLogin<{ sessionName: string }>({ operation: "login", username, accessKey: accessKeyHash });
+  const sessionName = await readOnlyVtigerSession();
   const described = await vtigerRequest<{ name?: string; idPrefix?: string; fields?: Array<{ name?: string; label?: string; type?: Record<string, unknown>; mandatory?: boolean }> }>({
     operation: "describe",
     elementType: normalized,
-    sessionName: login.sessionName,
+    sessionName,
   });
   return {
     name: typeof described?.name === "string" ? described.name : normalized,

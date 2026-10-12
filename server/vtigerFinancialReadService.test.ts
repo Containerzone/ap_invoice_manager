@@ -51,6 +51,19 @@ describe("VTiger financial read-only connection health", () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
+  it("reissues one fresh challenge after VTiger's transient invalid-login response", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge-one" } } })
+      .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge-two" } } });
+    mockPost
+      .mockResolvedValueOnce({ data: { success: false, error: { message: "Invalid username or password" } } })
+      .mockResolvedValueOnce({ data: { success: true, result: { sessionName: "read-session" } } });
+
+    await expect(testVtigerFinancialConnection()).resolves.toMatchObject({ outcome: "passed" });
+    expect(mockGet).toHaveBeenCalledTimes(2);
+    expect(mockPost).toHaveBeenCalledTimes(2);
+  });
+
   it("describes post-success mapping fields with GET-only metadata after session login", async () => {
     mockGet
       .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge" } } })

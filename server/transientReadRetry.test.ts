@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { retryReadOnce } from "./transientReadRetry";
+import { retryReadOnce, retryReadOnceWhen } from "./transientReadRetry";
 
 describe("retryReadOnce", () => {
   it("retries one failed read and returns the recovered result", async () => {
@@ -19,5 +19,28 @@ describe("retryReadOnce", () => {
 
     await expect(retryReadOnce(read, 0)).rejects.toBe(firstError);
     expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries only the recognised transient read failure", async () => {
+    const read = vi.fn()
+      .mockRejectedValueOnce(new Error("Invalid username or password"))
+      .mockResolvedValueOnce("read recovered");
+
+    await expect(
+      retryReadOnceWhen(
+        read,
+        error => error instanceof Error && /invalid username or password/i.test(error.message),
+        0,
+      ),
+    ).resolves.toBe("read recovered");
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry an unrecognised read failure", async () => {
+    const error = new Error("invalid source schema");
+    const read = vi.fn().mockRejectedValueOnce(error);
+
+    await expect(retryReadOnceWhen(read, () => false, 0)).rejects.toBe(error);
+    expect(read).toHaveBeenCalledTimes(1);
   });
 });

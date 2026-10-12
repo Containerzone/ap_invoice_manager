@@ -92,6 +92,26 @@ describe("exact VTiger financial candidate finder", () => {
     expect(result).toMatchObject({ outcome: "blocked", candidates: [], message: "VTiger rejected AP Management's read-only credentials." });
   });
 
+  it("reissues one fresh challenge when VTiger transiently rejects the login", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge-one" } } })
+      .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge-two" } } })
+      .mockResolvedValueOnce({ data: { success: true, result: [{ id: "4x702903", potential_no: "D702903" }] } });
+    mockPost
+      .mockResolvedValueOnce({ data: { success: false, error: { message: "Invalid username or password" } } })
+      .mockResolvedValueOnce({ data: { success: true, result: { sessionName: "session" } } });
+
+    await expect(
+      findExactFinancialCandidate({
+        sourceCategory: "deal",
+        businessNumber: "D702903",
+        configuration: { deal: [{ module: "Potentials", businessNumberFields: ["potential_no"], selectFields: ["id", "potential_no"] }] },
+      }),
+    ).resolves.toMatchObject({ outcome: "found" });
+    expect(mockGet).toHaveBeenCalledTimes(3);
+    expect(mockPost).toHaveBeenCalledTimes(2);
+  });
+
   it("uses positive current predicates, recent sort and a hard ten-row cap for family discovery", async () => {
     successfulSession();
     mockGet.mockResolvedValueOnce({ data: { success: true, result: [{ id: "4x1", potentials_no: "D702903", sales_stage: "READY", modifiedtime: "2026-09-29 12:00:00" }] } });

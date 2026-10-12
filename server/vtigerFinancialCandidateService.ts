@@ -1,5 +1,6 @@
 import axios from "axios";
 import { createHash } from "node:crypto";
+import { retryReadOnceWhen } from "./transientReadRetry";
 
 export type FinancialCandidateCategory = "deal" | "container_control";
 
@@ -125,15 +126,27 @@ async function login<T>(params: Record<string, string>): Promise<T> {
   return response.data.result as T;
 }
 
+function isTransientVtigerLoginRejection(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /invalid username or password/i.test(error.message)
+  );
+}
+
 async function readOnlySession(): Promise<string> {
   const { username, accessKey } = config();
   if (!username || !accessKey || !config().url) throw new Error("VTiger is not configured for AP-side candidate discovery.");
-  const challenge = await request<{ token?: string }>({ operation: "getchallenge", username });
-  if (!challenge?.token) throw new Error("VTiger challenge did not return a token.");
-  const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
-  const session = await login<{ sessionName?: string }>({ operation: "login", username, accessKey: accessKeyHash });
-  if (!session?.sessionName) throw new Error("VTiger read-only login did not return a session.");
-  return session.sessionName;
+  return retryReadOnceWhen(
+    async () => {
+      const challenge = await request<{ token?: string }>({ operation: "getchallenge", username });
+      if (!challenge?.token) throw new Error("VTiger challenge did not return a token.");
+      const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
+      const session = await login<{ sessionName?: string }>({ operation: "login", username, accessKey: accessKeyHash });
+      if (!session?.sessionName) throw new Error("VTiger read-only login did not return a session.");
+      return session.sessionName;
+    },
+    isTransientVtigerLoginRejection,
+  );
 }
 
 function sourceRefreshedAt(row: Record<string, unknown>): Date | null {
