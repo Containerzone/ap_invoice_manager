@@ -6,7 +6,7 @@
 
 | Item | AP rule |
 |---|---|
-| Source trigger | Dedicated VTiger Main Customer Invoice action, carrying one exact Deal webservice ID only. |
+| Source trigger | Dedicated VTiger Main Customer Invoice action, carrying one exact Deal webservice ID or legacy `D<number>` potential number only. |
 | Current source facts | AP re-reads the Deal, linked Quote, current organisation/contact and every current Quote Service line. Body customer/amount/line values are ignored. |
 | Xero document | One `ACCREC` **Draft** only. |
 | Reference | `INV-<Deal number without D>`; for example `D702877` → `INV-702877`. |
@@ -18,14 +18,15 @@
 ## Current AP endpoints and UI
 
 - **VTiger receiver:** `POST /api/webhooks/vtiger/main-customer-invoice`
-- **Private header:** the existing AP `x-financial-webhook-secret` header; never place the secret in a page, email, prompt or log.
+- **VTiger authentication:** either the existing AP `x-financial-webhook-secret` header or the established JSON `secret` field. The receiver compares it in constant time and never returns, logs or persists it.
+- **Legacy VTiger body:** `id` can be the Deal webservice ID or the legacy `potential_no` D-number. Optional `dryRun`, customer, amount, Quote or line fields are ignored; AP re-reads the current source.
 - **Administrator workspace:** **Main Customer Invoices** in the AP sidebar.
 - **Current evidence preview:** exact `D<Deal>` or `5x…` lookup. It performs VTiger/Xero GET-only checks and cannot create a document.
 
 ## Conditions required before live release
 
 1. Publish the AP checkpoint containing this receiver and confirm the public URL returns `401` without the private header.
-2. In VTiger, create or edit **one dedicated Main Customer Invoice branch** only. It must send the existing private header and an ID-only body to the AP receiver; do not reuse a generic Deal action.
+2. In VTiger, create or edit **one dedicated Main Customer Invoice branch** only. It may use the established JSON body (`id`, `secret`, optional `dryRun`) or the existing private header; do not reuse a generic Deal action.
 3. Pause the legacy **Operations Main Customer Invoice** writer for **new** events only. Do not change Warranty, Deposit, Final Weight, Asset, Customer Sale, For Hire or Storage actions as part of this handover.
 4. State the effective Sydney cutover time and approve **new events only** in the current conversation. Existing Deals/invoices remain reconciliation work; AP does not adopt them.
 5. Record the AP-local release policy with both handovers marked complete, then enable only `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true`.

@@ -1,24 +1,163 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseMainCustomerInvoiceWebhookEnvelope, registerMainCustomerInvoiceWebhook } from "./financialMainCustomerInvoiceWebhook";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  process: vi.fn(),
+  getPolicy: vi.fn(),
+  assertPolicy: vi.fn(),
+  exactCandidate: vi.fn(),
+  alert: vi.fn(),
+}));
+
+vi.mock("./financialMainCustomerInvoiceService", async original => ({
+  ...(await original<typeof import("./financialMainCustomerInvoiceService")>()),
+  processAutomaticMainCustomerInvoice: mocks.process,
+}));
+vi.mock("./financialMainCustomerInvoiceRelease", async original => ({
+  ...(await original<typeof import("./financialMainCustomerInvoiceRelease")>()),
+  getMainCustomerInvoiceReleasePolicy: mocks.getPolicy,
+  assertMainCustomerInvoiceRelease: mocks.assertPolicy,
+}));
+vi.mock("./vtigerFinancialCandidateService", () => ({
+  findExactFinancialCandidate: mocks.exactCandidate,
+}));
+vi.mock("./workflowAlertService", () => ({
+  reportWorkflowFailureSafely: mocks.alert,
+}));
+
+import {
+  hasMainCustomerInvoiceWebhookSecret,
+  parseMainCustomerInvoiceWebhookEnvelope,
+  registerMainCustomerInvoiceWebhook,
+  resolveMainCustomerInvoiceWebhookRecord,
+} from "./financialMainCustomerInvoiceWebhook";
+
+function response() {
+  return { status: vi.fn().mockReturnThis(), json: vi.fn() } as any;
+}
+
+function registeredHandler() {
+  const handlers = new Map<string, any>();
+  registerMainCustomerInvoiceWebhook({
+    post: (path: string, handler: any) => handlers.set(path, handler),
+  } as any);
+  return handlers.get("/api/webhooks/vtiger/main-customer-invoice");
+}
 
 afterEach(() => {
   delete process.env.FINANCIAL_AP_WEBHOOK_SECRET;
   delete process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED;
 });
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.getPolicy.mockResolvedValue({});
+  mocks.exactCandidate.mockResolvedValue({
+    outcome: "found",
+    candidates: [{ recordId: "5x702877" }],
+    message: "exact match",
+  });
+  mocks.process.mockResolvedValue({
+    ok: true,
+    status: "drafts_created",
+    recordId: "5x702877",
+    xeroWritesAttempted: 1,
+  });
+});
+
 describe("Main Customer Invoice webhook contract", () => {
-  it("accepts an exact Deal ID only and ignores all financial values in the body", () => {
-    expect(parseMainCustomerInvoiceWebhookEnvelope({ deal_id: "5x702877", event: "customer-invoice.main-create", total: 1, customer: "Wrong" })).toEqual({ recordId: "5x702877", event: "customer-invoice.main-create" });
-    expect(() => parseMainCustomerInvoiceWebhookEnvelope({ id: "D702877" })).toThrow(/exact VTiger Deal/i);
+  it("accepts one exact webservice ID or legacy D-number and ignores financial body values", () => {
+    expect(
+      parseMainCustomerInvoiceWebhookEnvelope({
+        id: "5x702877",
+        event: "customer-invoice.main-create",
+        total: 1,
+        customer: "Wrong",
+      })
+    ).toEqual({
+      recordId: "5x702877",
+      dealNumber: null,
+      event: "customer-invoice.main-create",
+    });
+    expect(parseMainCustomerInvoiceWebhookEnvelope({ id: "D702877" })).toEqual({
+      recordId: null,
+      dealNumber: "D702877",
+      event: null,
+    });
+    expect(() =>
+      parseMainCustomerInvoiceWebhookEnvelope({ id: "D702877", deal_id: "5x2" })
+    ).toThrow(/conflicting/i);
+  });
+
+  it("accepts the established VTiger JSON body-secret without exposing it", () => {
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET = "test-secret";
+    expect(
+      hasMainCustomerInvoiceWebhookSecret({
+        header: () => undefined,
+        body: { id: "5x702877", secret: "test-secret", dryRun: true },
+      } as any)
+    ).toBe(true);
+    expect(
+      hasMainCustomerInvoiceWebhookSecret({
+        header: () => undefined,
+        body: { id: "5x702877", secret: "wrong" },
+      } as any)
+    ).toBe(false);
   });
 
   it("holds before any Deal/Quote source read or Xero write while the Main Invoice gate is off", async () => {
     process.env.FINANCIAL_AP_WEBHOOK_SECRET = "test-secret";
-    const handlers = new Map<string, any>();
-    registerMainCustomerInvoiceWebhook({ post: (path: string, handler: any) => handlers.set(path, handler) } as any);
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() } as any;
-    await handlers.get("/api/webhooks/vtiger/main-customer-invoice")({ header: () => "test-secret", body: { id: "5x702877" } }, res);
+    const res = response();
+    await registeredHandler()(
+      {
+        header: () => undefined,
+        body: { id: "D702877", secret: "test-secret", dryRun: true },
+      },
+      res
+    );
     expect(res.status).toHaveBeenCalledWith(503);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "main-customer-invoice-release-disabled", xeroWritesAttempted: 0 }));
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: "main-customer-invoice-release-disabled",
+        xeroWritesAttempted: 0,
+      })
+    );
+    expect(mocks.exactCandidate).not.toHaveBeenCalled();
+    expect(mocks.process).not.toHaveBeenCalled();
+  });
+
+  it("resolves a legacy D-number only after a valid release, then processes its exact Deal", async () => {
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET = "test-secret";
+    process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED = "true";
+    const res = response();
+    await registeredHandler()(
+      {
+        header: () => undefined,
+        body: { id: "D702877", secret: "test-secret", dryRun: true },
+      },
+      res
+    );
+    expect(mocks.assertPolicy).toHaveBeenCalledWith({});
+    expect(mocks.exactCandidate).toHaveBeenCalledWith({
+      sourceCategory: "deal",
+      businessNumber: "D702877",
+    });
+    expect(mocks.process).toHaveBeenCalledWith("5x702877");
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it("holds an ambiguous D-number without calling the Draft coordinator", async () => {
+    mocks.exactCandidate.mockResolvedValue({
+      outcome: "ambiguous",
+      candidates: [{ recordId: "5x1" }, { recordId: "5x2" }],
+      message: "two exact candidates",
+    });
+    await expect(
+      resolveMainCustomerInvoiceWebhookRecord({
+        recordId: null,
+        dealNumber: "D702877",
+        event: null,
+      })
+    ).rejects.toThrow(/ambiguous/i);
+    expect(mocks.process).not.toHaveBeenCalled();
   });
 });

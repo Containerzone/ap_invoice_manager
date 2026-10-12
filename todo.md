@@ -219,3 +219,5 @@
 - [x] Kept every existing workflow screen and its administrator protection unchanged; former direct URLs now redirect to the matching Financial Automations subtab for bookmarks and links.
 - [x] Added URL-addressable subtab selection (`/financial-automation?tab=<workflow>`), responsive horizontal subtab navigation and unit coverage for all legacy-path mappings.
 - [x] Validated TypeScript, **114 test files / 1,174 tests**, production build and whitespace checks. No financial release policy, deployment flag, webhook, Xero record, VTiger record, Operations schedule or external workflow changed.
+
+- [x] Main Customer Invoice now accepts the established VTiger JSON envelope (`id`, `secret`, optional `dryRun`) as a constant-time body-secret alternative to the header. `id` accepts either an exact current Deal webservice ID or legacy `potential_no` D-number, resolved only via one bounded exact lookup after the separate family release is valid; all other body fields are ignored. TypeScript, 114 test files / 1,177 tests and production build pass.
