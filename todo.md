@@ -188,6 +188,8 @@
 - [ ] Publish the Final Weight activation checkpoint; then run only the authenticated public nonexistent-ID probe on both routes before accepting the first qualifying post-cutover Final Weight event. Inspect the first exact existing Xero Draft amendment/read-back; no non-Draft, create, CRM mutation or retry is allowed.
 - [x] Added de-duplicated operational failure reporting for active Final Weight holds and invalid references. Messages contain only safe direction/Deal/state identifiers; disabled routes and `dryRun` probes are suppressed to avoid test/replay alert spam. Full suite and production build pass.
 - [ ] Publish the Final Weight failure-alert checkpoint before relying on automatic notification for a live Final Weight hold.
+- [x] Diagnosed legacy Final Weight delivery: VTiger posts the existing JSON `id` as a D-number, while the original receiver only accepted a `5x…` webservice ID. Added exact D-number compatibility after release-policy validation only, reusing the bounded AP-side exact candidate resolver; ambiguity/not-found holds, and all finance fields remain ignored. A read-only D702915 preflight found one current exact Deal and eligible Draft `INV-702915`; no write occurred.
+- [ ] Publish the Final Weight D-number compatibility checkpoint. Before any D702915 amendment, refresh the exact current preflight and obtain confirmation for only the resulting specific Draft PUT.
 
 ## 2026-10-11 — Extra Hire Invoice AP-only readiness
 

@@ -11,7 +11,7 @@ The reference history establishes **two independently configured Operations bran
 | Overweight | `/api/webhooks/vtiger/final-weight-overweight` | Amend the exact current Draft `INV-<Deal digits>` with exactly one positive GST-exclusive `SER70` excess-weight line |
 | Underweight | `/api/webhooks/vtiger/final-weight-underweight` | Change only the due date of the exact current Draft `INV-<Deal digits>` from the verified current pickup-date mapping |
 
-Both require the existing private `x-financial-webhook-secret` header (`FINANCIAL_AP_WEBHOOK_SECRET`) and one exact Deal webservice ID, e.g. `{ "deal_id": "5x12345" }`. `record_id` or `id` are accepted only if every supplied ID agrees. The examples are synthetic. No D-number is accepted by a receiver; the admin read-only preview can resolve one exact D-number. Financial/date/customer/direction body data is ignored.
+Both require the existing private `x-financial-webhook-secret` header (`FINANCIAL_AP_WEBHOOK_SECRET`) or the established VTiger JSON `secret`, plus one exact Deal webservice ID or legacy D-number, e.g. `{ "deal_id": "5x12345" }` or `{ "id": "D702915" }`. `record_id`, `deal_id` or `id` are accepted only if every supplied reference agrees. A D-number is resolved only after the independent Final Weight release checks through one bounded exact Potentials candidate lookup; not-found or multiple matches hold. The examples are synthetic. Financial/date/customer/direction body data is ignored.
 
 ## Verified metadata, not guessed aliases
 
