@@ -1,6 +1,6 @@
 # Main Customer Invoice — AP Migration Handover
 
-**Status:** Implemented. The approved new-events-only release policy and deployment setting are prepared locally; the public runtime remains safely disabled until the checkpoint created after that setting is published.
+**Status:** **Live for new events only.** The dedicated VTiger branch and Operations handover were recorded, the AP-local release policy is enabled, and `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true` is published. The first approved production test completed on 12 October 2026; no historical adoption is enabled.
 
 ## What AP now owns when separately released
 
@@ -23,14 +23,13 @@
 - **Administrator workspace:** **Main Customer Invoices** in the AP sidebar.
 - **Current evidence preview:** exact `D<Deal>` or `5x…` lookup. It performs VTiger/Xero GET-only checks and cannot create a document.
 
-## Conditions required before live release
+## Recorded live-release conditions
 
-1. Publish the AP checkpoint containing this receiver and confirm the public URL returns `401` without the private header.
-2. In VTiger, create or edit **one dedicated Main Customer Invoice branch** only. It may use the established JSON body (`id`, `secret`, optional `dryRun`) or the existing private header; do not reuse a generic Deal action.
-3. Pause the legacy **Operations Main Customer Invoice** writer for **new** events only. Do not change Warranty, Deposit, Final Weight, Asset, Customer Sale, For Hire or Storage actions as part of this handover.
-4. State the effective Sydney cutover time and approve **new events only** in the current conversation. Existing Deals/invoices remain reconciliation work; AP does not adopt them.
-5. Record the AP-local release policy with both handovers marked complete, then enable only `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true`.
-6. Send one new qualified event and verify the single exact Xero Draft invoice in **Main Customer Invoices**: `INV-…`, customer, Quote reference, Services, account 200, GST, total and Draft read-back.
+1. The AP receiver was published and verified to return `401` without a valid secret.
+2. VTiger has a dedicated Main Customer Invoice branch using the established JSON body (`id`, `secret`, optional `dryRun`) and the existing Operations Main Invoice writer is paused for **new** events only.
+3. The current-conversation approval, new-events-only cutover policy and `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true` deployment setting were recorded and published.
+4. First production verification: Deal `D702935` created an exact new Xero `ACCREC` **DRAFT** `INV-702935`, reference `Q531993`, for Barry Meintjes. The immutable Xero ID is `09191cf4-bdb6-4d3b-b5c8-9ca73383a358`; exact current source, Quote line, account 200, AUD, GST exclusive, totals and one-line read-back all passed. The AP ledger event and execution are both `30001` / `drafts_created`.
+5. Continue to monitor the next new events in **Financial Automations → Main Customer Invoices**. Any historical, duplicate, ambiguous, non-Draft or changed-source case must remain held for reconciliation.
 
 ## Explicit exclusions
 
@@ -43,4 +42,4 @@
 
 - Migration: `0041_curly_molecule_man.sql`.
 - Regression coverage: source/Quote/Service evidence, collision holds, default-off policy, protected disabled receiver and isolated writer authorisation.
-- The release flag remains unset/false; this document records preparation only.
+- The release flag is enabled only for Main Customer Invoice automatic Draft creation. Other financial family flags and all invoice approval/send/payment/void/delete operations remain outside this release.
