@@ -5,7 +5,7 @@ vi.mock("./db", () => ({ getXeroToken: vi.fn().mockResolvedValue({ tenantName: "
 vi.mock("./xeroService", () => ({ EXPECTED_AP_XERO_TENANT_LABEL: "CONTAINERZONE", getXeroReadAuthWithRefresh: vi.fn().mockResolvedValue({ token: "synthetic", tenantId: "synthetic" }) }));
 vi.mock("./xeroRequestManager", () => ({ XERO_CACHE_TTL: { invoiceSearch: 1 }, runCachedXeroGet: vi.fn(async (_a, _b, _c, operation) => (await operation()).data) }));
 import { readBackFinancialDraft, readFinalWeightXeroEvidence } from "./financialReadOnlyXeroService";
-import { buildFinalWeightAdjustment } from "./financialFinalWeightAdjustmentRules";
+import { buildFinalWeightAdjustment, finalWeightDraftEvidence } from "./financialFinalWeightAdjustmentRules";
 import { facts, invoice, xero } from "./_test/finalWeightFixtures";
 beforeEach(() => { vi.clearAllMocks(); m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : url.endsWith("/Contacts") ? { Contacts: [{ ContactID: "customer-exact", Name: "Synthetic Customer" }] } : url.endsWith("/Items/SER70") ? { Items: [{ Code: "SER70", IsSold: true, SalesDetails: { AccountCode: "200", TaxType: "OUTPUT" } }] } : url.endsWith("/Accounts") ? { Accounts: [{ Code: "200", Status: "ACTIVE" }] } : { Invoices: [invoice()] } })); });
 const noMutations = () => { expect(m.post).not.toHaveBeenCalled(); expect(m.put).not.toHaveBeenCalled(); };
@@ -24,6 +24,13 @@ describe("Final weight exact GET/full-line readback", () => {
     const expected = buildFinalWeightAdjustment(facts({ actualWeight: 9, requiredDueDate: "2026-10-20" }), "underweight", xero()).expectedDraft!;
     m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : { Invoices: [invoice({ DueDate: "2026-10-20" })] } }));
     expect(await readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-702877", expectedXeroDocumentId: "invoice-exact", expectedFinalWeightDraft: expected })).toMatchObject({ status: "DRAFT", lineCount: 1 }); noMutations();
+  });
+  it("preserves an intentionally absent Draft due date", async () => {
+    const actual = invoice({ DueDate: null, DueDateString: null });
+    const expected = finalWeightDraftEvidence(actual);
+    delete expected.DueDate;
+    m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : { Invoices: [actual] } }));
+    await expect(readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-702877", expectedXeroDocumentId: "invoice-exact", expectedExactDraft: expected })).resolves.toMatchObject({ status: "DRAFT" }); noMutations();
   });
   it("validates positive SER70 derived net/tax and all retained line totals", async () => {
     const expected = buildFinalWeightAdjustment(facts(), "overweight", xero()).expectedDraft!;

@@ -115,7 +115,10 @@ export function assertFinalWeightReadback(actual: Record<string, any>, expected:
     if (financialSha256(normalized[key]) !== financialSha256(value)) throw new Error(`Final-weight readback changed retained invoice ${key}.`);
   }
   for (const key of Object.keys(normalized)) {
-    if (key !== "LineItems" && !Object.prototype.hasOwnProperty.call(expected, key)) throw new Error(`Final-weight readback added unexpected invoice ${key}.`);
+    // Xero returns an explicit null DueDate for a Draft that had no Due Date.
+    // Treat that as preserved absence when the immutable expected evidence omits it;
+    // do not turn a valid no-Due-Date Draft amendment into a false reconciliation.
+    if (key !== "LineItems" && !Object.prototype.hasOwnProperty.call(expected, key) && !(key === "DueDate" && normalized[key] === null)) throw new Error(`Final-weight readback added unexpected invoice ${key}.`);
   }
   if (Number(actual.AmountPaid ?? 0) !== 0 || Number(actual.AmountCredited ?? 0) !== 0 ||
     ["Payments", "CreditNotes", "Prepayments", "Overpayments"].some(key => actual[key]?.length)) throw new Error("Final-weight readback is no longer an unallocated unpaid Draft.");
