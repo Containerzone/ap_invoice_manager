@@ -186,6 +186,8 @@
 - [x] Validated TypeScript, full 96-file / 720-test suite, production build and `git diff --check`. No Xero document, VTiger record, Operations/Make setting, schedule, Heartbeat, policy or deployment flag changed.
 - [x] Recorded the approved dual-branch/new-events-only Final Weight policy, including both Operations handovers, exact mappings and isolated Draft-only update authority. It matches the current rules hash. Securely configured only `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED=true`; the local dual-route canonical body-secret smoke test used a nonexistent exact Deal ID and held with zero Xero writes. TypeScript, full 121-file / 1,200-test suite and production build pass.
 - [ ] Publish the Final Weight activation checkpoint; then run only the authenticated public nonexistent-ID probe on both routes before accepting the first qualifying post-cutover Final Weight event. Inspect the first exact existing Xero Draft amendment/read-back; no non-Draft, create, CRM mutation or retry is allowed.
+- [x] Added de-duplicated operational failure reporting for active Final Weight holds and invalid references. Messages contain only safe direction/Deal/state identifiers; disabled routes and `dryRun` probes are suppressed to avoid test/replay alert spam. Full suite and production build pass.
+- [ ] Publish the Final Weight failure-alert checkpoint before relying on automatic notification for a live Final Weight hold.
 
 ## 2026-10-11 — Extra Hire Invoice AP-only readiness
 

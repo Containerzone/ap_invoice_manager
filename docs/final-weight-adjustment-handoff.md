@@ -66,3 +66,7 @@ Before a future release, independently confirm:
 Focused mock tests cover pure rules, source label/name/type ambiguity, full line retention and SER70 duplicate replacement, due-date-only/no negative changes, non-Draft/paid/allocated/missing/ambiguous/collision holds, exclusive immutable payload claims, one-shot writer update isolation, 401/503 no-write routes, administrator query authorization, readback and reconciliation. All financial transport tests use mocks; no external records are used.
 
 Final validation results are recorded in the appended `todo.md` checkpoint. The activation validation additionally used two authenticated local safe probes with a deliberately nonexistent exact Deal ID—one for each route. Both exercised the canonical body `id`/`secret` envelope and bounded VTiger read path, held with zero Xero writes, and did not create a CRM/accounting record. After publication, repeat that public safe probe before accepting the first real qualifying post-cutover event.
+
+## Operational hold notification
+
+For an active Final Weight route, an invalid/missing exact Deal reference, a source/preflight hold or an execution exception is persisted through the existing de-duplicated operational-failure service and emailed to the configured user/technical-team recipients once per active failure window. The notification contains only direction, Deal webservice ID (when valid) and held state—never credentials, raw webhook data or customer data. Disabled-route checks and `dryRun: true` safe probes do not alert.

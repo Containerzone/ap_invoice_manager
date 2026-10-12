@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ process: vi.fn(), policy: vi.fn() }));
+const m = vi.hoisted(() => ({ process: vi.fn(), policy: vi.fn(), report: vi.fn() }));
 vi.mock("./financialFinalWeightAdjustmentService", () => ({ processAutomaticFinalWeightAdjustment: m.process }));
 vi.mock("./financialFinalWeightAdjustmentRelease", async original => ({ ...(await original<any>()), getFinalWeightReleasePolicy: m.policy }));
+vi.mock("./workflowAlertService", () => ({ reportWorkflowFailureSafely: m.report }));
 import { parseFinalWeightEnvelope, registerFinalWeightAdjustmentWebhooks } from "./financialFinalWeightAdjustmentWebhook";
 import { assertFinalWeightRelease, resolveFinalWeightRelease } from "./financialFinalWeightAdjustmentRelease";
 import { FINAL_WEIGHT_PATHS } from "./financialFinalWeightAdjustmentRules";
@@ -36,7 +37,7 @@ describe("Final weight independent default-off dual release", () => {
     vi.stubEnv("FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED", ""); const res = response();
     await handler(direction)({ header: () => "", body: { id: "5x77", secret: "private-test", dryRun: true, amount: -999 } }, res);
     expect(res.status).toHaveBeenCalledWith(503); expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ direction, xeroWritesAttempted: 0 }));
-    expect(m.policy).not.toHaveBeenCalled(); expect(m.process).not.toHaveBeenCalled();
+    expect(m.policy).not.toHaveBeenCalled(); expect(m.process).not.toHaveBeenCalled(); expect(m.report).not.toHaveBeenCalled();
   });
   it.each(["overweight", "underweight"] as const)("%s rejects an incorrect VTiger JSON secret before policy/source/DB/Xero calls", async direction => {
     const res = response(); await handler(direction)({ header: () => "", body: { id: "5x77", secret: "wrong", dryRun: true } }, res);
@@ -57,6 +58,9 @@ describe("Final weight independent default-off dual release", () => {
     vi.stubEnv("FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED", "true"); const res = response();
     await handler(direction)({ header: () => "private-test", body: { id: "5x77", direction: direction === "overweight" ? "underweight" : "overweight", total: -1 } }, res);
     expect(m.process).toHaveBeenCalledWith("5x77", direction); expect(res.status).toHaveBeenCalledWith(202);
+    expect(m.report).toHaveBeenCalledWith(expect.objectContaining({
+      workflowType: "final_weight_adjustment", recordKey: `final-weight:${direction}:5x77`, details: { direction, dealId: "5x77", status: "held" },
+    }));
   });
   it("rejects malformed authenticated body without any policy/source read", async () => { const res = response(); await handler("overweight")({ header: () => "private-test", body: { id: "D77" } }, res); expect(res.status).toHaveBeenCalledWith(400); expect(m.policy).not.toHaveBeenCalled(); });
 });
