@@ -32,6 +32,17 @@ describe("Final weight exact GET/full-line readback", () => {
     m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : { Invoices: [actual] } }));
     await expect(readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-702877", expectedXeroDocumentId: "invoice-exact", expectedExactDraft: expected })).resolves.toMatchObject({ status: "DRAFT" }); noMutations();
   });
+  it("validates a full GST-inclusive customer Draft without applying exclusive subtotal math", async () => {
+    const actual = {
+      InvoiceID: "deposit-id", InvoiceNumber: "INV-702933-D", Type: "ACCREC", Status: "DRAFT", CurrencyCode: "AUD", LineAmountTypes: "Inclusive",
+      Contact: { ContactID: "customer-exact" }, Date: "2026-10-12", DueDate: "2026-10-13",
+      LineItems: [{ LineItemID: "deposit-line", ItemCode: "Deposit Required", Description: "Deposit for Q531665 from INV-702933", Quantity: 1, UnitAmount: 500, LineAmount: 500, TaxAmount: 45.45, AccountCode: "200", TaxType: "OUTPUT" }],
+      SubTotal: 454.55, TotalTax: 45.45, Total: 500,
+    };
+    const expected = finalWeightDraftEvidence(actual);
+    m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : { Invoices: [actual] } }));
+    await expect(readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-702933-D", expectedXeroDocumentId: "deposit-id", expectedExactDraft: expected })).resolves.toMatchObject({ status: "DRAFT", lineCount: 1 }); noMutations();
+  });
   it("validates positive SER70 derived net/tax and all retained line totals", async () => {
     const expected = buildFinalWeightAdjustment(facts(), "overweight", xero()).expectedDraft!;
     const actual = { ...expected, LineItems: [expected.LineItems[0], { ...expected.LineItems[1], LineItemID: "new-ser-id", LineAmount: 250, TaxAmount: 25 }], SubTotal: 340, TotalTax: 34, Total: 374 };

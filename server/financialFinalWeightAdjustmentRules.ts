@@ -142,9 +142,23 @@ export function assertFinalWeightReadback(actual: Record<string, any>, expected:
         Math.abs(Number(received.LineAmount) - net) > 0.001 || Math.abs(Number(received.TaxAmount) - tax) > 0.001) throw new Error("Final-weight SER70 readback differs from the positive GST-exclusive excess line.");
     }
   });
-  const subtotal = actual.LineItems.reduce((sum: number, line: Record<string, any>) => sum + Number(line.LineAmount), 0);
+  const lineTotal = actual.LineItems.reduce((sum: number, line: Record<string, any>) => sum + Number(line.LineAmount), 0);
   const tax = actual.LineItems.reduce((sum: number, line: Record<string, any>) => sum + Number(line.TaxAmount), 0);
-  if (![subtotal, tax, Number(actual.SubTotal), Number(actual.TotalTax), Number(actual.Total)].every(Number.isFinite) ||
-    Math.abs(Number(actual.SubTotal) - subtotal) > 0.01 || Math.abs(Number(actual.TotalTax) - tax) > 0.01 ||
-    Math.abs(Number(actual.Total) - subtotal - tax) > 0.01) throw new Error("Final-weight full-line readback totals/tax do not match retained and allowed adjustment evidence.");
+  const subtotal = Number(actual.SubTotal);
+  const totalTax = Number(actual.TotalTax);
+  const total = Number(actual.Total);
+  if (![lineTotal, tax, subtotal, totalTax, total].every(Number.isFinite) || Math.abs(totalTax - tax) > 0.01) {
+    throw new Error("Final-weight full-line readback totals/tax do not match retained and allowed adjustment evidence.");
+  }
+  if (actual.LineAmountTypes === "Inclusive") {
+    if (Math.abs(total - lineTotal) > 0.01 || Math.abs(total - subtotal - totalTax) > 0.01) {
+      throw new Error("Final-weight full-line readback totals/tax do not match retained and allowed adjustment evidence.");
+    }
+  } else if (actual.LineAmountTypes === "Exclusive") {
+    if (Math.abs(subtotal - lineTotal) > 0.01 || Math.abs(total - subtotal - totalTax) > 0.01) {
+      throw new Error("Final-weight full-line readback totals/tax do not match retained and allowed adjustment evidence.");
+    }
+  } else {
+    throw new Error("Final-weight readback returned an unsupported line amount treatment.");
+  }
 }
