@@ -459,7 +459,7 @@ export async function executeFinancialDraftWrite(
     await verifyFinalWeightAutomaticWriteAccess(input);
     await consumeFinalWeightPayload(input, context.executionId!);
   }
-  if (/^INV-\d+-D$/i.test(payload.documentNumber) && context.depositInvoiceAutomaticEventId === undefined) {
+  if (/^INV-\d+-D$/i.test(payload.documentNumber) && context.depositInvoiceAutomaticEventId === undefined && context.depositDraftCorrectionKind === undefined) {
     throw new FinancialWriteDisabledError("Exact Deposit -D invoices require their independent Deposit release; another family cannot create or amend them.");
   }
   if (context.depositInvoiceAutomaticEventId !== undefined) {

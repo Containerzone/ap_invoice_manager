@@ -96,7 +96,7 @@ export async function executeGuardedFinancialWriterCommand(
       throw new Error("Deposit correction permits only its exact immutable Draft amendment and no CRM post-success action.");
     }
   } else if (command.expectedExactDraft) throw new Error("Exact Draft correction evidence requires its independent Deposit correction approval.");
-  if ((command.workflowType === "deposit_invoice" || /^INV-\d+-D$/i.test(command.payload.documentNumber)) && command.authorisation.depositInvoiceAutomaticEventId === undefined) {
+  if ((command.workflowType === "deposit_invoice" || /^INV-\d+-D$/i.test(command.payload.documentNumber)) && command.authorisation.depositInvoiceAutomaticEventId === undefined && command.authorisation.depositDraftCorrectionKind === undefined) {
     throw new Error("Deposit commands and exact -D documents require the independent Deposit event, not a generic or other-family approval.");
   }
   if (command.authorisation.depositInvoiceAutomaticEventId !== undefined) {
