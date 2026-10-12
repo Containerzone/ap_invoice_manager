@@ -183,6 +183,27 @@ describe("Deposit exact current source and read-only preview", () => {
     });
     expect((await previewDepositInvoice("5x77")).state).toBe("held");
   });
+  it("treats absent optional date metadata as no Due Date, without guessing a fallback date", async () => {
+    m.describe.mockResolvedValue({
+      ...fieldMetadata(),
+      fields: fieldMetadata().fields.filter(
+        field => !["Empty Container Supply Date", "Full Container Collection Date"].includes(field.label)
+      ),
+    });
+    m.retrieve.mockImplementation(async (id: string) =>
+      id === "5x77"
+        ? deal({ cf_real_supply: undefined, cf_real_collection: undefined })
+        : { id, accountname: "Customer Pty Ltd", modifiedtime: "2026-10-10T01:00:00Z" }
+    );
+
+    const result = await previewDepositInvoice("5x77");
+
+    expect(result).toMatchObject({ state: "previewed", noWrites: true });
+    expect(result.preview).toMatchObject({ eligible: true, dueDateSource: "not_set" });
+    expect(result.preview.document?.dueDate).toBeNull();
+    expect(result.facts.mappingEvidence).not.toHaveProperty("emptyContainerSupplyDate");
+    expect(result.facts.mappingEvidence).not.toHaveProperty("fullContainerCollectionDate");
+  });
   it("refuses mismatched retrieve IDs, non-Deals, changed business numbers and incomplete scalar fields", async () => {
     m.retrieve.mockResolvedValue({ id: "5x99" });
     await expect(previewDepositInvoice("5x77")).rejects.toThrow(

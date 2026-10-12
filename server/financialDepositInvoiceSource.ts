@@ -11,6 +11,14 @@ export const DEPOSIT_FIELD_LABELS = {
   emptyContainerSupplyDate: "Empty Container Supply Date",
   fullContainerCollectionDate: "Full Container Collection Date",
 } as const;
+const REQUIRED_DEPOSIT_FIELD_KEYS = [
+  "depositStatus",
+  "depositAmountRequired",
+] as const;
+const OPTIONAL_DEPOSIT_DATE_FIELD_KEYS = [
+  "emptyContainerSupplyDate",
+  "fullContainerCollectionDate",
+] as const;
 const text = (value: unknown) =>
   typeof value === "string"
     ? value.trim()
@@ -55,7 +63,8 @@ export async function readDepositInvoiceFacts(
     !metadata.fields.some(field => field.name === "potential_no")
   )
     holds.push("Current metadata does not confirm the Potentials Deal schema.");
-  for (const [key, label] of Object.entries(DEPOSIT_FIELD_LABELS)) {
+  for (const key of REQUIRED_DEPOSIT_FIELD_KEYS) {
+    const label = DEPOSIT_FIELD_LABELS[key];
     const fields = metadata.fields.filter(
       field => field.label.trim().toLowerCase() === label.toLowerCase()
     );
@@ -76,6 +85,28 @@ export async function readDepositInvoiceFacts(
       holds.push(
         `Current Deal retrieve does not supply a scalar ${label} field.`
       );
+  }
+  // The historical Operations action sent no date value when neither optional
+  // scheduling field was available. Preserve that semantics: neither missing
+  // nor ambiguous optional date metadata may block an otherwise valid Deposit
+  // Draft. A date is used only when one uniquely mapped scalar is present;
+  // buildDepositInvoice still rejects a populated malformed or conflicting date.
+  for (const key of OPTIONAL_DEPOSIT_DATE_FIELD_KEYS) {
+    const label = DEPOSIT_FIELD_LABELS[key];
+    const fields = metadata.fields.filter(
+      field => field.label.trim().toLowerCase() === label.toLowerCase()
+    );
+    if (fields.length !== 1) continue;
+    const name = fields[0]!.name;
+    const value = deal[name];
+    if (
+      Object.prototype.hasOwnProperty.call(deal, name) &&
+      value !== null &&
+      value !== undefined &&
+      ["string", "number"].includes(typeof value)
+    ) {
+      mappingEvidence[key] = name;
+    }
   }
   // Standard current Deal mapping used by Main Customer Invoice, without its Quote-first resolution.
   const organisationRaw = text(deal.related_to ?? deal.relatedto);

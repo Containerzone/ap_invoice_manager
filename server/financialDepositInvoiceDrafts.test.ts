@@ -99,7 +99,7 @@ describe("Deposit isolated Draft calculations", () => {
       expect(depositInvoiceNumber(value)).toBeNull();
     expect(depositInvoiceNumber("D000123")).toBe("INV-000123-D");
   });
-  it("uses collection when supply is absent, preserves equal-date evidence, and holds conflicting/malformed/missing legacy dates", () => {
+  it("uses collection when supply is absent, preserves equal-date evidence, and holds only conflicting or malformed dates", () => {
     expect(
       buildDepositInvoice(
         facts({
@@ -120,9 +120,17 @@ describe("Deposit isolated Draft calculations", () => {
       buildDepositInvoice(facts({ emptyContainerSupplyDate: "2026-02-30" }))
         .holdReason
     ).toMatch(/invalid/);
-    expect(
-      buildDepositInvoice(facts({ emptyContainerSupplyDate: "" })).holdReason
-    ).toMatch(/application-date fallback/);
+    const noDate = buildDepositInvoice(
+      facts({
+        emptyContainerSupplyDate: "",
+        fullContainerCollectionDate: "",
+      })
+    );
+    expect(noDate).toMatchObject({
+      eligible: true,
+      dueDateSource: "not_set",
+    });
+    expect(noDate.document?.dueDate).toBeNull();
   });
   it("holds unconfirmed schema or absent customer rather than inventing mappings", () => {
     expect(

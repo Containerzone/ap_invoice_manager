@@ -3,7 +3,7 @@ import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export const DEPOSIT_INVOICE_ITEM_CODE = "Deposit Required" as const;
 export const DEPOSIT_INVOICE_RULES_VERSION =
-  "deposit-invoice-v1-isolated-operations-readiness" as const;
+  "deposit-invoice-v2-optional-source-date" as const;
 export const DEPOSIT_INVOICE_RULES_HASH = createHash("sha256")
   .update(DEPOSIT_INVOICE_RULES_VERSION)
   .digest("hex");
@@ -32,7 +32,7 @@ export type DepositInvoicePreview = {
   dueDateSource:
     | "empty_container_supply_date"
     | "full_container_collection_date"
-    | "application_current_date_unconfirmed"
+    | "not_set"
     | null;
   postconditionHold: string;
   document: ProposedFinancialDocument | null;
@@ -114,13 +114,14 @@ export function buildDepositInvoice(
     );
   const dateValue =
     facts.emptyContainerSupplyDate || facts.fullContainerCollectionDate;
-  if (!dateValue)
-    return held(
-      "Legacy application-date fallback is not evidenced here; confirm its source/timezone before enabling a no-supply/no-collection Deposit invoice."
-    );
+  // The legacy action left the date unset where neither optional scheduling
+  // field was available. Preserve that state instead of guessing an application
+  // date, created time, collection alias or a +N-day rule.
   const dueDateSource = facts.emptyContainerSupplyDate
     ? "empty_container_supply_date"
-    : "full_container_collection_date";
+    : facts.fullContainerCollectionDate
+      ? "full_container_collection_date"
+      : "not_set";
   const total = money(amount);
   const subtotal = money(total / 1.1);
   return {
@@ -147,7 +148,7 @@ export function buildDepositInvoice(
       issueDate: new Date(
         Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
       ),
-      dueDate: strictDepositDate(dateValue),
+      dueDate: dateValue ? strictDepositDate(dateValue) : null,
       lineItems: [
         {
           itemCode: DEPOSIT_INVOICE_ITEM_CODE,
