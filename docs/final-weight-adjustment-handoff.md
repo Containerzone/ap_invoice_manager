@@ -90,3 +90,12 @@ The protected current-event receivers already use the corrected exact-resource `
 Additive migration `0048_confused_avengers.sql` creates `financial_final_weight_reconciliation_events`, a distinct receipt with a unique original event ID, fresh source/Xero hashes, original/expected full Draft snapshots, a one-time reservation/payload and exact read-back evidence. The recovery service accepts **only** an original event that is still immutable `reconciliation_required` with the recorded HTTP 404 outcome. It re-reads the current exact Deal and current exact Draft, refuses evidence drift, and cannot clear, edit or reuse the original claim.
 
 The recovery uses a separate default-off `FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED` gate and has no webhook, UI button, schedule or retry. If later individually approved, it permits one exact `POST /Invoices/<verified ID>` for the already-previewed immutable Draft and then exact full read-back; any uncertainty creates a new reconciliation hold. It is not a route to amend an Authorised, paid, allocated, voided, deleted, legacy or ambiguous document. D702928 is currently `AUTHORISED`, so it is not eligible for AP Final Weight amendment.
+
+### 2026-10-13 final revalidation — no recovery write
+
+After the recovery checkpoint was published, the separate gate was enabled only long enough to conduct the owner-approved final GET-only revalidation. No recovery receipt or writer execution was created. The current evidence differed materially from the prior preview:
+
+- `INV-702915` remains an unpaid `DRAFT`, but its current source quantities/rate calculate a `SER70` Excess weight line of **$23.67 GST-exclusive**, **$2.37 GST**, **$26.04 inclusive**. The prior $207.10 / $227.81 approval was therefore not usable. The revised update was explicitly declined, and the recovery gate was returned to **off**. Its current retained Due Date is 2026-10-27.
+- `INV-702934` is now `AUTHORISED`. The Draft-only recovery correctly refuses to retrieve an amendment target and no Due Date change is permitted.
+
+Fresh exact source/Xero evidence and a new explicit approval are required before any future D702915 recovery attempt. An Authorised `INV-702934` must remain outside this Draft-only automation unless a separate, explicitly approved business process is designed.
