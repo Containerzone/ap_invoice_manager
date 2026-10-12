@@ -1,6 +1,6 @@
 # Main Customer Invoice — AP Migration Handover
 
-**Status:** Implemented and **disabled** in AP Management as at 11 October 2026.
+**Status:** Implemented. The approved new-events-only release policy and deployment setting are prepared locally; the public runtime remains safely disabled until the checkpoint created after that setting is published.
 
 ## What AP now owns when separately released
 
