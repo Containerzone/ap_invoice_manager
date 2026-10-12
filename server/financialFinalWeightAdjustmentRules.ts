@@ -3,7 +3,7 @@ import { financialSha256 } from "./financialProposalIntegrity";
 import type { FinancialDraftPayload } from "./financialProductionWriter";
 
 export type FinalWeightDirection = "overweight" | "underweight";
-export const FINAL_WEIGHT_RULES_VERSION = "2026-10-11.final-weight.draft-amendment.v1";
+export const FINAL_WEIGHT_RULES_VERSION = "2026-10-12.final-weight.draft-amendment.v2";
 export const FINAL_WEIGHT_RULES_HASH = financialSha256({ version: FINAL_WEIGHT_RULES_VERSION, item: DEFAULT_FINANCIAL_AUTOMATION_RULES.itemCodes.overweight, scope: "new_events_only", operations: ["positive-exclusive-SER70-replacement", "due-date-only"], preserve: "all-retained-lines-and-invoice-fields" });
 export const FINAL_WEIGHT_PATHS = {
   overweight: "/api/webhooks/vtiger/final-weight-overweight",
@@ -102,7 +102,10 @@ export function buildFinalWeightAdjustment(facts: FinalWeightFacts, direction: F
 export function prepareFinalWeightPayload(preview: FinalWeightPreview, sourceHash: string): FinancialDraftPayload {
   if (!preview.eligible || !preview.invoiceId || !preview.invoiceNumber || !preview.expectedDraft) throw new Error("No exact final-weight Draft amendment is eligible.");
   const body = { Invoices: [clone(preview.expectedDraft)] };
-  return { method: "PUT", endpoint: `/Invoices/${encodeURIComponent(preview.invoiceId)}`, documentFamily: "customer_invoice", documentNumber: preview.invoiceNumber, expectedXeroDocumentId: preview.invoiceId, body, idempotencyKey: financialSha256({ family: "final_weight_adjustment", direction: preview.direction, sourceHash, body }) };
+  // Xero Accounting API creates with PUT; an existing invoice is amended only
+  // with POST to its exact verified resource ID. The endpoint is therefore not
+  // the collection and cannot create a new invoice.
+  return { method: "POST", endpoint: `/Invoices/${encodeURIComponent(preview.invoiceId)}`, documentFamily: "customer_invoice", documentNumber: preview.invoiceNumber, expectedXeroDocumentId: preview.invoiceId, body, idempotencyKey: financialSha256({ family: "final_weight_adjustment", direction: preview.direction, sourceHash, body }) };
 }
 /** Used by exact GET readback: compare every retained line field and header, permitting generated IDs/derived totals only. */
 export function assertFinalWeightReadback(actual: Record<string, any>, expected: Record<string, any>): void {

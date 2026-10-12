@@ -11,7 +11,7 @@ describe("Final weight isolated pure Draft amendment rules", () => {
     const { LineItems: _, ...headers } = result.originalDraft!;
     expect(result.expectedDraft).toMatchObject(headers); expect(evidence).toEqual(before);
     const payload = prepareFinalWeightPayload(result, "source");
-    expect(payload).toMatchObject({ method: "PUT", endpoint: "/Invoices/invoice-exact", expectedXeroDocumentId: "invoice-exact", documentNumber: "INV-702877" });
+    expect(payload).toMatchObject({ method: "POST", endpoint: "/Invoices/invoice-exact", expectedXeroDocumentId: "invoice-exact", documentNumber: "INV-702877" });
     expect(payload.body.Invoices).toEqual([result.expectedDraft]);
     expect(prepareFinalWeightPayload(result, "source")).toEqual(payload);
   });

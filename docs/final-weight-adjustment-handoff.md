@@ -7,7 +7,7 @@
 - Two dedicated private POST routes: `/api/webhooks/vtiger/final-weight-overweight` and `/api/webhooks/vtiger/final-weight-underweight`. Each accepts either the standard `x-financial-webhook-secret` header or the existing VTiger JSON `secret` field; the private value is compared in constant time and never stored or logged. The named `id`/`record_id`/`deal_id` may be one exact current Deal webservice ID or legacy `D…` number. A D-number is resolved only through one AP-side bounded exact Potentials lookup after the Final Weight release policy is valid; ambiguity/not-found holds. `dryRun` is accepted only for VTiger body compatibility and is never trusted as an AP safety control.
 - Standalone administrator sidebar page **Final Weight Adjustments**, `/final-weight-adjustments`: branch status cards, exact named Deal GET-only preview, source mappings/full original and expected Draft payload evidence, and event/hold tracking. No browser mutation/release button.
 - Administrator-only tRPC **query** procedures: `financialOperations.finalWeightReadiness`, `finalWeightEvents`, `previewFinalWeightAdjustment`. Preview does **not** insert/update final-weight evidence, execution or policy. Existing read helpers may refresh OAuth authentication/cache GET responses; this is not financial ledger evidence or CRM/accounting document mutation.
-- Pure source/rules modules, isolated immutable event/claim database module and service; dedicated Draft-only PUT authorization in `financialProductionWriter`; existing exact Xero GET readback extended only with final-weight full retained-payload validation.
+- Pure source/rules modules, isolated immutable event/claim database module and service; dedicated Draft-only exact-resource **POST** update authorization in `financialProductionWriter`; existing exact Xero GET readback extended only with final-weight full retained-payload validation.
 - Generic canonical final-weight routes/evaluator, financialAutomationRules, Main Invoice/Deposit release policies, environment flags, Operations/VTiger/Make settings, schedules and Heartbeat are unchanged.
 
 ## Migration — generated, inspected and applied
@@ -26,11 +26,11 @@ This does not enable a generic invoice update path. The dedicated authorisation 
 
 1. `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED === "true"` **and** a current separately approved final-weight policy.
 2. Exact final-weight workflow, direction, immutable event ID, policy release key and approver; no other-family event authorization.
-3. Exactly one existing **AUD Exclusive ACCREC DRAFT** main invoice `PUT /Invoices/<verified ID>` with matching InvoiceID/InvoiceNumber/ContactID, retained dates and complete line evidence. No create, purchase order, suffix/-D or other update type.
+3. Exactly one existing **AUD Exclusive ACCREC DRAFT** main invoice `POST /Invoices/<verified ID>` with matching InvoiceID/InvoiceNumber/ContactID, retained dates and complete line evidence. Xero uses that exact-resource POST to update an existing invoice; collection-level POST/PUT and all create paths are rejected. No purchase order, suffix/-D or other update type is permitted.
 4. Independent current metadata/Deal/customer re-read and exact Xero number/contact/item/full-ID preflight rebuild; compare source, rules, preflight and original/expected/payload hashes with the reservation before transport.
 5. One-shot submitted CAS and no transient gateway retry; exact GET full-payload readback before success. Uncertainty retains exclusive claims and payload for reconciliation. No CRM post-success action is queued.
 
-The Xero current Draft can change between the last GET and PUT because AP has no cross-system atomic lock. The code minimizes this with repeated fresh source/Xero validation and exact readback, but cannot prevent an outside legacy writer/operator from racing it. **Both Operations handovers are essential.** Full-line PUT/Xero server-normalization semantics have only been exercised with mocks, not real documents; verify safely in a separately authorised non-production fixture before any release. Conservative source/date/retained-header normalization differences hold rather than permit a blind retry.
+The Xero current Draft can change between the last GET and exact-resource POST because AP has no cross-system atomic lock. The code minimizes this with repeated fresh source/Xero validation and exact readback, but cannot prevent an outside legacy writer/operator from racing it. **Both Operations handovers are essential.** Full-line Xero update/readback normalization semantics have only been exercised with mocks, not real documents; verify safely in a separately authorised non-production fixture before any release. Conservative source/date/retained-header normalization differences hold rather than permit a blind retry.
 
 ## Dual gate / zero-impact disabled routes
 
@@ -57,7 +57,7 @@ Before a future release, independently confirm:
 - **Full Container Pickup DATE is the agreed underweight due-date source.** No alternative/fallback is implemented.
 - Plain numeric multicurrency Per Extra Tonne is the authorised **AUD GST-exclusive** rate; actual/estimated fields are tonnes; business rounding is cents.
 - Actual VTiger webservice date serialization and modified timestamp timezone/event semantics. Locale display format is not guessed.
-- Current exact SER70 sales-item account, OUTPUT tax and full-line PUT/readback normalization in a safe separately authorised fixture.
+- Current exact SER70 sales-item account, OUTPUT tax and full-line exact-resource POST/readback normalization in a safe separately authorised fixture.
 - Both dedicated VTiger branch handovers for new events only, and both legacy Operations writers paused/handover-complete through separately authorised Operations work.
 - Obtain explicit isolated **Draft amendment** approval, record the policy with the current rules hash, then consider only the dedicated flag. None of these steps is authorised by this implementation task.
 
@@ -73,4 +73,12 @@ For an active Final Weight route, an invalid/missing exact Deal reference, a sou
 
 ## Legacy D-number compatibility preflight
 
-The legacy VTiger body used `id: "D702915"` and was previously rejected before any source read because the receiver only accepted a webservice ID. The compatibility update is bounded to that exact D-number form and does not permit a browse, finance values from the body, name matching or a fallback candidate. A read-only preflight on 2026-10-12 resolved the one exact current Deal and the exact current Xero Draft `INV-702915`; the Overweight route is eligible to replace/add only its controlled `SER70` excess-weight line by **AUD 207.10 GST-exclusive** (GST 20.71; Draft total increase 227.81). This is preflight evidence only, not approval to amend the Draft. Obtain a fresh current preflight and explicit confirmation of that exact Draft PUT after the compatibility checkpoint is published.
+The legacy VTiger body used `id: "D702915"` and was previously rejected before any source read because the receiver only accepted a webservice ID. The compatibility update is bounded to that exact D-number form and does not permit a browse, finance values from the body, name matching or a fallback candidate. A read-only preflight on 2026-10-12 resolved the one exact current Deal and the exact current Xero Draft `INV-702915`; the Overweight route is eligible to replace/add only its controlled `SER70` excess-weight line by **AUD 207.10 GST-exclusive** (GST 20.71; Draft total increase 227.81). This is preflight evidence only, not approval to amend the Draft. Obtain a fresh current preflight and explicit confirmation of that exact Draft exact-resource POST after the compatibility checkpoint is published.
+
+## 2026-10-12 transport correction and reconciliation hold
+
+The first D702915 delivery resolved its exact current Deal and reached one guarded Xero update request, but Xero returned HTTP 404 to `PUT /Invoices/<verified ID>`. The local immutable event is therefore `reconciliation_required`; its one-shot claim remains consumed and **must never be retried**. An immediate read-only Xero check confirmed the target remains the same unpaid `DRAFT` invoice with its original line only, so no Draft amendment was applied.
+
+Xero’s Accounting API specifies **POST** to update an existing invoice and reserves **PUT** for creating new invoices. Final Weight rules v2 restrict future amendments to `POST /Invoices/<verified ID>` only—the exact resource path remains mandatory and collection-level POST/PUT remains rejected. This correction is supported by Xero’s official request-method guide and invoices reference: <https://developer.xero.com/documentation/api/accounting/requests-and-responses> and <https://developer.xero.com/documentation/api/accounting/invoices>.
+
+The AP-local Final Weight policy was explicitly set to `enabled: false` while this correction is pending publication. A public authenticated safe probe then returned `503 final-weight-release-disabled` and **zero Xero writes**. Do not re-enable the policy or replay D702915 as part of this correction.

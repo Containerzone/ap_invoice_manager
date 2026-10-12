@@ -25,5 +25,5 @@ export function assertFinalWeightRelease(policy: FinalWeightReleasePolicy, direc
     !policy.approvedAt || !policy.effectiveFrom || !Number.isFinite(Date.parse(policy.approvedAt)) || !Number.isFinite(Date.parse(policy.effectiveFrom)) ||
     Date.parse(policy.approvedAt) > Date.now() || Date.parse(policy.effectiveFrom) > Date.now() || policy.migrationScope !== "new_events_only" ||
     !policy.overweightVtigerBranch || !policy.underweightVtigerBranch || !policy.operationsOverweightHandoff || !policy.operationsUnderweightHandoff ||
-    !policy.sourceMappingsConfirmed || !policy.draftOnlyUpdateApproved) throw new Error(`Final Weight ${direction} release disabled: independent dual branch/handover, exact source mappings and new-events-only Draft PUT approval required.`);
+    !policy.sourceMappingsConfirmed || !policy.draftOnlyUpdateApproved) throw new Error(`Final Weight ${direction} release disabled: independent dual branch/handover, exact source mappings and new-events-only Draft amendment approval required.`);
 }

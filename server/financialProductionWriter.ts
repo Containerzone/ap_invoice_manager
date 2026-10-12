@@ -444,7 +444,7 @@ export async function executeFinancialDraftWrite(
   if (context.finalWeightAutomaticEventId !== undefined) {
     const rows = payload.body.Invoices;
     const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
-    if (payload.method !== "PUT" || !payload.expectedXeroDocumentId || payload.endpoint !== `/Invoices/${encodeURIComponent(payload.expectedXeroDocumentId)}` ||
+    if (payload.method !== "POST" || !payload.expectedXeroDocumentId || payload.endpoint !== `/Invoices/${encodeURIComponent(payload.expectedXeroDocumentId)}` ||
       payload.documentFamily !== "customer_invoice" || !/^INV-\d{1,12}$/.test(payload.documentNumber) || Object.keys(payload.body).length !== 1 ||
       !row || row.InvoiceID !== payload.expectedXeroDocumentId || row.InvoiceNumber !== payload.documentNumber || row.Status !== "DRAFT" || row.Type !== "ACCREC" ||
       row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" || !row.Contact?.ContactID || !row.Date || !row.DueDate || !Array.isArray(row.LineItems) || !row.LineItems.length) {

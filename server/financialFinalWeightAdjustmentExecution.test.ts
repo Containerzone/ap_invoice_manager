@@ -33,7 +33,7 @@ describe("Final-weight guarded Draft amendment coordinator", () => {
     m.prepare.mockResolvedValue({ duplicate: true, execution: { id: 9, status: "submitted", xeroDocumentId: null } });
     expect(await executeGuardedFinancialWriterCommand(command())).toMatchObject({ outcome: "duplicate" }); expect(m.submitted).not.toHaveBeenCalled(); expect(m.write).not.toHaveBeenCalled();
   });
-  it("readback failure after PUT requires reconciliation and never success/CRM", async () => {
+  it("readback failure after the exact-resource POST requires reconciliation and never success/CRM", async () => {
     m.readback.mockRejectedValue(new Error("Retained line changed"));
     expect(await executeGuardedFinancialWriterCommand(command())).toMatchObject({ outcome: "reconciliation_required", error: "Retained line changed" });
     expect(m.failed).toHaveBeenCalledWith(9, expect.any(Error), true); expect(m.succeeded).not.toHaveBeenCalled(); expect(m.crm).not.toHaveBeenCalled();
