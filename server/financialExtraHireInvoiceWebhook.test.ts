@@ -153,6 +153,41 @@ describe("Extra Hire dedicated private route", () => {
     expect(m.process).toHaveBeenCalledWith("5x77");
     expect(res.status).toHaveBeenCalledWith(202);
   });
+  it("reports an active mapping hold with safe identifiers only", async () => {
+    vi.stubEnv("FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED", "true");
+    m.process.mockResolvedValue({
+      ok: false,
+      status: "held",
+      recordId: "5x77",
+      warning: "Current Xero hire evidence is unavailable.",
+      xeroWritesAttempted: 0,
+    });
+    const res = response();
+    await handler()(
+      { header: () => "synthetic-secret", body: { id: "5x77" } },
+      res
+    );
+    expect(m.alert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowType: "extra_hire",
+        recordKey: "extra-hire:5x77",
+        details: { dealId: "5x77", status: "held" },
+      })
+    );
+  });
+  it("suppresses Extra Hire alerts for a dry-run safe probe", async () => {
+    vi.stubEnv("FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED", "true");
+    m.process.mockResolvedValue({ ok: false, status: "held", xeroWritesAttempted: 0 });
+    const res = response();
+    await handler()(
+      {
+        header: () => "synthetic-secret",
+        body: { id: "5x77", dryRun: true },
+      },
+      res
+    );
+    expect(m.alert).not.toHaveBeenCalled();
+  });
   it("resolves the legacy potential_no D-number through one bounded exact lookup", async () => {
     await expect(
       resolveExtraHireWebhookRecord({ recordId: null, dealNumber: "D77" })

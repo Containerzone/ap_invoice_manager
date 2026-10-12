@@ -8,6 +8,7 @@ import {
   processAutomaticExtraHireInvoice,
   EXTRA_HIRE_WEBHOOK_PATH,
 } from "./financialExtraHireInvoiceService";
+import { reportWorkflowFailureSafely } from "./workflowAlertService";
 import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
 
 export type ExtraHireWebhookEnvelope = {
@@ -69,6 +70,15 @@ export function hasExtraHireSecret(req: Pick<Request, "header" | "body">): boole
   return hasFinancialWebhookSecret(req);
 }
 
+function isSafeProbe(body: unknown): boolean {
+  return Boolean(
+    body &&
+      typeof body === "object" &&
+      !Array.isArray(body) &&
+      (body as Record<string, unknown>).dryRun === true
+  );
+}
+
 export function registerExtraHireInvoiceWebhook(app: Express) {
   app.post(EXTRA_HIRE_WEBHOOK_PATH, async (req: Request, res: Response) => {
     if (!hasExtraHireSecret(req))
@@ -84,6 +94,7 @@ export function registerExtraHireInvoiceWebhook(app: Express) {
           error: "extra-hire-release-disabled",
           xeroWritesAttempted: 0,
         });
+    const safeProbe = isSafeProbe(req.body);
     // Policy lookup is the only permitted read until the independent release is valid.
     if (process.env.FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED !== "true")
       return disabled();
@@ -96,6 +107,16 @@ export function registerExtraHireInvoiceWebhook(app: Express) {
     try {
       envelope = parseExtraHireWebhookEnvelope(req.body);
     } catch (e) {
+      if (!safeProbe)
+        reportWorkflowFailureSafely({
+          workflowType: "extra_hire",
+          recordKey: "extra-hire:unresolved",
+          title: "Extra Hire held",
+          errorMessage:
+            "Extra Hire webhook did not provide one exact Deal reference.",
+          details: { status: "invalid_reference" },
+          severity: "error",
+        });
       return res
         .status(400)
         .json({
@@ -107,6 +128,19 @@ export function registerExtraHireInvoiceWebhook(app: Express) {
     try {
       recordId = await resolveExtraHireWebhookRecord(envelope);
     } catch (error) {
+      if (!safeProbe)
+        reportWorkflowFailureSafely({
+          workflowType: "extra_hire",
+          recordKey: `extra-hire:${envelope.dealNumber ?? "unresolved"}`,
+          title: "Extra Hire held",
+          errorMessage:
+            "Extra Hire exact Deal lookup did not return one unambiguous record.",
+          details: {
+            dealReference: envelope.dealNumber ?? null,
+            status: "source_lookup_held",
+          },
+          severity: "error",
+        });
       return res.status(202).json({
         ok: false,
         status: "held",
@@ -119,8 +153,28 @@ export function registerExtraHireInvoiceWebhook(app: Express) {
     }
     try {
       const result = await processAutomaticExtraHireInvoice(recordId);
+      if (!result.ok && !safeProbe)
+        reportWorkflowFailureSafely({
+          workflowType: "extra_hire",
+          recordKey: `extra-hire:${recordId}`,
+          title: "Extra Hire held",
+          errorMessage:
+            result.warning ?? "Extra Hire route returned a held result.",
+          details: { dealId: recordId, status: result.status },
+          severity: "error",
+        });
       return res.status(result.ok ? 200 : 202).json(result);
     } catch {
+      if (!safeProbe)
+        reportWorkflowFailureSafely({
+          workflowType: "extra_hire",
+          recordKey: `extra-hire:${recordId}`,
+          title: "Extra Hire held",
+          errorMessage:
+            "Extra Hire source, policy or Xero preflight could not be completed.",
+          details: { dealId: recordId, status: "held" },
+          severity: "error",
+        });
       return res
         .status(202)
         .json({
