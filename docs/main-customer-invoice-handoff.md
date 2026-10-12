@@ -1,6 +1,6 @@
 # Main Customer Invoice — AP Migration Handover
 
-**Status:** **Live for new events only; Main Invoice secret deployment pending.** The dedicated VTiger branch and Operations handover were recorded, the AP-local release policy is enabled, and `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true` is published. The first approved production test completed on 12 October 2026; no historical adoption is enabled. A legacy VTiger Main Invoice secret mismatch has been isolated with `FINANCIAL_MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET`; publish the checkpoint created after this configuration before relying on the next trigger.
+**Status:** **Live for new events only.** The dedicated VTiger branch and Operations handover were recorded, the AP-local release policy is enabled, and `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true` is published. The first approved production test completed on 12 October 2026; no historical adoption is enabled. The confirmed legacy VTiger Main Invoice secret is isolated with `FINANCIAL_MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET` and is deployed.
 
 ## What AP now owns when separately released
 
@@ -29,7 +29,8 @@
 2. VTiger has a dedicated Main Customer Invoice branch using the established JSON body (`id`, `secret`, optional `dryRun`) and the existing Operations Main Invoice writer is paused for **new** events only.
 3. The current-conversation approval, new-events-only cutover policy and `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true` deployment setting were recorded and published.
 4. First production verification: Deal `D702935` created an exact new Xero `ACCREC` **DRAFT** `INV-702935`, reference `Q531993`, for Barry Meintjes. The immutable Xero ID is `09191cf4-bdb6-4d3b-b5c8-9ca73383a358`; exact current source, Quote line, account 200, AUD, GST exclusive, totals and one-line read-back all passed. The AP ledger event and execution are both `30001` / `drafts_created`.
-5. Continue to monitor the next new events in **Financial Automations → Main Customer Invoices**. Any historical, duplicate, ambiguous, non-Draft or changed-source case must remain held for reconciliation.
+5. Legacy-secret production verification: the established VTiger JSON `id`/`secret` envelope is accepted by the published receiver. A deliberately nonexistent D-number reached the bounded exact lookup and held with `xeroWritesAttempted: 0`; it did not authenticate-fail or create a document.
+6. Continue to monitor the next new events in **Financial Automations → Main Customer Invoices**. Any historical, duplicate, ambiguous, non-Draft or changed-source case must remain held for reconciliation.
 
 ## Explicit exclusions
 
