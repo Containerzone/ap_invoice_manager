@@ -2,7 +2,7 @@
 
 ## Implementation checkpoint
 
-**Default-off implementation/readiness only. Not activated or published.** Work is isolated to `/home/ubuntu/ap_invoice_manager`.
+**Approved pre-publication activation checkpoint.** The additive ledger migration and approved Final Weight policy are already applied. `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED=true` has been securely configured for the next publication; no Final Weight webhook has been replayed and no Xero Draft has been changed by the activation preparation.
 
 - Two dedicated private POST routes: `/api/webhooks/vtiger/final-weight-overweight` and `/api/webhooks/vtiger/final-weight-underweight`. Each accepts either the standard `x-financial-webhook-secret` header or the existing VTiger JSON `secret` field; the private value is compared in constant time and never stored or logged. `dryRun` is accepted only for VTiger body compatibility and is never trusted as an AP safety control.
 - Standalone administrator sidebar page **Final Weight Adjustments**, `/final-weight-adjustments`: branch status cards, exact named Deal GET-only preview, source mappings/full original and expected Draft payload evidence, and event/hold tracking. No browser mutation/release button.
@@ -10,11 +10,11 @@
 - Pure source/rules modules, isolated immutable event/claim database module and service; dedicated Draft-only PUT authorization in `financialProductionWriter`; existing exact Xero GET readback extended only with final-weight full retained-payload validation.
 - Generic canonical final-weight routes/evaluator, financialAutomationRules, Main Invoice/Deposit release policies, environment flags, Operations/VTiger/Make settings, schedules and Heartbeat are unchanged.
 
-## Migration — generated and inspected, NOT applied
+## Migration — generated, inspected and applied
 
 `drizzle/0043_glamorous_vampiro.sql` was generated from `drizzle/schema.ts` using `pnpm drizzle-kit generate`. The generated migration contains **only one additive CREATE TABLE**, `financial_final_weight_adjustment_events`, 30 columns, primary key and four unique indexes. No ALTER, DROP, data backfill, policy INSERT or activation statement. Generated snapshot/journal are included.
 
-**Parent must review and apply through `webdev_execute_sql` separately. Do not run `db:push`, drizzle migrate or auto-apply.** Until applied, ledger listing intentionally reports unavailable; no successful execution is assumed.
+The additive migration was applied through `webdev_execute_sql`. No `db:push`, broad migrate, data backfill, policy seed or financial document change was used.
 
 Ledger factual evidence is append-only via an evidence-key no-op duplicate insert: direction, exact Deal/number, exact existing invoice ID/number, source/rules/preflight hashes, source and full preflight snapshots, original/expected payload and their hashes. Only lifecycle fields change.
 
@@ -34,9 +34,9 @@ The Xero current Draft can change between the last GET and PUT because AP has no
 
 ## Dual gate / zero-impact disabled routes
 
-The new environment flag is **unset** in this checkpoint (not modified). When unset/not `true`, an authenticated valid exact-ID receiver returns **503** before any source/metadata/Xero/DB read or write. Unauthenticated requests return **401** first. Malformed authenticated ID envelopes return **400** without reads/writes.
+The independent `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED` flag is securely set to **`true`** for the pending publication. With the approved policy, only either dedicated Final Weight route can proceed to exact current evidence. Before that configuration is published, the public runtime remains unchanged. Unauthenticated requests return **401** first; malformed authenticated ID envelopes return **400** without reads/writes.
 
-If someone later sets the flag but the policy is missing/invalid, both routes return **503** after only a local policy SELECT, before evidence/claim writes or upstream calls. No flag or policy was set by this work.
+If the policy is missing/invalid, both routes return **503** after only a local policy SELECT, before evidence/claim writes or upstream calls. The current approved policy matches the current Final Weight rules hash and retains both VTiger branches, both Operations handovers, exact mappings, Draft-only approval and `new_events_only` scope.
 
 The separate config key is `financial-automation.final-weight-adjustment-release`. Policy fields are **only**:
 
@@ -65,4 +65,4 @@ Before a future release, independently confirm:
 
 Focused mock tests cover pure rules, source label/name/type ambiguity, full line retention and SER70 duplicate replacement, due-date-only/no negative changes, non-Draft/paid/allocated/missing/ambiguous/collision holds, exclusive immutable payload claims, one-shot writer update isolation, 401/503 no-write routes, administrator query authorization, readback and reconciliation. All financial transport tests use mocks; no external records are used.
 
-Final validation results are recorded in the appended `todo.md` checkpoint. The only direct upstream call during implementation was the existing read-only **Potentials metadata describe** helper (challenge/session login plus describe GET). No Deal/customer record was browsed/retrieved/scanned, no Xero call was made by implementation commands, no real financial/CRM document was created/amended, no migration was applied, and nothing was published or activated.
+Final validation results are recorded in the appended `todo.md` checkpoint. The activation validation additionally used two authenticated local safe probes with a deliberately nonexistent exact Deal ID—one for each route. Both exercised the canonical body `id`/`secret` envelope and bounded VTiger read path, held with zero Xero writes, and did not create a CRM/accounting record. After publication, repeat that public safe probe before accepting the first real qualifying post-cutover event.
