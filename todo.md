@@ -245,3 +245,9 @@
 - [x] Implemented one-time Xero Contact creation only when both exact name and email searches have zero results, the separate `FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED` deployment gate is exactly `true`, a shared local reservation succeeds, and Xero returns/read-backs the exact active source identity. The full current source and invoice preflight are refreshed before any Draft; changed source, collision, mismatch or uncertain contact POST holds with no blind retry.
 - [x] Extended active Main/Deposit hold reporting through the existing de-duplicated operational failure notifier. Alerts contain only workflow/deal identifiers and state, not secrets or customer contact fields; disabled routes remain alert-free.
 - [ ] Publish the validated checkpoint, keep the customer-contact gate **off** until its separate external-write effect is explicitly approved, then perform a fresh read-only D702933 Main/Deposit preflight. Any actual Xero contact creation and each Draft remain consequential writes requiring current confirmation.
+
+## 2026-10-12 — Deposit VTiger credential recovery
+
+- [x] Confirmed the Deposit release policy uses the current optional-date rules hash while retaining the approved Deposit-only, `new_events_only`, Operations-handoff, source-mapping and Draft-only constraints. The refresh is recorded in the non-secret configuration audit ledger.
+- [x] Diagnosed the post-refresh D702933 hold as a public-deployment VTiger login rejection, not a Deposit policy, Xero or source-data failure. Re-applied the existing VTiger URL/username/access-key binding through the secure project-secret flow; it passed a live **read-only** VTiger challenge/form-login test. No CRM record, Xero document, schedule or webhook was changed.
+- [ ] Publish the credential-refresh checkpoint, then run only an authenticated invalid-record probe before asking VTiger to deliver another live D702933 event. The contact-creation gate remains off until separately approved.
