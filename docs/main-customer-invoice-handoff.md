@@ -1,6 +1,6 @@
 # Main Customer Invoice — AP Migration Handover
 
-**Status:** **Live for new events only.** The dedicated VTiger branch and Operations handover were recorded, the AP-local release policy is enabled, and `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true` is published. The first approved production test completed on 12 October 2026; no historical adoption is enabled.
+**Status:** **Live for new events only; Main Invoice secret deployment pending.** The dedicated VTiger branch and Operations handover were recorded, the AP-local release policy is enabled, and `FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED=true` is published. The first approved production test completed on 12 October 2026; no historical adoption is enabled. A legacy VTiger Main Invoice secret mismatch has been isolated with `FINANCIAL_MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET`; publish the checkpoint created after this configuration before relying on the next trigger.
 
 ## What AP now owns when separately released
 
