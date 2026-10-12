@@ -44,8 +44,10 @@ describe("Warranty administrator read-only workspace", () => {
     expect(keys.sort()).toEqual(["financialOperations.previewWarrantyAviso", "financialOperations.warrantyAvisoEvents", "financialOperations.warrantyAvisoReadiness"].sort());
     for (const key of keys) expect((appRouter._def.procedures[key] as any)._def.type).toBe("query");
     const source = (path: string) => readFileSync(path, "utf8");
-    expect(source("client/src/App.tsx")).toMatch(/<Route path="\/warranty-aviso">\s*<AdminGuard><WarrantyAviso \/><\/AdminGuard>/);
-    expect(source("client/src/components/DashboardLayout.tsx")).toMatch(/label: "Warranty & Aviso"[^\n]+adminOnly: true/);
+	   expect(source("client/src/App.tsx")).toMatch(/<Route path="\/financial-automation">\s*<AdminGuard><FinancialAutomation \/><\/AdminGuard>/);
+	   expect(source("client/src/App.tsx")).toMatch(/<Route path="\/warranty-aviso">\s*<Redirect to="\/financial-automation\?tab=warranty-aviso"/);
+	   expect(source("client/src/components/DashboardLayout.tsx")).toMatch(/label: "Financial Automations"[^\n]+adminOnly: true/);
+	   expect(source("client/src/pages/FinancialAutomation.tsx")).toContain('"warranty-aviso": <WarrantyAviso />');
     const page = source("client/src/pages/WarrantyAviso.tsx");
     expect(page).toContain("previewWarrantyAviso.useQuery"); expect(page).not.toContain("useMutation");
   });

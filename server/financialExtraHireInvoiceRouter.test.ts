@@ -100,7 +100,7 @@ describe("Extra Hire administrator read-only workspace", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(m.preview).not.toHaveBeenCalled();
   });
-  it("all Extra Hire procedures are queries, admin-only UI, no browser release/write control", () => {
+  it("all Extra Hire procedures are queries, admin-only parent workspace, no browser release/write control", () => {
     for (const key of [
       "extraHireInvoiceEvents",
       "extraHireInvoiceReadiness",
@@ -112,11 +112,15 @@ describe("Extra Hire administrator read-only workspace", () => {
       ).toBe("query");
     const source = (p: string) => readFileSync(p, "utf8");
     expect(source("client/src/App.tsx")).toMatch(
-      /<Route path="\/extra-hire-invoices">\s*<AdminGuard><ExtraHireInvoices \/><\/AdminGuard>/
+      /<Route path="\/financial-automation">\s*<AdminGuard><FinancialAutomation \/><\/AdminGuard>/
+    );
+    expect(source("client/src/App.tsx")).toMatch(
+      /<Route path="\/extra-hire-invoices">\s*<Redirect to="\/financial-automation\?tab=extra-hire"/
     );
     expect(source("client/src/components/DashboardLayout.tsx")).toMatch(
-      /label: "Extra Hire Invoices"[^\n]+adminOnly: true/
+      /label: "Financial Automations"[^\n]+adminOnly: true/
     );
+    expect(source("client/src/pages/FinancialAutomation.tsx")).toContain('"extra-hire": <ExtraHireInvoices />');
     const page = source("client/src/pages/ExtraHireInvoices.tsx");
     expect(page).toContain("previewExtraHireInvoice.useQuery");
     expect(page).not.toContain("useMutation");

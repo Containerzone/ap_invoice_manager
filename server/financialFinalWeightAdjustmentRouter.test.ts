@@ -34,12 +34,14 @@ describe("Final weight administrator query-only workspace", () => {
     await expect(caller.previewFinalWeightAdjustment({ exactDeal: "browse-all", direction: "overweight" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await expect(caller.previewFinalWeightAdjustment({ exactDeal: "5x77", direction: "other" as any })).rejects.toMatchObject({ code: "BAD_REQUEST" }); expect(m.preview).not.toHaveBeenCalled();
   });
-  it("all three procedures are queries; page/sidebar admin-only and no browser writes/releases", () => {
+	 it("all three procedures are queries; parent workspace is admin-only and no browser writes/releases", () => {
     const procedures = appRouter._def.procedures;
     for (const key of ["finalWeightEvents", "finalWeightReadiness", "previewFinalWeightAdjustment"]) expect((procedures[`financialOperations.${key}`] as any)._def.type).toBe("query");
     const source = (path: string) => readFileSync(path, "utf8");
-    expect(source("client/src/App.tsx")).toMatch(/<Route path="\/final-weight-adjustments">\s*<AdminGuard><FinalWeightAdjustments \/><\/AdminGuard>/);
-    expect(source("client/src/components/DashboardLayout.tsx")).toMatch(/label: "Final Weight Adjustments"[^\n]+adminOnly: true/);
+	   expect(source("client/src/App.tsx")).toMatch(/<Route path="\/financial-automation">\s*<AdminGuard><FinancialAutomation \/><\/AdminGuard>/);
+	   expect(source("client/src/App.tsx")).toMatch(/<Route path="\/final-weight-adjustments">\s*<Redirect to="\/financial-automation\?tab=final-weight"/);
+	   expect(source("client/src/components/DashboardLayout.tsx")).toMatch(/label: "Financial Automations"[^\n]+adminOnly: true/);
+	   expect(source("client/src/pages/FinancialAutomation.tsx")).toContain('"final-weight": <FinalWeightAdjustments />');
     const page = source("client/src/pages/FinalWeightAdjustments.tsx"); expect(page).toContain("previewFinalWeightAdjustment.useQuery"); expect(page).not.toContain("useMutation");
   });
 });

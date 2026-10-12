@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Redirect, Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
@@ -23,15 +23,7 @@ import Reports from "./pages/Reports";
 import PoRequests from "./pages/PoRequests";
 import OperationalFailures from "./pages/OperationalFailures";
 import FinancialOperations from "./pages/FinancialOperations";
-import StorageAutomation from "./pages/StorageAutomation";
-import ContainerHirePos from "./pages/ContainerHirePos";
-import ContainerAssetPos from "./pages/ContainerAssetPos";
-import ContainerCustomerSalePos from "./pages/ContainerCustomerSalePos";
-import MainCustomerInvoices from "./pages/MainCustomerInvoices";
-import DepositInvoices from "./pages/DepositInvoices";
-import FinalWeightAdjustments from "./pages/FinalWeightAdjustments";
-import ExtraHireInvoices from "./pages/ExtraHireInvoices";
-import WarrantyAviso from "./pages/WarrantyAviso";
+import FinancialAutomation from "./pages/FinancialAutomation";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
@@ -94,32 +86,35 @@ function AppRoutes() {
               <Route path="/reports" component={Reports} />
               <Route path="/po-requests" component={PoRequests} />
               <Route path="/financial-operations" component={FinancialOperations} />
+              <Route path="/financial-automation">
+                <AdminGuard><FinancialAutomation /></AdminGuard>
+              </Route>
               <Route path="/storage-automation">
-                <AdminGuard><StorageAutomation /></AdminGuard>
+                <Redirect to="/financial-automation?tab=storage" />
               </Route>
               <Route path="/container-hire-pos">
-                <AdminGuard><ContainerHirePos /></AdminGuard>
+                <Redirect to="/financial-automation?tab=hire-pos" />
               </Route>
               <Route path="/container-asset-pos">
-                <AdminGuard><ContainerAssetPos /></AdminGuard>
+                <Redirect to="/financial-automation?tab=asset-pos" />
               </Route>
               <Route path="/container-customer-sale-pos">
-                <AdminGuard><ContainerCustomerSalePos /></AdminGuard>
+                <Redirect to="/financial-automation?tab=customer-sale-pos" />
               </Route>
               <Route path="/main-customer-invoices">
-                <AdminGuard><MainCustomerInvoices /></AdminGuard>
+                <Redirect to="/financial-automation?tab=main-invoices" />
               </Route>
               <Route path="/deposit-invoices">
-                <AdminGuard><DepositInvoices /></AdminGuard>
+                <Redirect to="/financial-automation?tab=deposit-invoices" />
               </Route>
               <Route path="/final-weight-adjustments">
-                <AdminGuard><FinalWeightAdjustments /></AdminGuard>
+                <Redirect to="/financial-automation?tab=final-weight" />
               </Route>
               <Route path="/extra-hire-invoices">
-                <AdminGuard><ExtraHireInvoices /></AdminGuard>
+                <Redirect to="/financial-automation?tab=extra-hire" />
               </Route>
               <Route path="/warranty-aviso">
-                <AdminGuard><WarrantyAviso /></AdminGuard>
+                <Redirect to="/financial-automation?tab=warranty-aviso" />
               </Route>
               <Route path="/operational-failures">
                 <AdminGuard><OperationalFailures /></AdminGuard>

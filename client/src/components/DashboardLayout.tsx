@@ -22,7 +22,7 @@ import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
   LayoutDashboard, LogOut, PanelLeft, Users, FileText,
-  Building2, Settings, ShieldCheck, BarChart3, ShoppingCart, Siren, Landmark, Warehouse, Container, Box, Handshake
+  Building2, Settings, ShieldCheck, BarChart3, ShoppingCart, Siren, Landmark, Workflow
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -37,15 +37,7 @@ const menuItems = [
   { icon: BarChart3,       label: "Reports",     path: "/reports",     adminOnly: false },
   { icon: ShoppingCart,    label: "PO Requests", path: "/po-requests", adminOnly: false },
   { icon: Landmark,        label: "Financial Operations", path: "/financial-operations", adminOnly: false },
-  { icon: Warehouse,       label: "VTiger → Xero Storage", path: "/storage-automation", adminOnly: true },
-  { icon: Container,       label: "Container Hire POs", path: "/container-hire-pos", adminOnly: true },
-  { icon: Box,             label: "Container Asset POs", path: "/container-asset-pos", adminOnly: true },
-  { icon: Handshake,       label: "Customer Sale POs", path: "/container-customer-sale-pos", adminOnly: true },
-  { icon: FileText,        label: "Main Customer Invoices", path: "/main-customer-invoices", adminOnly: true },
-  { icon: FileText,        label: "Deposit Invoices", path: "/deposit-invoices", adminOnly: true },
-  { icon: FileText,        label: "Final Weight Adjustments", path: "/final-weight-adjustments", adminOnly: true },
-  { icon: FileText,        label: "Extra Hire Invoices", path: "/extra-hire-invoices", adminOnly: true },
-  { icon: FileText,        label: "Warranty & Aviso", path: "/warranty-aviso", adminOnly: true },
+  { icon: Workflow,        label: "Financial Automations", path: "/financial-automation", adminOnly: true },
   { icon: Siren,           label: "Operational Failures", path: "/operational-failures", adminOnly: true },
   { icon: Building2,       label: "Suppliers",   path: "/suppliers",   adminOnly: false },
   { icon: Users,           label: "Users",       path: "/users",       adminOnly: true  },
@@ -132,7 +124,8 @@ function DashboardLayoutContent({
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const activeMenuItem = menuItems.find(item => item.path === location);
+  const locationPath = location.split("?")[0] ?? location;
+  const activeMenuItem = menuItems.find(item => item.path === locationPath);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -205,7 +198,7 @@ function DashboardLayoutContent({
           <SidebarContent className="gap-0">
             <SidebarMenu className="px-2 py-2">
               {menuItems.filter(item => !item.adminOnly || user?.role === 'admin').map(item => {
-                const isActive = location === item.path || (item.path !== '/' && location.startsWith(item.path));
+                const isActive = locationPath === item.path || (item.path !== '/' && locationPath.startsWith(item.path));
                 return (
                   <SidebarMenuItem key={item.path}>
                     <SidebarMenuButton

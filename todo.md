@@ -211,3 +211,11 @@
 - [x] Extra Hire now accepts the existing VTiger JSON envelope (`id`, `secret`, `dryRun`) as a constant-time body-secret alternative to the AP header. Amount/rate/date/customer/dryRun body values remain ignored; only the exact Deal webservice ID is used. TypeScript, the 18-test webhook contract, the full 113-file / 1167-test suite and production build pass.
 
 - [x] Extra Hire now preserves the existing Operations VTiger body exactly: `id = potential_no` D-number plus JSON `secret` and optional `dryRun`. After its dedicated release gate is valid, AP resolves only one exact current Deal through the bounded VTiger candidate finder; missing or ambiguous D-numbers return a no-write hold. TypeScript, 32 focused tests, 113 test files / 1171 tests and production build pass.
+
+## 2026-10-12 — Consolidated Financial Automations navigation
+
+- [x] Replaced the nine separate administrator sidebar entries with one **Financial Automations** parent item.
+- [x] Added nine in-page subtabs: VTiger → Xero Storage; Container Hire POs; Container Asset POs; Customer Sale POs; Main Customer Invoices; Deposit Invoices; Final Weight Adjustments; Extra Hire Invoices; and Warranty & Aviso.
+- [x] Kept every existing workflow screen and its administrator protection unchanged; former direct URLs now redirect to the matching Financial Automations subtab for bookmarks and links.
+- [x] Added URL-addressable subtab selection (`/financial-automation?tab=<workflow>`), responsive horizontal subtab navigation and unit coverage for all legacy-path mappings.
+- [x] Validated TypeScript, **114 test files / 1,174 tests**, production build and whitespace checks. No financial release policy, deployment flag, webhook, Xero record, VTiger record, Operations schedule or external workflow changed.
