@@ -21,6 +21,8 @@ import { financialSha256, sourceSnapshotHash } from "./financialProposalIntegrit
 import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
 import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
+import { readCurrentCustomerContactSource } from "./financialCustomerContactSource";
+import { resolveOrCreateAutomaticCustomerContact } from "./financialCustomerContactService";
 
 export const MAIN_CUSTOMER_INVOICE_VTIGER_MODULE = "Potentials" as const;
 export const MAIN_CUSTOMER_INVOICE_WEBHOOK_PATH = "/api/webhooks/vtiger/main-customer-invoice" as const;
@@ -168,10 +170,12 @@ export async function previewMainCustomerInvoice(dealId: string): Promise<MainCu
 export async function processAutomaticMainCustomerInvoice(dealId: string) {
   const policy = await getMainCustomerInvoiceReleasePolicy();
   assertMainCustomerInvoiceRelease(policy);
-  const preview = await previewMainCustomerInvoice(dealId);
-  if (preview.state !== "previewed" || !preview.preview.document) return { ok: false, status: "held" as const, recordId: dealId, warning: preview.holdReason ?? "Main Customer Invoice source/Xero preflight is not ready.", xeroWritesAttempted: 0 };
+  let preview = await previewMainCustomerInvoice(dealId);
+  if (!preview.preview.document) return { ok: false, status: "held" as const, recordId: dealId, warning: preview.holdReason ?? "Main Customer Invoice source/Xero preflight is not ready.", xeroWritesAttempted: 0 };
   const event = await getMainCustomerInvoiceEvent(dealId);
   if (!event) throw new Error("Main Customer Invoice current preflight was not recorded in the AP ledger.");
+  if (event.status === "drafts_created") return { ok: true, status: "duplicate_replay" as const, recordId: dealId, eventId: event.id, invoiceNumber: event.proposedInvoiceNumber, xeroWritesAttempted: 0 };
+  if (event.status === "reconciliation_required") return { ok: false, status: "reconciliation_required" as const, recordId: dealId, eventId: event.id, warning: event.holdReason ?? "Main Customer Invoice is awaiting reconciliation.", xeroWritesAttempted: 0 };
   const effectiveFrom = Date.parse(policy.effectiveFrom!);
   const sourceRefreshedAt = preview.facts.sourceRefreshedAt ? Date.parse(preview.facts.sourceRefreshedAt) : Number.NaN;
   if (!Number.isFinite(sourceRefreshedAt) || sourceRefreshedAt < effectiveFrom) {
@@ -179,10 +183,32 @@ export async function processAutomaticMainCustomerInvoice(dealId: string) {
     await holdMainCustomerInvoiceExecution(event.id, reason);
     return { ok: false, status: "held" as const, recordId: dealId, eventId: event.id, warning: reason, xeroWritesAttempted: 0 };
   }
-  if (event.status === "drafts_created") return { ok: true, status: "duplicate_replay" as const, recordId: dealId, eventId: event.id, invoiceNumber: event.proposedInvoiceNumber, xeroWritesAttempted: 0 };
-  if (event.status === "reconciliation_required") return { ok: false, status: "reconciliation_required" as const, recordId: dealId, eventId: event.id, warning: event.holdReason ?? "Main Customer Invoice is awaiting reconciliation.", xeroWritesAttempted: 0 };
+  const initialReason = preflightReason(preview.preview.document, preview.preflight);
+  const missingContactOnly = initialReason === "Xero customer contact is missing, ambiguous or not an exact match.";
+  if (preview.state !== "previewed" && !missingContactOnly) return { ok: false, status: "held" as const, recordId: dealId, warning: preview.holdReason ?? "Main Customer Invoice source/Xero preflight is not ready.", xeroWritesAttempted: 0 };
+  const source = await readCurrentCustomerContactSource({
+    customerVtigerId: preview.facts.customerVtigerId,
+    customerKind: preview.facts.customerKind,
+    expectedCustomerName: preview.facts.customerName,
+  });
+  const contact = await resolveOrCreateAutomaticCustomerContact(source);
+  if (contact.status === "held" || contact.status === "reconciliation_required") {
+    return { ok: false, status: contact.status, recordId: dealId, warning: contact.reason, xeroWritesAttempted: contact.contactWritesAttempted };
+  }
+  // A contact write invalidates first-pass accounting evidence. Refresh all
+  // current source and Xero checks, then bind the immutable ContactID only when
+  // the second exact preflight agrees with the contact resolution.
+  preview = await previewMainCustomerInvoice(dealId);
+  const refreshedSource = await readCurrentCustomerContactSource({
+    customerVtigerId: preview.facts.customerVtigerId,
+    customerKind: preview.facts.customerKind,
+    expectedCustomerName: preview.facts.customerName,
+  });
+  if (refreshedSource.sourceSnapshotHash !== source.sourceSnapshotHash || preview.state !== "previewed" || !preview.preview.document || preview.preflight?.contactCheck.contactId !== contact.contactId) {
+    return { ok: false, status: "held" as const, recordId: dealId, warning: "Current source or Xero customer contact changed after customer-contact resolution; no invoice Draft will be created.", xeroWritesAttempted: contact.contactWritesAttempted };
+  }
   const token = randomUUID();
-  if (!(await claimMainCustomerInvoicePreview(event.id, token))) return { ok: false, status: "held" as const, recordId: dealId, eventId: event.id, warning: "Main Customer Invoice is already processing or was not freshly preflighted.", xeroWritesAttempted: 0 };
+  if (!(await claimMainCustomerInvoicePreview(event.id, token))) return { ok: false, status: "held" as const, recordId: dealId, eventId: event.id, warning: "Main Customer Invoice is already processing or was not freshly preflighted.", xeroWritesAttempted: contact.contactWritesAttempted };
   try {
     const payload = prepareFinancialDraftPayload(preview.preview.document, `${dealId}:main_customer_invoice:${preview.sourceSnapshotHash}`);
     const row = (payload.body.Invoices as Record<string, unknown>[] | undefined)?.[0];
@@ -198,10 +224,10 @@ export async function processAutomaticMainCustomerInvoice(dealId: string) {
     });
     if (outcome.outcome === "reconciliation_required" || outcome.outcome === "duplicate") {
       await holdMainCustomerInvoiceExecution(event.id, "Main Customer Invoice Xero execution requires exact reconciliation before any retry.", true);
-      return { ok: false, status: "reconciliation_required" as const, recordId: dealId, eventId: event.id, warning: "Main Customer Invoice Xero result is awaiting reconciliation; no blind retry will occur.", xeroWritesAttempted: outcome.outcome === "reconciliation_required" ? 1 : 0 };
+      return { ok: false, status: "reconciliation_required" as const, recordId: dealId, eventId: event.id, warning: "Main Customer Invoice Xero result is awaiting reconciliation; no blind retry will occur.", xeroWritesAttempted: contact.contactWritesAttempted + (outcome.outcome === "reconciliation_required" ? 1 : 0) };
     }
     await completeMainCustomerInvoiceDraft({ eventId: event.id, executionId: outcome.executionId, xeroInvoiceId: outcome.result.xeroDocumentId });
-    return { ok: true, status: "drafts_created" as const, recordId: dealId, eventId: event.id, invoiceNumber: outcome.result.documentNumber, xeroInvoiceId: outcome.result.xeroDocumentId, xeroWritesAttempted: 1 };
+    return { ok: true, status: "drafts_created" as const, recordId: dealId, eventId: event.id, invoiceNumber: outcome.result.documentNumber, xeroInvoiceId: outcome.result.xeroDocumentId, xeroWritesAttempted: contact.contactWritesAttempted + 1 };
   } catch (error) {
     await holdMainCustomerInvoiceExecution(event.id, error instanceof Error ? error.message : "Main Customer Invoice execution failed.");
     throw error;
@@ -213,6 +239,7 @@ export async function getMainCustomerInvoiceReadiness() {
   return { module: MAIN_CUSTOMER_INVOICE_VTIGER_MODULE, webhookPath: MAIN_CUSTOMER_INVOICE_WEBHOOK_PATH, routeRegistered: true,
     webhookAuthenticationConfigured: Boolean(process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim()),
     writerEnabled: process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED === "true" && policy.enabled,
+    customerContactAutomationEnabled: process.env.FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED === "true",
     policy: { enabled: policy.enabled, effectiveFrom: policy.effectiveFrom, mainInvoiceOnlyVtigerBranch: policy.mainInvoiceOnlyVtigerBranch, operationsMainInvoiceHandoff: policy.operationsMainInvoiceHandoff, migrationScope: policy.migrationScope }, noWrites: true as const };
 }
 

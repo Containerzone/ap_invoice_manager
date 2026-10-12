@@ -842,6 +842,32 @@ export const financialCustomerSalePurchasePoEvents = mysqlTable("financial_custo
 export type FinancialCustomerSalePurchasePoEvent = typeof financialCustomerSalePurchasePoEvents.$inferSelect;
 export type InsertFinancialCustomerSalePurchasePoEvent = typeof financialCustomerSalePurchasePoEvents.$inferInsert;
 
+// ─── Customer contact automation audit ────────────────────────────────────
+//
+// This is shared only by the active Main Customer Invoice and Deposit Invoice
+// paths. It stores identity hashes and Xero immutable IDs, never an email,
+// mobile number, OAuth credential or raw Xero response. The unique source key
+// makes an automatic contact POST one-time across either family and retries.
+export const financialCustomerContactEvents = mysqlTable("financial_customer_contact_events", {
+  id: int("id").autoincrement().primaryKey(),
+  customerKey: varchar("customerKey", { length: 64 }).notNull(),
+  customerVtigerId: varchar("customerVtigerId", { length: 128 }).notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  tenantIdHash: varchar("tenantIdHash", { length: 64 }).notNull(),
+  idempotencyKey: varchar("idempotencyKey", { length: 64 }).notNull(),
+  xeroContactId: varchar("xeroContactId", { length: 128 }),
+  status: mysqlEnum("status", ["reserved", "matched", "created", "held", "reconciliation_required"] as const).notNull(),
+  evidence: json("evidence"),
+  holdReason: text("holdReason"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  customerKeyUnique: uniqueIndex("financial_customer_contact_key_unique").on(table.customerKey),
+  idempotencyKeyUnique: uniqueIndex("financial_customer_contact_idempotency_unique").on(table.idempotencyKey),
+}));
+
+export type FinancialCustomerContactEvent = typeof financialCustomerContactEvents.$inferSelect;
+
 // ─── Main Customer Invoice lifecycle ──────────────────────────────────────
 //
 // An AP-owned receipt for the current Deal → Quote → Service-line evidence.

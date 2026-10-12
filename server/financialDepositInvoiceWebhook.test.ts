@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ process: vi.fn(), candidate: vi.fn() }));
+const m = vi.hoisted(() => ({ process: vi.fn(), candidate: vi.fn(), report: vi.fn() }));
 vi.mock("./financialDepositInvoiceService", () => ({
   DEPOSIT_INVOICE_WEBHOOK_PATH: "/api/webhooks/vtiger/deposit-invoice",
   processAutomaticDepositInvoice: m.process,
@@ -8,6 +8,7 @@ vi.mock("./financialDepositInvoiceService", () => ({
 vi.mock("./vtigerFinancialCandidateService", () => ({
   findExactFinancialCandidate: m.candidate,
 }));
+vi.mock("./workflowAlertService", () => ({ reportWorkflowFailureSafely: m.report }));
 
 import {
   parseDepositInvoiceWebhookEnvelope,
@@ -105,6 +106,7 @@ describe("Deposit dedicated protected webhook", () => {
       })
     );
     expect(m.process).not.toHaveBeenCalled();
+    expect(m.report).not.toHaveBeenCalled();
   });
 
   it("accepts the established JSON secret body while disabled without source, DB or Xero work", async () => {
@@ -138,6 +140,11 @@ describe("Deposit dedicated protected webhook", () => {
     );
     expect(m.process).toHaveBeenCalledWith("5x77");
     expect(res.status).toHaveBeenCalledWith(202);
+    expect(m.report).toHaveBeenCalledWith(expect.objectContaining({
+      workflowType: "deposit_invoice",
+      recordKey: "deposit-invoice:5x77",
+      details: { dealId: "5x77", status: "held" },
+    }));
   });
 
   it("resolves the established D-number envelope before the isolated Deposit family runs", async () => {

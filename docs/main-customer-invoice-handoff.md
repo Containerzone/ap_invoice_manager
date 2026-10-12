@@ -10,10 +10,11 @@
 | Current source facts | AP re-reads the Deal, linked Quote, current organisation/contact and every current Quote Service line. Body customer/amount/line values are ignored. |
 | Xero document | One `ACCREC` **Draft** only. |
 | Reference | `INV-<Deal number without D>`; for example `D702877` → `INV-702877`. |
-| Customer | Exact current Deal/Quote organisation, otherwise exact current contact; Xero contact must resolve uniquely. |
+| Customer | Exact current Deal/Quote organisation, otherwise exact current contact. Main invoice execution re-reads metadata-proven current customer Email and Mobile/Phone. Exact literal full name **and** exact email must resolve to one active Xero contact (or exact name only when no source email exists). |
 | Lines | Current VTiger Service description, Quote quantity and Quote list price; account **200**, AUD, GST exclusive. |
 | Collision | Any existing Xero invoice with the exact `INV-…` number is held. AP will not suffix, adopt, amend or delete it. |
 | Recovery | An ambiguous Xero create/read-back result is marked reconciliation-required. It is never blindly retried. |
+| Missing customer contact | When the separate `FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED=true` gate is deliberately enabled, a zero-match customer may be created once with current Name, Email and Mobile/Phone, using a shared idempotent contact ledger. Xero is re-read and the full invoice preflight is refreshed before any Draft. A name/email conflict, multiple match, archived contact, source change or uncertain POST holds and alerts; supplier fuzzy/first-token matching is never used. |
 
 ## Current AP endpoints and UI
 

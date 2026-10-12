@@ -12,6 +12,8 @@ const m = vi.hoisted(() => ({
   hold: vi.fn(),
   writer: vi.fn(),
   policy: vi.fn(),
+  contactSource: vi.fn(),
+  contactResolution: vi.fn(),
 }));
 vi.mock("./vtigerFinancialReadService", () => ({
   retrieveCurrentVtigerFinancialRecord: m.retrieve,
@@ -36,6 +38,12 @@ vi.mock("./financialDepositInvoiceRelease", async original => ({
 }));
 vi.mock("./financialWriterExecutionService", () => ({
   executeGuardedFinancialWriterCommand: m.writer,
+}));
+vi.mock("./financialCustomerContactSource", () => ({
+  readCurrentCustomerContactSource: m.contactSource,
+}));
+vi.mock("./financialCustomerContactService", () => ({
+  resolveOrCreateAutomaticCustomerContact: m.contactResolution,
 }));
 import { readDepositInvoiceFacts } from "./financialDepositInvoiceSource";
 import {
@@ -123,6 +131,11 @@ beforeEach(() => {
     executionId: 91,
     result: { documentNumber: "INV-702877-D", xeroDocumentId: "new-deposit" },
   });
+  m.contactSource.mockResolvedValue({
+    customerVtigerId: "4x2", customerKind: "organisation", name: "Customer Pty Ltd", email: "customer@example.test", phone: null,
+    sourceSnapshotHash: "c".repeat(64),
+  });
+  m.contactResolution.mockResolvedValue({ status: "matched", contactId: "xero-customer", contactEventId: null, reason: null, contactWritesAttempted: 0 });
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("Deposit exact current source and read-only preview", () => {
@@ -288,6 +301,20 @@ describe("Deposit isolated automatic path", () => {
     expect(m.writer.mock.calls[0]![0].postSuccessPlan).toBeUndefined();
     expect(m.bind).toHaveBeenCalledTimes(1);
     expect(m.complete).toHaveBeenCalledTimes(1);
+  });
+  it("creates a customer contact only for the contact-only hold, refreshes preflight, then creates the Deposit Draft", async () => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    m.preflight.mockResolvedValueOnce([{ ...ready(), contactCheck: { found: false, count: 0, contactId: null, partyName: "Customer Pty Ltd" } }])
+      .mockResolvedValueOnce([ready()]);
+    m.contactResolution.mockResolvedValue({ status: "created", contactId: "xero-customer", contactEventId: 31, reason: null, contactWritesAttempted: 1 });
+
+    const result = await processAutomaticDepositInvoice("5x77");
+
+    expect(result).toMatchObject({ status: "drafts_created", xeroWritesAttempted: 2 });
+    expect(m.contactResolution).toHaveBeenCalledTimes(1);
+    expect(m.preflight).toHaveBeenCalledTimes(2);
+    expect(m.writer).toHaveBeenCalledTimes(1);
+    expect(m.writer.mock.invocationCallOrder[0]).toBeGreaterThan(m.contactResolution.mock.invocationCallOrder[0]!);
   });
   it("records an old source as held even when its customer was updated after cutover", async () => {
     vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");

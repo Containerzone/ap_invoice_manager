@@ -5,6 +5,7 @@ import {
   processAutomaticDepositInvoice,
 } from "./financialDepositInvoiceService";
 import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
+import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
 export const DEPOSIT_INVOICE_WEBHOOK_SECRET_HEADER =
   "x-financial-webhook-secret" as const;
@@ -103,9 +104,27 @@ export function registerDepositInvoiceWebhook(app: Express): void {
       try {
         const recordId = await resolveDepositInvoiceWebhookRecord(envelope);
         const result = await processAutomaticDepositInvoice(recordId);
+        if (!result.ok) {
+          reportWorkflowFailureSafely({
+            workflowType: "deposit_invoice",
+            recordKey: `deposit-invoice:${recordId}`,
+            title: "Deposit Invoice held",
+            errorMessage: ("warning" in result ? result.warning : null) ?? result.status,
+            details: { dealId: recordId, status: result.status },
+            severity: "error",
+          });
+        }
         return res.status(result.ok ? 200 : 202).json(result);
       } catch (error) {
         // Never claim zero attempts after an unknown transport failure; immutable ledger is authoritative.
+        reportWorkflowFailureSafely({
+          workflowType: "deposit_invoice",
+          recordKey: `deposit-invoice:${envelope.recordId ?? envelope.dealNumber ?? "unresolved"}`,
+          title: "Deposit Invoice held",
+          errorMessage: "Deposit Invoice source, policy or Xero preflight could not be completed.",
+          details: { dealReference: envelope.recordId ?? envelope.dealNumber ?? null },
+          severity: "error",
+        });
         return res
           .status(202)
           .json({

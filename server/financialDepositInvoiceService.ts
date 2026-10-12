@@ -35,6 +35,8 @@ import {
 } from "./financialProposalIntegrity";
 import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
+import { readCurrentCustomerContactSource } from "./financialCustomerContactSource";
+import { resolveOrCreateAutomaticCustomerContact } from "./financialCustomerContactService";
 
 export const DEPOSIT_INVOICE_WEBHOOK_PATH =
   "/api/webhooks/vtiger/deposit-invoice" as const;
@@ -121,7 +123,7 @@ export async function previewDepositInvoice(
 export async function processAutomaticDepositInvoice(dealId: string) {
   const policy = await getDepositInvoiceReleasePolicy();
   assertDepositInvoiceRelease(policy);
-  const evidence = await previewDepositInvoice(dealId);
+  let evidence = await previewDepositInvoice(dealId);
   let reason = evidence.holdReason;
   if (
     !reason &&
@@ -147,6 +149,41 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       xeroWritesAttempted: 0,
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
+  const contactOnlyHold = reason === "Exact current Deal Xero customer is missing or ambiguous.";
+  if (reason && !contactOnlyHold) {
+    const event = await recordDepositInvoicePreview({
+      facts: evidence.facts, sourceHash: evidence.sourceSnapshotHash, proposal: evidence.preview.document,
+      preflight: evidence.preflight, proposedInvoiceNumber: evidence.preview.proposedInvoiceNumber, status: "held", holdReason: reason,
+    });
+    return { ok: false, status: "held" as const, recordId: dealId, eventId: event.id, warning: reason, xeroWritesAttempted: 0, postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD };
+  }
+  // Validate the Deposit item's Xero configuration before creating a customer
+  // contact. If it is absent, a contact-only write would not lead to an invoice.
+  if (contactOnlyHold) await readDepositInvoiceXeroItemConfiguration();
+  const source = await readCurrentCustomerContactSource({
+    customerVtigerId: evidence.facts.customerVtigerId,
+    customerKind: evidence.facts.customerKind,
+    expectedCustomerName: evidence.facts.customerName,
+  });
+  const contact = await resolveOrCreateAutomaticCustomerContact(source);
+  if (contact.status === "held" || contact.status === "reconciliation_required") {
+    const event = await recordDepositInvoicePreview({
+      facts: evidence.facts, sourceHash: evidence.sourceSnapshotHash, proposal: evidence.preview.document,
+      preflight: evidence.preflight, proposedInvoiceNumber: evidence.preview.proposedInvoiceNumber, status: "held", holdReason: contact.reason,
+    });
+    return { ok: false, status: contact.status, recordId: dealId, eventId: event.id, warning: contact.reason, xeroWritesAttempted: contact.contactWritesAttempted, postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD };
+  }
+  evidence = await previewDepositInvoice(dealId);
+  const refreshedSource = await readCurrentCustomerContactSource({
+    customerVtigerId: evidence.facts.customerVtigerId,
+    customerKind: evidence.facts.customerKind,
+    expectedCustomerName: evidence.facts.customerName,
+  });
+  if (refreshedSource.sourceSnapshotHash !== source.sourceSnapshotHash || evidence.state !== "previewed" || !evidence.preview.document || evidence.preflight?.contactCheck.contactId !== contact.contactId) {
+    reason = "Current source or Xero customer contact changed after customer-contact resolution; no Deposit Draft will be created.";
+  } else {
+    reason = evidence.holdReason;
+  }
   const event = await recordDepositInvoicePreview({
     facts: evidence.facts,
     sourceHash: evidence.sourceSnapshotHash,
@@ -163,7 +200,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       recordId: dealId,
       eventId: event.id,
       warning: reason ?? "Deposit evidence is held.",
-      xeroWritesAttempted: 0,
+      xeroWritesAttempted: contact.contactWritesAttempted,
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
   const token = randomUUID();
@@ -180,9 +217,9 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       status: "held" as const,
       recordId: dealId,
       eventId: event.id,
-      warning:
-        "Deposit exact evidence or number is already claimed; no duplicate creation.",
-      xeroWritesAttempted: 0,
+        warning:
+          "Deposit exact evidence or number is already claimed; no duplicate creation.",
+        xeroWritesAttempted: contact.contactWritesAttempted,
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
   try {
@@ -233,7 +270,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
         warning:
           "Reconcile the exact Deposit invoice before any further action.",
         xeroWritesAttempted:
-          outcome.outcome === "reconciliation_required" ? 1 : 0,
+          contact.contactWritesAttempted + (outcome.outcome === "reconciliation_required" ? 1 : 0),
         postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
       };
     }
@@ -250,7 +287,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       eventId: event.id,
       invoiceNumber: outcome.result.documentNumber,
       xeroInvoiceId: outcome.result.xeroDocumentId,
-      xeroWritesAttempted: 1,
+      xeroWritesAttempted: contact.contactWritesAttempted + 1,
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
   } catch (error) {
@@ -282,6 +319,8 @@ export async function getDepositInvoiceReadiness() {
       process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim()
     ),
     writerEnabled,
+    customerContactAutomationEnabled:
+      process.env.FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED === "true",
     releaseHoldReason,
     policy,
     postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
