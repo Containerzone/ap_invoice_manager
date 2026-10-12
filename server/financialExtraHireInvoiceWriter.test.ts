@@ -130,6 +130,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 describe("Extra Hire isolated writer contract", () => {
   it("never inherits global, storage, Deposit or Main gates", () => {
+    vi.stubEnv("FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED", "false");
     vi.stubEnv("FINANCIAL_LIVE_WRITES_ENABLED", "true");
     vi.stubEnv("FINANCIAL_STORAGE_AUTOMATIC_ENABLED", "true");
     expect(() =>

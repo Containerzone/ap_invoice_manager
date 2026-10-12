@@ -27,6 +27,7 @@ const valid = () =>
   });
 describe("Extra Hire independently approved new-events policy", () => {
   it("default off even with global/all other family flags", () => {
+    vi.stubEnv("FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED", "false");
     vi.stubEnv("FINANCIAL_LIVE_WRITES_ENABLED", "true");
     vi.stubEnv("FINANCIAL_STORAGE_AUTOMATIC_ENABLED", "true");
     expect(() => assertExtraHireRelease(valid())).toThrow(/disabled/);

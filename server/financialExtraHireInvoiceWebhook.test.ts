@@ -62,6 +62,7 @@ describe("Extra Hire dedicated private route", () => {
     }
   );
   it("accepts the existing VTiger JSON body secret and ignores dryRun", async () => {
+    vi.stubEnv("FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED", "false");
     const res = response();
     await handler()(
       {

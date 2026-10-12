@@ -204,7 +204,8 @@
 - [x] Hire End Date +30 is a separate held future CRM change. Neither the current storage post-success flag nor the new Extra Hire post-success flag can queue/write it in this implementation.
 - [x] Validated TypeScript, focused Extra Hire 7 files / 121 tests, mocked financial regression 104 files / 900 tests (excluding the existing Microsoft Graph credential test) and production build. No Xero document, VTiger record, Operations/Make setting, schedule, Heartbeat, flag, policy or publication changed.
 - [x] Confirmed the Extra Hire AP ledger has no existing execution. A complete, current-rules, `new_events_only` policy is recorded: Extra-Hire-only VTiger branch and Operations handover, exact mappings hash, `EH_AP_ORDINAL_V1`, isolated Draft-only scope and explicit no-Hire-End-Date-writeback acknowledgement. The canonical VTiger JSON `id`/`secret` contract is accepted, including bounded D-number resolution; the runtime gate remains off until publication and public safe probes.
-- [ ] Publish the Extra Hire activation checkpoint, then set only `FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED=true` and run authenticated public nonexistent-D-number probes. Keep Hire End Date writeback as a separate held design/release.
+- [x] Set only `FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED=true` in protected deployment configuration. The canonical id/secret opt-in local live receiver test passed against a deliberately nonexistent D-number (`202 held`, zero Xero writes); dedicated unit tests were made independent of the live gate.
+- [ ] Publish the Extra Hire gate checkpoint, then run authenticated public nonexistent-D-number probes before treating the receiver as live. Keep Hire End Date writeback as a separate held design/release.
 
 ## 2026-10-11 — Warranty & Aviso AP-only default-off readiness checkpoint
 
