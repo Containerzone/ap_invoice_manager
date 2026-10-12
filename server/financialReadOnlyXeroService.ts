@@ -325,6 +325,8 @@ export async function readBackFinancialDraft(input: {
   expectedXeroDocumentId: string;
   expectedDocument?: ProposedFinancialDocument;
   expectedFinalWeightDraft?: Record<string, any>;
+  /** Complete immutable expected Draft evidence for a separately guarded amendment. */
+  expectedExactDraft?: Record<string, any>;
 }): Promise<FinancialDraftReadBack> {
   const auth = await readOnlyAuth();
   await assertExpectedFinancialTenant(auth);
@@ -349,6 +351,10 @@ export async function readBackFinancialDraft(input: {
   if (input.expectedFinalWeightDraft) {
     if (input.documentFamily !== "customer_invoice" || documentNumber !== expectedNumber || document.Type !== "ACCREC") throw new Error("Final-weight readback must be the exact main ACCREC invoice.");
     assertFinalWeightReadback(document, input.expectedFinalWeightDraft);
+  }
+  if (input.expectedExactDraft) {
+    if (input.documentFamily !== "customer_invoice" || documentNumber !== expectedNumber || document.Type !== "ACCREC") throw new Error("Exact Draft readback must match the verified customer invoice resource.");
+    assertFinalWeightReadback(document, input.expectedExactDraft);
   }
   const numeric = (value: unknown): number | null => {
     const parsed = typeof value === "number" ? value : Number(value);

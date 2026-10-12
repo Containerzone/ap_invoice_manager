@@ -20,10 +20,18 @@
    - If `FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED=true` is deliberately enabled, a zero-match customer may be created once from metadata-proven current Name, Email and Mobile/Phone under a shared idempotent contact ledger. AP force-refreshes customer/invoice/item/account preflight and source evidence before the Draft. Exact name/email conflict, ambiguity, inactive/archived contact, source change or uncertain create is held and operationally alerted; no supplier fuzzy/first-token logic is used.
 4. Verify the first accepted event in **Financial Automations → Deposit Invoices**: one `INV-<digits>-D` AUD Inclusive **ACCREC Draft**, immutable event/payload and execution IDs, exact Xero read-back, and a visibly held main-invoice deduction. No suffix/adoption/amendment/retry is permitted.
 
+### Verified live Deposit event — D702933
+
+After a fresh current-source and Xero preflight, followed by exact user approval, AP created exactly one **ACCREC Draft** `INV-702933-D` for Deal `D702933`: AUD **$500.00 GST-inclusive** ($454.55 subtotal, $45.45 GST), issue date 12 October 2026 and due date 13 October 2026. The immutable Deposit event `30001` and writer execution `180001` are both complete, and Xero read-back is `DRAFT`. An existing single exact Xero customer contact was used; no customer contact was created. No approval, send, payment, void, deletion, main-invoice amendment or VTiger mutation occurred.
+
+### Approved D702933 Draft-only correction — pending publication
+
+An incident-specific correction path is prepared for the two exact current Xero Drafts only. It preserves all retained headers and line evidence, performs fresh source/Xero preflight, and requires exact Draft read-back after each update. The first update changes only `INV-702933-D`'s line description to the current native-item template resolved with current source numbers: `Deposit for Q531665 from INV-702933`. The second appends exactly one `Deposit deduction — INV-702933-D` negative AUD GST-exclusive line to the existing `INV-702933` Draft: -$454.55 subtotal, -$45.45 GST, -$500.00 inclusive, reducing its total from $5,917.35 to $5,417.35. A changed/non-Draft/allocated document, contact mismatch, item/account mismatch, collision, or uncertain first update stops the next update. There is no generic Deposit deduction webhook, no non-Draft amendment, and no VTiger mutation.
+
 ## Never in this readiness family
 
 - Xero authorisation, payment, sending, deletion, voiding, suffixing or existing invoice adoption.
-- Amendment of **any** main invoice, including exact Drafts. The legacy negative deduction needs a separate source/preflight/immutable-safe live path and its own approval. Non-Draft main invoices must never change.
+- Amendment of **any** main invoice, except the separate, exact current-Draft-only D702933 correction above after its own publication and current user approval. There is no generic Deposit deduction path. Non-Draft main invoices must never change.
 - Paid Deposit Status CRM updates, VTiger mutations/tasks/notes, or post-success mutation queues.
 - Historical backfill, catch-up, shared selector activation or all-family go-live.
 - Make changes, shared-selector activation, schedule/Heartbeat changes or external action URL edits outside the dedicated Deposit handover.

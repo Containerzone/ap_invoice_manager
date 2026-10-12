@@ -48,6 +48,7 @@ export type GuardedFinancialWriterCommand = {
   postSuccessPlan?: PlannedFinancialPostSuccessAction[];
   expectedDraftDocument?: ProposedFinancialDocument;
   expectedFinalWeightDraft?: Record<string, any>;
+  expectedExactDraft?: Record<string, any>;
 };
 
 export type GuardedFinancialWriterOutcome =
@@ -88,6 +89,13 @@ export async function executeGuardedFinancialWriterCommand(
     await verifyFinalWeightAutomaticWriteAccess({ eventId: command.authorisation.finalWeightAutomaticEventId, direction: command.authorisation.finalWeightDirection!,
       releaseKey: command.authorisation.finalWeightReleaseKey!, payload: command.payload, preparedBy: command.preparedBy });
   } else if (command.expectedFinalWeightDraft) throw new Error("Final-weight readback evidence requires its independent amendment release.");
+  if (command.authorisation.depositDraftCorrectionKind !== undefined) {
+    if (command.workflowType !== "deposit_draft_correction" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
+      command.preparedBy !== command.authorisation.depositDraftCorrectionApprovedBy || !command.expectedExactDraft || command.expectedDraftDocument || command.expectedFinalWeightDraft ||
+      financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedExactDraft])) {
+      throw new Error("Deposit correction permits only its exact immutable Draft amendment and no CRM post-success action.");
+    }
+  } else if (command.expectedExactDraft) throw new Error("Exact Draft correction evidence requires its independent Deposit correction approval.");
   if ((command.workflowType === "deposit_invoice" || /^INV-\d+-D$/i.test(command.payload.documentNumber)) && command.authorisation.depositInvoiceAutomaticEventId === undefined) {
     throw new Error("Deposit commands and exact -D documents require the independent Deposit event, not a generic or other-family approval.");
   }
@@ -192,6 +200,7 @@ export async function executeGuardedFinancialWriterCommand(
       expectedXeroDocumentId: result.xeroDocumentId,
       expectedDocument: command.expectedDraftDocument,
       expectedFinalWeightDraft: command.expectedFinalWeightDraft,
+      expectedExactDraft: command.expectedExactDraft,
     });
     await markFinancialWriterExecutionSucceeded(prepared.execution.id, result);
     if (command.sourceRecordId && command.verifiedSourceData) {

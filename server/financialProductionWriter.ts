@@ -98,6 +98,10 @@ export type FinancialWriteAuthorisation = {
   extraHireAutomaticEventId?: number;
   extraHireReleaseKey?: string;
   extraHireApprovedBy?: number;
+  /** One-off Deposit/main Draft correction; never available to webhooks or generic writers. */
+  depositDraftCorrectionKind?: "deposit_description" | "main_deduction";
+  depositDraftCorrectionReleaseKey?: string;
+  depositDraftCorrectionApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -470,6 +474,26 @@ export async function executeFinancialDraftWrite(
       throw new FinancialWriteDisabledError("Deposit release permits only one new exact AUD Inclusive Draft ACCREC -D with a positive Deposit Required line; amendments and deductions are excluded.");
     }
     await verifyDepositInvoiceAutomaticWriteAccess({ eventId: context.depositInvoiceAutomaticEventId, releaseKey: context.depositInvoiceReleaseKey!, preparedBy: context.depositInvoiceApprovedBy!, payload });
+  }
+  if (context.depositDraftCorrectionKind !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (context.workflowType !== "deposit_draft_correction" || payload.method !== "POST" || !payload.expectedXeroDocumentId || payload.endpoint !== `/Invoices/${encodeURIComponent(payload.expectedXeroDocumentId)}` ||
+      payload.documentFamily !== "customer_invoice" || !/^INV-\d{1,12}(?:-D)?$/.test(payload.documentNumber) || !row || row.InvoiceID !== payload.expectedXeroDocumentId || row.InvoiceNumber !== payload.documentNumber || row.Status !== "DRAFT" || row.Type !== "ACCREC" || row.CurrencyCode !== "AUD" || !row.Contact?.ContactID || !Array.isArray(row.LineItems) || !row.LineItems.length ||
+      context.depositDraftCorrectionReleaseKey !== context.approvalReference || context.depositDraftCorrectionApprovedBy === undefined) {
+      throw new FinancialWriteDisabledError("Deposit correction permits only one exact existing AUD Draft invoice resource with an immutable correction approval.");
+    }
+    if (context.depositDraftCorrectionKind === "deposit_description") {
+      const line = row.LineItems.length === 1 ? row.LineItems[0] : null;
+      if (!/-D$/.test(payload.documentNumber) || row.LineAmountTypes !== "Inclusive" || !line || line.ItemCode !== "Deposit Required" || line.Quantity !== 1 || !(typeof line.UnitAmount === "number" && line.UnitAmount > 0) || !/^Deposit for Q\d{1,12} from INV-\d{1,12}$/.test(String(line.Description ?? "")) || !String(line.Description).endsWith(`from ${payload.documentNumber.replace(/-D$/, "")}`)) {
+        throw new FinancialWriteDisabledError("Deposit correction permits only the exact native Deposit description on its existing inclusive -D Draft.");
+      }
+    } else {
+      const deductions = row.LineItems.filter((line: any) => line?.Description === `Deposit deduction — ${payload.documentNumber}-D` && line.Quantity === 1 && Number(line.UnitAmount) < 0 && String(line.AccountCode) === "200" && line.TaxType === "OUTPUT");
+      if (!/^INV-\d{1,12}$/.test(payload.documentNumber) || row.LineAmountTypes !== "Exclusive" || deductions.length !== 1) {
+        throw new FinancialWriteDisabledError("Deposit correction permits only one negative exclusive Deposit deduction line on the exact existing main Draft.");
+      }
+    }
   }
   if (context.mainCustomerInvoiceAutomaticEventId !== undefined) {
     const rows = payload.body.Invoices;
