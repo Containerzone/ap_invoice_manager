@@ -330,6 +330,13 @@
       "when": 1791790373711,
       "tag": "0046_normal_the_captain",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "5",
+      "when": 1791829639870,
+      "tag": "0047_shallow_cargill",
+      "breakpoints": true
     }
   ]
 }

@@ -114,6 +114,17 @@ export function registerDepositInvoiceWebhook(app: Express): void {
             severity: "error",
           });
         }
+        const deduction = "mainDeduction" in result ? result.mainDeduction : null;
+        if (deduction && (deduction.status === "held" || deduction.status === "reconciliation_required")) {
+          reportWorkflowFailureSafely({
+            workflowType: "deposit_main_deduction",
+            recordKey: `deposit-main-deduction:${recordId}`,
+            title: "Deposit-to-main Draft deduction held",
+            errorMessage: deduction.reason,
+            details: { dealId: recordId, status: deduction.status },
+            severity: "error",
+          });
+        }
         return res.status(result.ok ? 200 : 202).json(result);
       } catch (error) {
         // Never claim zero attempts after an unknown transport failure; immutable ledger is authoritative.

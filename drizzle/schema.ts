@@ -944,6 +944,37 @@ export const financialDepositInvoiceEvents = mysqlTable("financial_deposit_invoi
 }));
 export type FinancialDepositInvoiceEvent = typeof financialDepositInvoiceEvents.$inferSelect;
 
+// ─── Deposit → Main Draft deduction lifecycle ─────────────────────────────
+//
+// This separate receipt owns only the optional, post-creation Draft amendment.
+// It never reuses a Deposit creation reservation and cannot adopt an existing
+// main invoice without fresh exact Xero evidence.
+export const financialDepositMainDeductionEvents = mysqlTable("financial_deposit_main_deduction_events", {
+  id: int("id").autoincrement().primaryKey(),
+  evidenceKey: varchar("evidenceKey", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  depositInvoiceNumber: varchar("depositInvoiceNumber", { length: 128 }).notNull(),
+  depositXeroInvoiceId: varchar("depositXeroInvoiceId", { length: 128 }).notNull(),
+  mainInvoiceNumber: varchar("mainInvoiceNumber", { length: 128 }).notNull(),
+  mainXeroInvoiceId: varchar("mainXeroInvoiceId", { length: 128 }).notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  xeroEvidenceHash: varchar("xeroEvidenceHash", { length: 64 }).notNull(),
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "held", "reserved", "draft_updated", "reconciliation_required"] as const).default("held").notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  evidenceUnique: uniqueIndex("financial_deposit_main_deduction_evidence_unique").on(table.evidenceKey),
+  depositUnique: uniqueIndex("financial_deposit_main_deduction_deposit_unique").on(table.depositXeroInvoiceId),
+  mainDepositUnique: uniqueIndex("financial_deposit_main_deduction_main_deposit_unique").on(table.mainXeroInvoiceId, table.depositXeroInvoiceId),
+}));
+export type FinancialDepositMainDeductionEvent = typeof financialDepositMainDeductionEvents.$inferSelect;
+
 // Final weight evidence never changes after insert. Both directions share a
 // per-document one-time exclusive claim, NOT Main Invoice's release or ledger.
 export const financialFinalWeightAdjustmentEvents = mysqlTable("financial_final_weight_adjustment_events", {

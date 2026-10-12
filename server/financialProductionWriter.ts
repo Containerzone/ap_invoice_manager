@@ -102,6 +102,11 @@ export type FinancialWriteAuthorisation = {
   depositDraftCorrectionKind?: "deposit_description" | "main_deduction" | "main_deduction_rounding";
   depositDraftCorrectionReleaseKey?: string;
   depositDraftCorrectionApprovedBy?: number;
+  /** Generic Deposit post-create amendment, independently released from Deposit creation. */
+  depositMainDeductionAutomaticEventId?: number;
+  depositMainDeductionReleaseKey?: string;
+  depositMainDeductionApprovedBy?: number;
+  depositMainDeductionToken?: string;
 };
 
 export type FinancialDraftWriteResult = {
@@ -279,6 +284,18 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.workflowType === "deposit_main_deduction" || context.depositMainDeductionAutomaticEventId !== undefined) {
+    if (process.env.FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "deposit_main_deduction" ||
+      !Number.isInteger(context.depositMainDeductionAutomaticEventId) || Number(context.depositMainDeductionAutomaticEventId) <= 0 || !context.depositMainDeductionReleaseKey ||
+      !Number.isInteger(context.depositMainDeductionApprovedBy) || Number(context.depositMainDeductionApprovedBy) <= 0 || !context.depositMainDeductionToken || context.approvalReference !== context.depositMainDeductionReleaseKey ||
+      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
+      [context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId, context.finalWeightAutomaticEventId, context.assetPurchaseAutomaticEventId,
+        context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId, context.storageAutomaticEventId, context.storagePilotEventId].some(value => value !== undefined)) {
+      throw new FinancialWriteDisabledError("Deposit-to-main independent Draft amendment gate is invalid; Deposit creation or another family cannot enable it.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) throw new FinancialWriteDisabledError("Deposit-to-main execution ledger is required.");
+    return;
+  }
   if (context.workflowType === "extra_hire" || context.extraHireAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "extra_hire" ||
       !Number.isInteger(context.extraHireAutomaticEventId) || Number(context.extraHireAutomaticEventId) <= 0 || !context.extraHireReleaseKey ||
@@ -474,6 +491,15 @@ export async function executeFinancialDraftWrite(
       throw new FinancialWriteDisabledError("Deposit release permits only one new exact AUD Inclusive Draft ACCREC -D with a positive Deposit Required line; amendments and deductions are excluded.");
     }
     await verifyDepositInvoiceAutomaticWriteAccess({ eventId: context.depositInvoiceAutomaticEventId, releaseKey: context.depositInvoiceReleaseKey!, preparedBy: context.depositInvoiceApprovedBy!, payload });
+  }
+  if (context.depositMainDeductionAutomaticEventId !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    const deductions = row && Array.isArray(row.LineItems) ? row.LineItems.filter((line: any) => /^Less deposit invoice INV-\d{1,12}-D$/.test(String(line?.Description ?? "")) && line.Quantity === 1 && Number(line.UnitAmount) < 0 && Number(line.LineAmount) < 0 && Number(line.TaxAmount) <= 0 && String(line.AccountCode) === "200" && line.TaxType === "OUTPUT") : [];
+    if (payload.method !== "POST" || !payload.expectedXeroDocumentId || payload.endpoint !== `/Invoices/${encodeURIComponent(payload.expectedXeroDocumentId)}` ||
+      payload.documentFamily !== "customer_invoice" || !/^INV-\d{1,12}$/.test(payload.documentNumber) || !row || row.InvoiceID !== payload.expectedXeroDocumentId || row.InvoiceNumber !== payload.documentNumber || row.Status !== "DRAFT" || row.Type !== "ACCREC" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" || !row.Contact?.ContactID || !row.Date || !Array.isArray(row.LineItems) || !row.LineItems.length || deductions.length !== 1) {
+      throw new FinancialWriteDisabledError("Deposit-to-main release permits only one exact existing AUD Exclusive main Draft with one negative legacy Deposit deduction line.");
+    }
   }
   if (context.depositDraftCorrectionKind !== undefined) {
     const rows = payload.body.Invoices;

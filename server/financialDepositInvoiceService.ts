@@ -37,6 +37,7 @@ import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
 import { readCurrentCustomerContactSource } from "./financialCustomerContactSource";
 import { resolveOrCreateAutomaticCustomerContact } from "./financialCustomerContactService";
+import { processAutomaticDepositMainDeduction } from "./financialDepositMainDeductionService";
 
 export const DEPOSIT_INVOICE_WEBHOOK_PATH =
   "/api/webhooks/vtiger/deposit-invoice" as const;
@@ -139,7 +140,10 @@ export async function processAutomaticDepositInvoice(dealId: string) {
         evidence.preview.proposedInvoiceNumber
       )
     : null;
-  if (previous)
+  if (previous) {
+    const deduction = previous.status === "drafts_created"
+      ? await processAutomaticDepositMainDeduction(dealId)
+      : null;
     return {
       ok: false,
       status: "held" as const,
@@ -147,8 +151,10 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       eventId: previous.id,
       warning: `Exact Deposit Deal/number already reserved (${previous.status}); reconcile by immutable ID.`,
       xeroWritesAttempted: 0,
+      mainDeduction: deduction,
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
+  }
   const contactOnlyHold = reason === "Exact current Deal Xero customer is missing or ambiguous.";
   if (reason && !contactOnlyHold) {
     const event = await recordDepositInvoicePreview({
@@ -280,6 +286,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       executionId: outcome.executionId,
       xeroInvoiceId: outcome.result.xeroDocumentId,
     });
+    const deduction = await processAutomaticDepositMainDeduction(dealId);
     return {
       ok: true,
       status: "drafts_created" as const,
@@ -287,8 +294,9 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       eventId: event.id,
       invoiceNumber: outcome.result.documentNumber,
       xeroInvoiceId: outcome.result.xeroDocumentId,
-      xeroWritesAttempted: contact.contactWritesAttempted + 1,
-      postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
+      xeroWritesAttempted: contact.contactWritesAttempted + 1 + deduction.xeroWritesAttempted,
+      mainDeduction: deduction,
+      postconditionHold: deduction.status === "deducted" ? null : DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
   } catch (error) {
     await holdDepositInvoiceExecution(

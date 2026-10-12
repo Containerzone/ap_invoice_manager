@@ -14,6 +14,7 @@ export type DepositInvoiceReleasePolicy = {
   operationsDepositHandoff: boolean;
   sourceMappingsConfirmed: boolean;
   isolatedDraftOnlyApproved: boolean;
+  mainDraftDeductionApproved: boolean;
   migrationScope: "new_events_only";
 };
 export function resolveDepositInvoiceRelease(
@@ -41,6 +42,7 @@ export function resolveDepositInvoiceRelease(
     operationsDepositHandoff: raw.operationsDepositHandoff === true,
     sourceMappingsConfirmed: raw.sourceMappingsConfirmed === true,
     isolatedDraftOnlyApproved: raw.isolatedDraftOnlyApproved === true,
+    mainDraftDeductionApproved: raw.mainDraftDeductionApproved === true,
     // Invalid scopes must fail shut rather than silently coercing a historical import approval.
     migrationScope: "new_events_only",
     ...(raw.migrationScope !== undefined &&
@@ -85,4 +87,19 @@ export function assertDepositInvoiceRelease(
     throw new Error(
       "Deposit-only branch, Operations handoff, confirmed source mappings and isolated-Draft-only approval are required."
     );
+}
+
+/** A separate release: Deposit creation must never imply a main-Draft amendment. */
+export function assertDepositMainDeductionRelease(
+  policy: DepositInvoiceReleasePolicy
+): void {
+  assertDepositInvoiceRelease(policy);
+  if (
+    process.env.FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED !== "true" ||
+    !policy.mainDraftDeductionApproved
+  ) {
+    throw new Error(
+      "Automatic Deposit-to-main Draft deduction is disabled or lacks its separate exact-Draft-only approval."
+    );
+  }
 }

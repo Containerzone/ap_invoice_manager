@@ -24,6 +24,7 @@ import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchas
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
+import { verifyDepositMainDeductionWriteAccess } from "./financialDepositMainDeductionDb";
 import { verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 import { verifyExtraHireAutomaticWriteAccess } from "./financialExtraHireInvoiceDb";
@@ -95,7 +96,15 @@ export async function executeGuardedFinancialWriterCommand(
       financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedExactDraft])) {
       throw new Error("Deposit correction permits only its exact immutable Draft amendment and no CRM post-success action.");
     }
-  } else if (command.expectedExactDraft) throw new Error("Exact Draft correction evidence requires its independent Deposit correction approval.");
+  } else if (command.expectedExactDraft && command.authorisation.depositMainDeductionAutomaticEventId === undefined) throw new Error("Exact Draft correction evidence requires its independent Deposit correction approval.");
+  if (command.authorisation.depositMainDeductionAutomaticEventId !== undefined) {
+    if (command.workflowType !== "deposit_main_deduction" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
+      command.preparedBy !== command.authorisation.depositMainDeductionApprovedBy || !command.expectedExactDraft || command.expectedDraftDocument || command.expectedFinalWeightDraft ||
+      financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedExactDraft])) {
+      throw new Error("Deposit-to-main execution permits only its exact immutable current Draft amendment and no CRM post-success action.");
+    }
+    await verifyDepositMainDeductionWriteAccess({ eventId: command.authorisation.depositMainDeductionAutomaticEventId, token: command.authorisation.depositMainDeductionToken!, releaseKey: command.authorisation.depositMainDeductionReleaseKey!, payload: command.payload, preparedBy: command.preparedBy });
+  }
   if ((command.workflowType === "deposit_invoice" || /^INV-\d+-D$/i.test(command.payload.documentNumber)) && command.authorisation.depositInvoiceAutomaticEventId === undefined && command.authorisation.depositDraftCorrectionKind === undefined) {
     throw new Error("Deposit commands and exact -D documents require the independent Deposit event, not a generic or other-family approval.");
   }

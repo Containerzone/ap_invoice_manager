@@ -44,7 +44,7 @@ async function xeroGet(path: string, auth: { token: string; tenantId: string }) 
   });
 }
 
-function completeInvoice(invoice: XeroInvoice, expectedNumber: string): XeroInvoice {
+export function completeInvoice(invoice: XeroInvoice, expectedNumber: string): XeroInvoice {
   if (!invoice || presentString(invoice.InvoiceNumber) !== expectedNumber || presentString(invoice.Status).toUpperCase() !== "DRAFT" || presentString(invoice.Type) !== "ACCREC" || !presentString(invoice.InvoiceID)) {
     throw new Error(`Only the exact current Draft ACCREC ${expectedNumber} can be corrected.`);
   }
@@ -58,7 +58,7 @@ function completeInvoice(invoice: XeroInvoice, expectedNumber: string): XeroInvo
 }
 
 /** Retain only Xero writable header fields and every current line exactly. */
-function writableDraft(invoice: XeroInvoice): XeroInvoice {
+export function writableDraft(invoice: XeroInvoice): XeroInvoice {
   const out: XeroInvoice = {};
   for (const key of ["InvoiceID", "InvoiceNumber", "Type", "Status", "Reference", "CurrencyCode", "CurrencyRate", "LineAmountTypes", "BrandingThemeID", "Url", "ExpectedPaymentDate", "PlannedPaymentDate"]) {
     if (invoice[key] !== undefined && invoice[key] !== null) out[key] = clone(invoice[key]);

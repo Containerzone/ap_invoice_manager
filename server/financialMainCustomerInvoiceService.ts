@@ -23,6 +23,7 @@ import { executeGuardedFinancialWriterCommand } from "./financialWriterExecution
 import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
 import { readCurrentCustomerContactSource } from "./financialCustomerContactSource";
 import { resolveOrCreateAutomaticCustomerContact } from "./financialCustomerContactService";
+import { processAutomaticDepositMainDeduction } from "./financialDepositMainDeductionService";
 
 export const MAIN_CUSTOMER_INVOICE_VTIGER_MODULE = "Potentials" as const;
 export const MAIN_CUSTOMER_INVOICE_WEBHOOK_PATH = "/api/webhooks/vtiger/main-customer-invoice" as const;
@@ -174,7 +175,10 @@ export async function processAutomaticMainCustomerInvoice(dealId: string) {
   if (!preview.preview.document) return { ok: false, status: "held" as const, recordId: dealId, warning: preview.holdReason ?? "Main Customer Invoice source/Xero preflight is not ready.", xeroWritesAttempted: 0 };
   const event = await getMainCustomerInvoiceEvent(dealId);
   if (!event) throw new Error("Main Customer Invoice current preflight was not recorded in the AP ledger.");
-  if (event.status === "drafts_created") return { ok: true, status: "duplicate_replay" as const, recordId: dealId, eventId: event.id, invoiceNumber: event.proposedInvoiceNumber, xeroWritesAttempted: 0 };
+  if (event.status === "drafts_created") {
+    const deduction = await processAutomaticDepositMainDeduction(dealId);
+    return { ok: true, status: "duplicate_replay" as const, recordId: dealId, eventId: event.id, invoiceNumber: event.proposedInvoiceNumber, xeroWritesAttempted: deduction.xeroWritesAttempted, mainDeduction: deduction };
+  }
   if (event.status === "reconciliation_required") return { ok: false, status: "reconciliation_required" as const, recordId: dealId, eventId: event.id, warning: event.holdReason ?? "Main Customer Invoice is awaiting reconciliation.", xeroWritesAttempted: 0 };
   const effectiveFrom = Date.parse(policy.effectiveFrom!);
   const sourceRefreshedAt = preview.facts.sourceRefreshedAt ? Date.parse(preview.facts.sourceRefreshedAt) : Number.NaN;
@@ -227,7 +231,8 @@ export async function processAutomaticMainCustomerInvoice(dealId: string) {
       return { ok: false, status: "reconciliation_required" as const, recordId: dealId, eventId: event.id, warning: "Main Customer Invoice Xero result is awaiting reconciliation; no blind retry will occur.", xeroWritesAttempted: contact.contactWritesAttempted + (outcome.outcome === "reconciliation_required" ? 1 : 0) };
     }
     await completeMainCustomerInvoiceDraft({ eventId: event.id, executionId: outcome.executionId, xeroInvoiceId: outcome.result.xeroDocumentId });
-    return { ok: true, status: "drafts_created" as const, recordId: dealId, eventId: event.id, invoiceNumber: outcome.result.documentNumber, xeroInvoiceId: outcome.result.xeroDocumentId, xeroWritesAttempted: contact.contactWritesAttempted + 1 };
+    const deduction = await processAutomaticDepositMainDeduction(dealId);
+    return { ok: true, status: "drafts_created" as const, recordId: dealId, eventId: event.id, invoiceNumber: outcome.result.documentNumber, xeroInvoiceId: outcome.result.xeroDocumentId, xeroWritesAttempted: contact.contactWritesAttempted + 1 + deduction.xeroWritesAttempted, mainDeduction: deduction };
   } catch (error) {
     await holdMainCustomerInvoiceExecution(event.id, error instanceof Error ? error.message : "Main Customer Invoice execution failed.");
     throw error;
