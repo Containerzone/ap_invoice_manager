@@ -2,6 +2,8 @@
 
 ## Current state
 
+- **Deployment pending:** the approved new-events-only AP-local release policy and `FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED=true` configuration have been recorded. The public receiver accepts the established body-secret format but still returns the safe `deposit-invoice-release-disabled` hold until a fresh checkpoint created after the environment update is published. No Deposit source event or Xero document has been processed while this hold remains.
+
 - AP-only readiness code and standalone administrator **Deposit Invoices** workspace (`/deposit-invoices`). There is **no browser write or release button**. tRPC exposes only administrator query procedures for readiness, exact-current preview and local tracking. Browser previews perform read-only source/accounting evidence checks and do not persist a receipt.
 - Dedicated registered protected receiver: `POST /api/webhooks/vtiger/deposit-invoice`, using either the existing AP private header **`x-financial-webhook-secret`** or the established VTiger JSON body `secret`, compared in constant time to `FINANCIAL_AP_WEBHOOK_SECRET`. Invalid/missing authentication returns **401**. `id` can be one exact Deal webservice ID or the existing `potential_no` D-number; a D-number is resolved through one bounded exact lookup only after the independent release gate is valid. No browser/body finance values are trusted.
 - Independent writer gate: **`FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED`**. Missing or not exactly `true` returns **503 / held / zero Xero writes**, before source, Xero, local ledger or alerts. Global flags and other financial-family flags cannot release Deposit.
