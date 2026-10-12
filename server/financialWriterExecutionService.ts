@@ -26,6 +26,7 @@ import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCu
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
 import { verifyDepositMainDeductionWriteAccess } from "./financialDepositMainDeductionDb";
 import { verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
+import { verifyFinalWeightReconciliationWriteAccess } from "./financialFinalWeightReconciliationDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 import { verifyExtraHireAutomaticWriteAccess } from "./financialExtraHireInvoiceDb";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
@@ -89,6 +90,15 @@ export async function executeGuardedFinancialWriterCommand(
       financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedFinalWeightDraft])) throw new Error("Final-weight execution permits only its exact existing Draft amendment, retained readback evidence and no CRM action.");
     await verifyFinalWeightAutomaticWriteAccess({ eventId: command.authorisation.finalWeightAutomaticEventId, direction: command.authorisation.finalWeightDirection!,
       releaseKey: command.authorisation.finalWeightReleaseKey!, payload: command.payload, preparedBy: command.preparedBy });
+  } else if (command.authorisation.finalWeightReconciliationEventId !== undefined) {
+    if (command.workflowType !== "final_weight_reconciliation" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
+      command.preparedBy !== command.authorisation.finalWeightReconciliationApprovedBy || !command.expectedFinalWeightDraft || command.expectedDraftDocument ||
+      financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedFinalWeightDraft])) {
+      throw new Error("Final-weight reconciliation permits only its exact existing Draft POST recovery and no CRM action.");
+    }
+    await verifyFinalWeightReconciliationWriteAccess({ eventId: command.authorisation.finalWeightReconciliationEventId,
+      token: command.authorisation.finalWeightReconciliationToken!, releaseKey: command.authorisation.finalWeightReconciliationReleaseKey!,
+      payload: command.payload, preparedBy: command.preparedBy });
   } else if (command.expectedFinalWeightDraft) throw new Error("Final-weight readback evidence requires its independent amendment release.");
   if (command.authorisation.depositDraftCorrectionKind !== undefined) {
     if (command.workflowType !== "deposit_draft_correction" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||

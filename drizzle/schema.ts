@@ -1016,6 +1016,45 @@ export const financialFinalWeightAdjustmentEvents = mysqlTable("financial_final_
 }));
 export type FinancialFinalWeightAdjustmentEvent = typeof financialFinalWeightAdjustmentEvents.$inferSelect;
 
+// A previous Final Weight exact-resource update that reached Xero with the
+// superseded transport method remains immutable and claimed. This separate,
+// one-shot receipt supports a later individually approved reconciliation after
+// fresh source/Xero proof; it never clears or reuses the original claim.
+export const financialFinalWeightReconciliationEvents = mysqlTable("financial_final_weight_reconciliation_events", {
+  id: int("id").autoincrement().primaryKey(),
+  originalEventId: int("originalEventId").notNull(),
+  recoveryKey: varchar("recoveryKey", { length: 64 }).notNull(),
+  direction: mysqlEnum("direction", ["overweight", "underweight"] as const).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  invoiceNumber: varchar("invoiceNumber", { length: 128 }).notNull(),
+  xeroInvoiceId: varchar("xeroInvoiceId", { length: 128 }).notNull(),
+  originalEventHash: varchar("originalEventHash", { length: 64 }).notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }).notNull(),
+  sourceSnapshot: json("sourceSnapshot").notNull(),
+  xeroPreflight: json("xeroPreflight").notNull(),
+  originalDraft: json("originalDraft").notNull(),
+  expectedDraft: json("expectedDraft").notNull(),
+  originalDraftHash: varchar("originalDraftHash", { length: 64 }).notNull(),
+  expectedDraftHash: varchar("expectedDraftHash", { length: 64 }).notNull(),
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "reserved", "submitted", "draft_updated", "reconciliation_required"] as const).default("previewed").notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  submittedAt: timestamp("submittedAt"),
+  readbackEvidence: json("readbackEvidence"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => ({
+  originalEventUnique: uniqueIndex("financial_final_weight_reconcile_original_unique").on(table.originalEventId),
+  recoveryKeyUnique: uniqueIndex("financial_final_weight_reconcile_key_unique").on(table.recoveryKey),
+  invoiceUnique: uniqueIndex("financial_final_weight_reconcile_invoice_unique").on(table.xeroInvoiceId),
+}));
+export type FinancialFinalWeightReconciliationEvent = typeof financialFinalWeightReconciliationEvents.$inferSelect;
+
 export const extraHireRuns = mysqlTable("extra_hire_runs", {
   id: int("id").autoincrement().primaryKey(),
   workflowRunId: int("workflowRunId"),

@@ -2,7 +2,7 @@
 
 ## Implementation checkpoint
 
-**Approved pre-publication activation checkpoint.** The additive ledger migration and approved Final Weight policy are already applied. `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED=true` has been securely configured for the next publication; no Final Weight webhook has been replayed and no Xero Draft has been changed by the activation preparation.
+**Published current-event activation.** The additive ledger migration and approved Final Weight policy are applied, and `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED=true` is deployed for new events only. Current protected receivers use the corrected exact-resource POST path. Historical 404 records remain independently locked for reconciliation; no historical Draft has been replayed through normal webhooks.
 
 - Two dedicated private POST routes: `/api/webhooks/vtiger/final-weight-overweight` and `/api/webhooks/vtiger/final-weight-underweight`. Each accepts either the standard `x-financial-webhook-secret` header or the existing VTiger JSON `secret` field; the private value is compared in constant time and never stored or logged. The named `id`/`record_id`/`deal_id` may be one exact current Deal webservice ID or legacy `D…` number. A D-number is resolved only through one AP-side bounded exact Potentials lookup after the Final Weight release policy is valid; ambiguity/not-found holds. `dryRun` is accepted only for VTiger body compatibility and is never trusted as an AP safety control.
 - Standalone administrator sidebar page **Final Weight Adjustments**, `/final-weight-adjustments`: branch status cards, exact named Deal GET-only preview, source mappings/full original and expected Draft payload evidence, and event/hold tracking. No browser mutation/release button.
@@ -34,7 +34,7 @@ The Xero current Draft can change between the last GET and exact-resource POST b
 
 ## Dual gate / zero-impact disabled routes
 
-The independent `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED` flag is securely set to **`true`** for the pending publication. With the approved policy, only either dedicated Final Weight route can proceed to exact current evidence. Before that configuration is published, the public runtime remains unchanged. Unauthenticated requests return **401** first; malformed authenticated ID envelopes return **400** without reads/writes.
+The independent `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED` flag is securely set to **`true`** and published. With the approved policy, only either dedicated Final Weight route can proceed to exact current evidence. Unauthenticated requests return **401** first; malformed authenticated ID envelopes return **400** without reads/writes.
 
 If the policy is missing/invalid, both routes return **503** after only a local policy SELECT, before evidence/claim writes or upstream calls. The current approved policy matches the current Final Weight rules hash and retains both VTiger branches, both Operations handovers, exact mappings, Draft-only approval and `new_events_only` scope.
 
@@ -82,3 +82,11 @@ The first D702915 delivery resolved its exact current Deal and reached one guard
 Xero’s Accounting API specifies **POST** to update an existing invoice and reserves **PUT** for creating new invoices. Final Weight rules v2 restrict future amendments to `POST /Invoices/<verified ID>` only—the exact resource path remains mandatory and collection-level POST/PUT remains rejected. This correction is supported by Xero’s official request-method guide and invoices reference: <https://developer.xero.com/documentation/api/accounting/requests-and-responses> and <https://developer.xero.com/documentation/api/accounting/invoices>.
 
 The AP-local Final Weight policy was explicitly set to `enabled: false` while this correction was pending publication. After checkpoint `be035d53` was published, the separately approved policy was restored with rules v2’s hash and retains its `new_events_only` scope. Authenticated public probes for both routes then reached the active receiver and held a deliberately nonexistent exact Deal (`202`); neither route created an event/execution or called Xero. D702915 remains reconciliation-required and must not be replayed as part of this correction.
+
+## Individually approved legacy-404 recovery — prepared, default-off
+
+The protected current-event receivers already use the corrected exact-resource `POST` path. Two historical records, D702915 Overweight and D702934 Underweight, reached Xero only with the superseded `PUT` method and therefore correctly remain `reconciliation_required`; their original invoice claims, failed executions and source evidence are immutable. They cannot be replayed through either webhook.
+
+Additive migration `0048_confused_avengers.sql` creates `financial_final_weight_reconciliation_events`, a distinct receipt with a unique original event ID, fresh source/Xero hashes, original/expected full Draft snapshots, a one-time reservation/payload and exact read-back evidence. The recovery service accepts **only** an original event that is still immutable `reconciliation_required` with the recorded HTTP 404 outcome. It re-reads the current exact Deal and current exact Draft, refuses evidence drift, and cannot clear, edit or reuse the original claim.
+
+The recovery uses a separate default-off `FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED` gate and has no webhook, UI button, schedule or retry. If later individually approved, it permits one exact `POST /Invoices/<verified ID>` for the already-previewed immutable Draft and then exact full read-back; any uncertainty creates a new reconciliation hold. It is not a route to amend an Authorised, paid, allocated, voided, deleted, legacy or ambiguous document. D702928 is currently `AUTHORISED`, so it is not eligible for AP Final Weight amendment.

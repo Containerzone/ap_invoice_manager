@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ verify: vi.fn(), prepare: vi.fn(), submitted: vi.fn(), succeeded: vi.fn(), failed: vi.fn(), write: vi.fn(), readback: vi.fn(), crm: vi.fn() }));
+const m = vi.hoisted(() => ({ verify: vi.fn(), reconcileVerify: vi.fn(), prepare: vi.fn(), submitted: vi.fn(), succeeded: vi.fn(), failed: vi.fn(), write: vi.fn(), readback: vi.fn(), crm: vi.fn() }));
 vi.mock("./financialFinalWeightAdjustmentDb", () => ({ verifyFinalWeightAutomaticWriteAccess: m.verify }));
+vi.mock("./financialFinalWeightReconciliationDb", () => ({ verifyFinalWeightReconciliationWriteAccess: m.reconcileVerify }));
 vi.mock("./financialProductionWriter", async original => ({ ...(await original<any>()), executeFinancialDraftWrite: m.write }));
 vi.mock("./financialWorkflowDb", () => ({ prepareFinancialWriterExecution: m.prepare, markFinancialWriterExecutionSubmitted: m.submitted, markFinancialWriterExecutionSucceeded: m.succeeded, markFinancialWriterExecutionFailed: m.failed, createFinancialPostSuccessAction: m.crm }));
 vi.mock("./financialReadOnlyXeroService", () => ({ readBackFinancialDraft: m.readback }));
@@ -28,6 +29,18 @@ describe("Final-weight guarded Draft amendment coordinator", () => {
     expect(m.verify.mock.invocationCallOrder[0]).toBeLessThan(m.prepare.mock.invocationCallOrder[0]!);
     expect(m.readback).toHaveBeenCalledWith(expect.objectContaining({ expectedXeroDocumentId: "invoice-exact", expectedFinalWeightDraft: input.expectedFinalWeightDraft }));
     expect(m.readback.mock.invocationCallOrder[0]).toBeLessThan(m.succeeded.mock.invocationCallOrder[0]!); expect(m.crm).not.toHaveBeenCalled();
+  });
+  it("permits a separately gated reconciliation only with the same exact retained Draft evidence", async () => {
+    vi.stubEnv("FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED", "true");
+    const input = command({ workflowType: "final_weight_reconciliation", authorisation: {
+      workflowType: "final_weight_reconciliation", approvalReference: policy().releaseKey, globalShadowMode: false, familyLiveEnabled: true,
+      releaseManifestApproved: true, cutoverPackApproved: true, currentDocumentPreflightPassed: true, legacyWriterHandoffComplete: true,
+      finalWeightReconciliationEventId: 44, finalWeightReconciliationToken: "token", finalWeightReconciliationReleaseKey: policy().releaseKey,
+      finalWeightReconciliationApprovedBy: 7,
+    } });
+    expect(await executeGuardedFinancialWriterCommand(input)).toMatchObject({ outcome: "succeeded" });
+    expect(m.reconcileVerify).toHaveBeenCalledWith(expect.objectContaining({ eventId: 44, token: "token", releaseKey: policy().releaseKey }));
+    expect(m.verify).not.toHaveBeenCalled();
   });
   it("duplicate execution never submits or transports again", async () => {
     m.prepare.mockResolvedValue({ duplicate: true, execution: { id: 9, status: "submitted", xeroDocumentId: null } });

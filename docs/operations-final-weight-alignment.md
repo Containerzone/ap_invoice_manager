@@ -44,4 +44,6 @@ Authenticated `describeVtigerFinancialModuleFields("Potentials")` succeeded usin
 
 ## Separate handover required
 
-AP release uses only its new isolated flag `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED` plus the separate dual-approval policy `financial-automation.final-weight-adjustment-release`. Main Invoice, Deposit, generic canonical routes and global release settings cannot enable it. Both branch booleans and both Operations handovers are required before either route proceeds. No handover or approval was recorded here; follow [the AP handoff](final-weight-adjustment-handoff.md) for future review only.
+AP release uses only its new isolated flag `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED` plus the separate dual-approval policy `financial-automation.final-weight-adjustment-release`. Main Invoice, Deposit, generic canonical routes and global release settings cannot enable it. Both branch booleans and both Operations handovers are required before either route proceeds.
+
+Historical 404 update attempts are not replayed through the current receivers. They have a separately audited, default-off recovery path with `FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED`, one immutable original 404 event, a fresh exact Draft/source preflight, one exact-resource POST and exact read-back. It cannot clear the original shared claim or amend a non-Draft document. See [the AP handoff](final-weight-adjustment-handoff.md) for the required isolated approval.

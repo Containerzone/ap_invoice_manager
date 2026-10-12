@@ -184,6 +184,13 @@
 - [x] Added a separate policy field plus `FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED` gate, both default-off. Main/Deposit creation gates cannot enable the main-Draft amendment. Held/reconciliation results produce a de-duplicated operational alert with safe deal/state fields only.
 - [ ] Validate the checkpoint, publish it with the generic deduction gate still **off**, then explicitly approve the external effect before setting `mainDraftDeductionApproved: true` and `FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED=true`. The first qualifying new event must have a fresh exact preflight and its resulting Draft amendment must be independently read back.
 
+## 2026-10-13 — Final Weight current-event diagnosis and legacy-404 recovery
+
+- [x] Read the AP-only immutable ledger and fresh GET-only VTiger/Xero evidence for the reported deliveries. D702915 Overweight and D702934 Underweight each have one historical `reconciliation_required` claim from the superseded Xero `PUT` request (HTTP 404); their current exact source/Draft preflights are otherwise eligible. D702928 Overweight is held correctly because its exact `INV-702928` is now `AUTHORISED`, not a Draft. No Xero or CRM document was changed during diagnosis.
+- [x] Preserved the corrected current-event `POST /Invoices/<verified ID>` transport for both Final Weight branches. The active release policy has both branch/handover flags and Draft-only approval, and remains `new_events_only`.
+- [x] Added and applied additive migration `0048_confused_avengers.sql` plus a dedicated Final Weight legacy-404 recovery service. It stores a new immutable receipt without clearing an original claim, accepts only an original 404 reconciliation record, repeats exact source/Xero validation, and permits a one-shot exact-resource POST/read-back only through its separate default-off `FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED` gate. It has no webhook, UI action, schedule or blind retry.
+- [ ] Publish the validated recovery checkpoint with the recovery gate **off**. For each historical event, show a fresh exact Draft amendment and receive separate current approval before setting the gate and executing one recovery. D702928 requires a separate business decision because an Authorised invoice must not be amended by this automation.
+
 ## 2026-10-11 — Final Weight Adjustment AP-only readiness
 
 - [x] Added isolated Overweight and Underweight current-Draft amendment paths with dedicated protected endpoints, exact read-only Deal/customer/Xero refresh, immutable cross-direction claims, full-line evidence, one-time payload binding and no browser release control.

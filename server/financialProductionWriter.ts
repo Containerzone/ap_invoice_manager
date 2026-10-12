@@ -14,6 +14,7 @@ import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCusto
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
 import { consumeFinalWeightPayload, verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
+import { consumeFinalWeightReconciliationPayload, verifyFinalWeightReconciliationWriteAccess } from "./financialFinalWeightReconciliationDb";
 import type { FinalWeightDirection } from "./financialFinalWeightAdjustmentRules";
 import { consumeExtraHirePayload, verifyExtraHireAutomaticWriteAccess } from "./financialExtraHireInvoiceDb";
 
@@ -94,6 +95,11 @@ export type FinancialWriteAuthorisation = {
   finalWeightDirection?: FinalWeightDirection;
   finalWeightReleaseKey?: string;
   finalWeightApprovedBy?: number;
+  /** Individually approved recovery for an immutable historical Final Weight 404. */
+  finalWeightReconciliationEventId?: number;
+  finalWeightReconciliationToken?: string;
+  finalWeightReconciliationReleaseKey?: string;
+  finalWeightReconciliationApprovedBy?: number;
   /** Independent current-source Extra Hire claim; never available to a generic bridge. */
   extraHireAutomaticEventId?: number;
   extraHireReleaseKey?: string;
@@ -284,6 +290,20 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.workflowType === "final_weight_reconciliation" || context.finalWeightReconciliationEventId !== undefined) {
+    if (process.env.FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED !== "true" || context.workflowType !== "final_weight_reconciliation" ||
+      !Number.isInteger(context.finalWeightReconciliationEventId) || Number(context.finalWeightReconciliationEventId) <= 0 ||
+      !context.finalWeightReconciliationToken || !context.finalWeightReconciliationReleaseKey ||
+      !Number.isInteger(context.finalWeightReconciliationApprovedBy) || Number(context.finalWeightReconciliationApprovedBy) <= 0 ||
+      context.approvalReference !== context.finalWeightReconciliationReleaseKey || !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
+      [context.finalWeightAutomaticEventId, context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId,
+        context.assetPurchaseAutomaticEventId, context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId,
+        context.storageAutomaticEventId, context.storagePilotEventId].some(value => value !== undefined)) {
+      throw new FinancialWriteDisabledError("Final Weight reconciliation requires its separate one-time recovery gate and exact reservation.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) throw new FinancialWriteDisabledError("Final Weight reconciliation execution ledger is required.");
+    return;
+  }
   if (context.workflowType === "deposit_main_deduction" || context.depositMainDeductionAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "deposit_main_deduction" ||
       !Number.isInteger(context.depositMainDeductionAutomaticEventId) || Number(context.depositMainDeductionAutomaticEventId) <= 0 || !context.depositMainDeductionReleaseKey ||
@@ -475,6 +495,19 @@ export async function executeFinancialDraftWrite(
     const input = { eventId: context.finalWeightAutomaticEventId, direction: context.finalWeightDirection!, releaseKey: context.finalWeightReleaseKey!, preparedBy: context.finalWeightApprovedBy!, payload };
     await verifyFinalWeightAutomaticWriteAccess(input);
     await consumeFinalWeightPayload(input, context.executionId!);
+  }
+  if (context.finalWeightReconciliationEventId !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (payload.method !== "POST" || !payload.expectedXeroDocumentId || payload.endpoint !== `/Invoices/${encodeURIComponent(payload.expectedXeroDocumentId)}` ||
+      payload.documentFamily !== "customer_invoice" || !/^INV-\d{1,12}$/.test(payload.documentNumber) || Object.keys(payload.body).length !== 1 ||
+      !row || row.InvoiceID !== payload.expectedXeroDocumentId || row.InvoiceNumber !== payload.documentNumber || row.Status !== "DRAFT" || row.Type !== "ACCREC" ||
+      row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" || !row.Contact?.ContactID || !row.Date || !row.DueDate || !Array.isArray(row.LineItems) || !row.LineItems.length) {
+      throw new FinancialWriteDisabledError("Final Weight reconciliation permits only one exact existing AUD Exclusive Draft POST recovery.");
+    }
+    const input = { eventId: context.finalWeightReconciliationEventId, token: context.finalWeightReconciliationToken!, releaseKey: context.finalWeightReconciliationReleaseKey!, preparedBy: context.finalWeightReconciliationApprovedBy!, payload };
+    await verifyFinalWeightReconciliationWriteAccess(input);
+    await consumeFinalWeightReconciliationPayload({ eventId: input.eventId, token: input.token }, context.executionId!);
   }
   if (/^INV-\d+-D$/i.test(payload.documentNumber) && context.depositInvoiceAutomaticEventId === undefined && context.depositDraftCorrectionKind === undefined) {
     throw new FinancialWriteDisabledError("Exact Deposit -D invoices require their independent Deposit release; another family cannot create or amend them.");
