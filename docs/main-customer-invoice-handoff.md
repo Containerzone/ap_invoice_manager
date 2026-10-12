@@ -18,7 +18,7 @@
 ## Current AP endpoints and UI
 
 - **VTiger receiver:** `POST /api/webhooks/vtiger/main-customer-invoice`
-- **VTiger authentication:** either the existing AP `x-financial-webhook-secret` header or the established JSON `secret` field. The receiver compares it in constant time and never returns, logs or persists it.
+- **VTiger authentication:** either the existing AP `x-financial-webhook-secret` header or the established JSON `secret` field. The receiver first accepts a Main Invoice-specific secret (`FINANCIAL_MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET`) when configured, then the shared AP secret for compatibility; every comparison is constant time and no secret is returned, logged or persisted. This isolates a legacy Main Invoice secret mismatch without rotating other live families.
 - **Legacy VTiger body:** `id` can be the Deal webservice ID or the legacy `potential_no` D-number. Optional `dryRun`, customer, amount, Quote or line fields are ignored; AP re-reads the current source.
 - **Administrator workspace:** **Main Customer Invoices** in the AP sidebar.
 - **Current evidence preview:** exact `D<Deal>` or `5x…` lookup. It performs VTiger/Xero GET-only checks and cannot create a document.

@@ -45,6 +45,7 @@ function registeredHandler() {
 
 afterEach(() => {
   delete process.env.FINANCIAL_AP_WEBHOOK_SECRET;
+  delete process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET;
   delete process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED;
 });
 
@@ -100,6 +101,30 @@ describe("Main Customer Invoice webhook contract", () => {
       hasMainCustomerInvoiceWebhookSecret({
         header: () => undefined,
         body: { id: "5x702877", secret: "wrong" },
+      } as any)
+    ).toBe(false);
+  });
+
+  it("accepts the Main Invoice-specific secret without rotating the shared secret", () => {
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET = "shared-secret";
+    process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET =
+      "main-invoice-secret";
+    expect(
+      hasMainCustomerInvoiceWebhookSecret({
+        header: () => undefined,
+        body: { id: "D702877", secret: "main-invoice-secret" },
+      } as any)
+    ).toBe(true);
+    expect(
+      hasMainCustomerInvoiceWebhookSecret({
+        header: () => undefined,
+        body: { id: "D702877", secret: "shared-secret" },
+      } as any)
+    ).toBe(true);
+    expect(
+      hasMainCustomerInvoiceWebhookSecret({
+        header: () => undefined,
+        body: { id: "D702877", secret: "wrong" },
       } as any)
     ).toBe(false);
   });

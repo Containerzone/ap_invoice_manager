@@ -13,6 +13,8 @@ import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
 export const MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET_HEADER = "x-financial-webhook-secret" as const;
 export const MAIN_CUSTOMER_INVOICE_WEBHOOK_EVENT = "customer-invoice.main-create" as const;
+export const MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET_ENV =
+  "FINANCIAL_MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET" as const;
 
 export type MainCustomerInvoiceWebhookEnvelope = {
   recordId: string | null;
@@ -100,16 +102,22 @@ function secretMatches(expected: Buffer, supplied: unknown): boolean {
 export function hasMainCustomerInvoiceWebhookSecret(
   req: Pick<Request, "header" | "body">
 ): boolean {
-  const expected = Buffer.from(
-    process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim() ?? ""
-  );
+  const expectedSecrets = [
+    process.env[MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET_ENV],
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET,
+  ]
+    .map(value => Buffer.from(value?.trim() ?? ""))
+    .filter(value => value.length > 0);
   const body =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? (req.body as Record<string, unknown>)
       : null;
-  return (
-    secretMatches(expected, req.header(MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET_HEADER)) ||
-    secretMatches(expected, body?.secret)
+  const candidates = [
+    req.header(MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET_HEADER),
+    body?.secret,
+  ];
+  return expectedSecrets.some(expected =>
+    candidates.some(candidate => secretMatches(expected, candidate))
   );
 }
 
