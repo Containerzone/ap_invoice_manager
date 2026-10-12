@@ -1,11 +1,10 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import {
   FINANCIAL_AP_WEBHOOK_ROUTES,
-  FINANCIAL_AP_WEBHOOK_SECRET_ENV,
   getFinancialWebhookRoute,
   parseFinancialWebhookEnvelope,
 } from "./financialWebhookContracts";
+import { configuredFinancialWebhookSecrets, hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 import {
   evaluateFinancialWebhookProposal,
   financialWebhookPayloadFingerprint,
@@ -19,19 +18,10 @@ import { executeApprovedFinancialDraft } from "./financialLiveExecutionService";
 import { FinancialWriteDisabledError } from "./financialProductionWriter";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
-function secureEquals(left: string, right: string): boolean {
-  const leftBytes = Buffer.from(left);
-  const rightBytes = Buffer.from(right);
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+function webhookAuthenticationConfigured(): boolean {
+  return configuredFinancialWebhookSecrets().length > 0;
 }
 
-function configuredWebhookSecret(): string | null {
-  return process.env[FINANCIAL_AP_WEBHOOK_SECRET_ENV]?.trim() || null;
-}
-
-function suppliedWebhookSecret(req: Request): string {
-  return req.header("x-financial-webhook-secret")?.trim() ?? "";
-}
 
 function safeEventResponse(input: {
   eventId: string;
@@ -60,7 +50,7 @@ function safeEventResponse(input: {
 /** Configuration presence only; no secret or writable target details are returned. */
 export function getFinancialProposalWebhookStatus() {
   return {
-    configured: Boolean(configuredWebhookSecret()),
+    configured: webhookAuthenticationConfigured(),
     headerName: "X-Financial-Webhook-Secret",
     mode: "guarded_execution" as const,
     financialWritePermitted: false as const,
@@ -85,12 +75,11 @@ export function getFinancialProposalWebhookStatus() {
 export function registerFinancialProposalWebhook(app: Express): void {
   for (const route of FINANCIAL_AP_WEBHOOK_ROUTES) {
     app.post(route.path, async (req: Request, res: Response) => {
-      const expectedSecret = configuredWebhookSecret();
-      if (!expectedSecret) {
+      if (!webhookAuthenticationConfigured()) {
         res.status(503).json({ error: "AP financial webhook is not configured." });
         return;
       }
-      if (!secureEquals(suppliedWebhookSecret(req), expectedSecret)) {
+      if (!hasFinancialWebhookSecret(req)) {
         res.status(401).json({ error: "Unauthorized AP financial webhook event." });
         return;
       }

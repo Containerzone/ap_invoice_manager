@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({ verify: vi.fn(), auth: vi.fn() }));
 vi.mock("./financialDepositInvoiceDb", () => ({
   verifyDepositInvoiceAutomaticWriteAccess: m.verify,
@@ -17,6 +17,11 @@ import {
   resolveDepositInvoiceRelease,
 } from "./financialDepositInvoiceRelease";
 import { DEPOSIT_INVOICE_RULES_HASH } from "./financialDepositInvoiceDrafts";
+beforeEach(() => {
+  // The production Deposit gate can legitimately be enabled. Each unit test
+  // must still establish the intended gate itself rather than inheriting it.
+  vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "false");
+});
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.clearAllMocks();

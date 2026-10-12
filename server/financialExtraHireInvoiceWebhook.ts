@@ -1,5 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
+import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 import {
   assertExtraHireRelease,
   getExtraHireReleasePolicy,
@@ -65,34 +65,8 @@ export async function resolveExtraHireWebhookRecord(
   return lookup.candidates[0]!.recordId;
 }
 
-function secretMatches(expected: Buffer, supplied: unknown): boolean {
-  if (typeof supplied !== "string") return false;
-  const candidate = Buffer.from(supplied.trim());
-  return Boolean(
-    expected.length &&
-      expected.length === candidate.length &&
-      timingSafeEqual(expected, candidate)
-  );
-}
-
-/**
- * The existing VTiger action sends the private value in JSON `secret`.
- * Keep header authentication for new callers, while accepting that legacy
- * body-secret envelope in constant time. Amount/date/customer/dryRun values
- * remain untrusted; only one exact Deal ID is accepted from the envelope.
- */
-export function hasExtraHireSecret(req: Pick<Request, "header" | "body">) {
-  const expected = Buffer.from(
-    process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim() ?? ""
-  );
-  const body =
-    req.body && typeof req.body === "object" && !Array.isArray(req.body)
-      ? (req.body as Record<string, unknown>)
-      : null;
-  return (
-    secretMatches(expected, req.header("x-financial-webhook-secret")) ||
-    secretMatches(expected, body?.secret)
-  );
+export function hasExtraHireSecret(req: Pick<Request, "header" | "body">): boolean {
+  return hasFinancialWebhookSecret(req);
 }
 
 export function registerExtraHireInvoiceWebhook(app: Express) {

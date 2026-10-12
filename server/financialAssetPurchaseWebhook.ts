@@ -1,7 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { ASSET_PURCHASE_WEBHOOK_PATH, processAutomaticAssetPurchase } from "./financialAssetPurchaseService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
+import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 
 export const ASSET_PURCHASE_WEBHOOK_SECRET_HEADER = "x-financial-webhook-secret" as const;
 export const ASSET_PURCHASE_WEBHOOK_EVENT = "container-control.asset-request" as const;
@@ -18,11 +18,8 @@ export function parseAssetPurchaseWebhookEnvelope(body: unknown): AssetPurchaseW
   return { recordId, event };
 }
 
-export function hasAssetPurchaseWebhookSecret(req: Pick<Request, "header">): boolean {
-  const expected = process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim() ?? "";
-  const supplied = req.header(ASSET_PURCHASE_WEBHOOK_SECRET_HEADER)?.trim() ?? "";
-  const a = Buffer.from(expected); const b = Buffer.from(supplied);
-  return Boolean(a.length && a.length === b.length && timingSafeEqual(a, b));
+export function hasAssetPurchaseWebhookSecret(req: Pick<Request, "header" | "body">): boolean {
+  return hasFinancialWebhookSecret(req);
 }
 
 /** Registered only for the dedicated Asset / REQUEST VTiger branch; default-off before source reads. */

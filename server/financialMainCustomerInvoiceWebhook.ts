@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import {
   MAIN_CUSTOMER_INVOICE_WEBHOOK_PATH,
@@ -10,6 +9,7 @@ import {
 } from "./financialMainCustomerInvoiceRelease";
 import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
+import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 
 export const MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET_HEADER = "x-financial-webhook-secret" as const;
 export const MAIN_CUSTOMER_INVOICE_WEBHOOK_EVENT = "customer-invoice.main-create" as const;
@@ -84,16 +84,6 @@ export async function resolveMainCustomerInvoiceWebhookRecord(
   return lookup.candidates[0]!.recordId;
 }
 
-function secretMatches(expected: Buffer, supplied: unknown): boolean {
-  if (typeof supplied !== "string") return false;
-  const candidate = Buffer.from(supplied.trim());
-  return Boolean(
-    expected.length &&
-      expected.length === candidate.length &&
-      timingSafeEqual(expected, candidate)
-  );
-}
-
 /**
  * Keep header authentication for new callers and accept the established VTiger
  * body-secret envelope in constant time. The secret is never returned, logged
@@ -102,23 +92,9 @@ function secretMatches(expected: Buffer, supplied: unknown): boolean {
 export function hasMainCustomerInvoiceWebhookSecret(
   req: Pick<Request, "header" | "body">
 ): boolean {
-  const expectedSecrets = [
-    process.env[MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET_ENV],
-    process.env.FINANCIAL_AP_WEBHOOK_SECRET,
-  ]
-    .map(value => Buffer.from(value?.trim() ?? ""))
-    .filter(value => value.length > 0);
-  const body =
-    req.body && typeof req.body === "object" && !Array.isArray(req.body)
-      ? (req.body as Record<string, unknown>)
-      : null;
-  const candidates = [
-    req.header(MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET_HEADER),
-    body?.secret,
-  ];
-  return expectedSecrets.some(expected =>
-    candidates.some(candidate => secretMatches(expected, candidate))
-  );
+  return hasFinancialWebhookSecret(req, [
+    MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET_ENV,
+  ]);
 }
 
 /** Registered for the dedicated Main Invoice action; held before any source read until its family release is valid. */

@@ -1,5 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
+import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 import { assertWarrantyRelease, getWarrantyReleasePolicy } from "./financialWarrantyAvisoRelease";
 import { processAutomaticWarrantyAviso, WARRANTY_WEBHOOK_PATH } from "./financialWarrantyAvisoService";
 export function parseWarrantyEnvelope(body: unknown): string {
@@ -10,8 +10,7 @@ export function parseWarrantyEnvelope(body: unknown): string {
 }
 export function registerWarrantyAvisoWebhook(app: Express): void {
   app.post(WARRANTY_WEBHOOK_PATH, async (req: Request, res: Response) => {
-    const expected = Buffer.from(process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim() ?? ""); const supplied = Buffer.from(req.header("x-financial-webhook-secret")?.trim() ?? "");
-    if (!expected.length || expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return res.status(401).json({ ok: false, error: "unauthenticated-warranty-aviso-webhook" });
+    if (!hasFinancialWebhookSecret(req)) return res.status(401).json({ ok: false, error: "unauthenticated-warranty-aviso-webhook" });
     const disabled = () => res.status(503).json({ ok: false, status: "held", error: "warranty-aviso-release-disabled", xeroWritesAttempted: 0 });
     if (process.env.FINANCIAL_WARRANTY_AUTOMATIC_ENABLED !== "true") return disabled();
     try { assertWarrantyRelease(await getWarrantyReleasePolicy()); } catch { return disabled(); }

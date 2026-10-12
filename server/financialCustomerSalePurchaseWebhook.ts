@@ -1,7 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { CUSTOMER_SALE_PURCHASE_WEBHOOK_PATH, processAutomaticCustomerSalePurchase } from "./financialCustomerSalePurchaseService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
+import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 
 export const CUSTOMER_SALE_PURCHASE_WEBHOOK_SECRET_HEADER = "x-financial-webhook-secret" as const;
 export const CUSTOMER_SALE_PURCHASE_WEBHOOK_EVENT = "container-control.customer-sale-request" as const;
@@ -18,11 +18,8 @@ export function parseCustomerSalePurchaseWebhookEnvelope(body: unknown): Custome
   return { recordId, event };
 }
 
-export function hasCustomerSalePurchaseWebhookSecret(req: Pick<Request, "header">): boolean {
-  const expected = process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim() ?? "";
-  const supplied = req.header(CUSTOMER_SALE_PURCHASE_WEBHOOK_SECRET_HEADER)?.trim() ?? "";
-  const a = Buffer.from(expected); const b = Buffer.from(supplied);
-  return Boolean(a.length && a.length === b.length && timingSafeEqual(a, b));
+export function hasCustomerSalePurchaseWebhookSecret(req: Pick<Request, "header" | "body">): boolean {
+  return hasFinancialWebhookSecret(req);
 }
 
 /** Registered only for the dedicated Customer Sale / REQUEST VTiger branch; default-off before source reads. */

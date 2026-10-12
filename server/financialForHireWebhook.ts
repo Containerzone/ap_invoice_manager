@@ -1,8 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { processAutomaticInitialForHire } from "./financialForHireLiveService";
 import { FOR_HIRE_FUTURE_WEBHOOK_PATH } from "./financialForHireService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
+import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 
 export const FOR_HIRE_WEBHOOK_SECRET_HEADER = "x-financial-webhook-secret" as const;
 export const FOR_HIRE_WEBHOOK_EVENT = "container-control.for-hire-request" as const;
@@ -26,11 +26,8 @@ export function parseForHireWebhookEnvelope(body: unknown): ForHireWebhookEnvelo
   return { recordId, event };
 }
 
-export function hasForHireWebhookSecret(req: Pick<Request, "header">): boolean {
-  const expected = process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim() ?? "";
-  const supplied = req.header(FOR_HIRE_WEBHOOK_SECRET_HEADER)?.trim() ?? "";
-  const a = Buffer.from(expected); const b = Buffer.from(supplied);
-  return Boolean(a.length && a.length === b.length && timingSafeEqual(a, b));
+export function hasForHireWebhookSecret(req: Pick<Request, "header" | "body">): boolean {
+  return hasFinancialWebhookSecret(req);
 }
 
 /**

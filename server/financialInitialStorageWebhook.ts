@@ -1,8 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { processInitialLoadedStorage } from "./financialInitialStorageService";
 import { processAutomaticInitialStorage, processStorageFinalisation } from "./financialStorageLifecycleService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
+import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 
 export const INITIAL_STORAGE_WEBHOOK_PATH = "/api/webhooks/vtiger/deal-storage";
 
@@ -16,12 +16,7 @@ function storageRecordId(body: unknown): string | null {
 
 export function registerInitialLoadedStorageWebhook(app: Express): void {
   app.post(INITIAL_STORAGE_WEBHOOK_PATH, async (req: Request, res: Response) => {
-    const configured = process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim();
-    if (!configured) return res.status(503).json({ ok: false, status: "held", message: "AP storage webhook authentication is not configured." });
-    const supplied = req.header("x-financial-webhook-secret")?.trim() ?? "";
-    const a = Buffer.from(configured);
-    const b = Buffer.from(supplied);
-    if (a.length !== b.length || !timingSafeEqual(a, b)) return res.status(401).json({ ok: false, error: "Unauthorized storage webhook." });
+    if (!hasFinancialWebhookSecret(req)) return res.status(401).json({ ok: false, error: "Unauthorized storage webhook." });
     const recordId = storageRecordId(req.body);
     if ((req.body?.event !== undefined && req.body.event !== "deal.storage-stage-changed") || !recordId) {
       return res.status(400).json({ ok: false, error: "A VTiger Deal record ID is required for storage activation." });
@@ -44,11 +39,7 @@ export function registerInitialLoadedStorageWebhook(app: Express): void {
     }
   });
   app.post("/api/webhooks/vtiger/deal-storage-finalise", async (req: Request, res: Response) => {
-    const configured = process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim();
-    if (!configured) return res.status(503).json({ ok: false, status: "held", message: "AP storage authentication is not configured." });
-    const supplied = req.header("x-financial-webhook-secret")?.trim() ?? "";
-    const a = Buffer.from(configured); const b = Buffer.from(supplied);
-    if (a.length !== b.length || !timingSafeEqual(a,b)) return res.status(401).json({ ok: false, error: "Unauthorized storage webhook." });
+    if (!hasFinancialWebhookSecret(req)) return res.status(401).json({ ok: false, error: "Unauthorized storage webhook." });
     const id = storageRecordId(req.body); const location = req.body?.storageLocation;
     if ((req.body?.event !== undefined && req.body.event !== "deal.storage-finalised") || !id || !["origin", "destination"].includes(location)) return res.status(400).json({ ok: false, error: "Exact Deal ID and origin/destination storageLocation are required for storage finalisation." });
     try { return res.json(await processStorageFinalisation(id, location)); }

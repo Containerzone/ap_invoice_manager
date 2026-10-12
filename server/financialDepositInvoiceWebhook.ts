@@ -1,5 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
+import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 import {
   DEPOSIT_INVOICE_WEBHOOK_PATH,
   processAutomaticDepositInvoice,
@@ -61,30 +61,8 @@ export async function resolveDepositInvoiceWebhookRecord(
   return lookup.candidates[0]!.recordId;
 }
 
-function secretMatches(expected: Buffer, supplied: unknown): boolean {
-  if (typeof supplied !== "string") return false;
-  const candidate = Buffer.from(supplied.trim());
-  return Boolean(
-    expected.length &&
-      expected.length === candidate.length &&
-      timingSafeEqual(expected, candidate)
-  );
-}
-
-export function hasDepositInvoiceWebhookSecret(
-  req: Pick<Request, "header" | "body">
-): boolean {
-  const expected = Buffer.from(
-    process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim() ?? ""
-  );
-  const body =
-    req.body && typeof req.body === "object" && !Array.isArray(req.body)
-      ? (req.body as Record<string, unknown>)
-      : null;
-  return (
-    secretMatches(expected, req.header(DEPOSIT_INVOICE_WEBHOOK_SECRET_HEADER)) ||
-    secretMatches(expected, body?.secret)
-  );
+export function hasDepositInvoiceWebhookSecret(req: Pick<Request, "header" | "body">): boolean {
+  return hasFinancialWebhookSecret(req);
 }
 export function registerDepositInvoiceWebhook(app: Express): void {
   app.post(
