@@ -103,3 +103,12 @@ Fresh exact source/Xero evidence and a new explicit approval are required before
 ### 2026-10-13 resumed recovery review — no write
 
 The owner asked to resume Final Weight approval review. AP re-read the immutable records: D702915 Overweight remains the separately declined historical 404 recovery, while D702934 Underweight remains a historical 404 recovery whose prior current read showed `INV-702934` as `AUTHORISED` and therefore outside Draft-only scope. A fresh GET-only D702934 source/Xero eligibility check was attempted before presenting any amendment: source facts remained available (estimated 7 tonnes, actual 4.8 tonnes, source pickup date 2026-10-12), but Xero returned its daily-request-limit hold with a retry window of 2h 57m. No current invoice state or new exact payload could be verified, so no reconciliation gate, receipt, writer execution, Xero document or VTiger record changed.
+
+### 2026-10-13 post-upgrade recheck — terminal historical recovery holds
+
+After the owner reported a Xero limit upgrade, a bounded direct Accounting `GET /Invoices` probe returned HTTP 200. AP therefore cleared only its verified stale local rate-pause record; no financial configuration, policy, document, contact or CRM record changed. Fresh force-refreshed exact-number reads then established the current terminal states:
+
+- `INV-702915` is now `ACCREC` **PAID**. Its historical Overweight recovery can never enter the Draft-only exact-resource POST path.
+- `INV-702934` is `ACCREC` **AUTHORISED**. Its historical Underweight recovery likewise remains outside the Draft-only automation.
+
+Both legacy 404 recovery claims remain immutable and the separate `FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED` gate remains **false**. No reconciliation receipt, writer execution, Xero write or VTiger change was created. The current-event Final Weight routes remain live for independently eligible new Draft events only.
