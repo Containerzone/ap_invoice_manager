@@ -25,6 +25,12 @@ The table now exists and a read-only verification returned **0 events / 0 execut
 
 ## Release and disabled boundaries
 
+### 13 October 2026 handover status
+
+The owner confirmed the VTiger Warranty & Aviso branch is published to the AP receiver using the canonical `id` / `secret` JSON body, with no `dryRun` property, and that the Operations writer is switched off. This satisfies the stated webhook/handover intent but does **not** bypass the AP-local Warranty policy or runtime gate.
+
+After the owner requested activation, one additional bounded **read-only** `GET /Organisation` Xero check was attempted. It returned HTTP 429, confirming that current Xero quota remains unavailable. No source/Xero financial document was read or changed by the probe. `FINANCIAL_WARRANTY_AUTOMATIC_ENABLED` remains false and no Warranty release policy has been created or enabled.
+
 The dedicated gate requires **both** `FINANCIAL_WARRANTY_AUTOMATIC_ENABLED === "true"` and the separately approved config row `financial-automation.warranty-aviso-release`, whose `releaseKey` must equal that exact dedicated key. Generic/global/Main/Storage authorization cannot substitute.
 
 A valid policy additionally requires the exact current rules hash, positive resolved approver, valid nonfuture approval/cutover dates, `migrationScope: "new_events_only"`, explicit Draft-main amendment approval, isolated Draft-only scope, warranty-only VTiger branch, Operations/Make handover and Main Invoice coordination acknowledgments, no CRM post-success mutation, approved source/Added Services mapping hashes and exact approved Aviso/Xero configuration hash/contact/name/account.

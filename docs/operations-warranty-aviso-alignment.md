@@ -4,6 +4,8 @@
 
 **Warranty remains independently default-off and is not a production cutover.** The shared customer-contact gates are active for separately authorised customer-invoice families, but do not enable Warranty. No Warranty release policy/flag, Operations/VTiger/Make setting, schedule, Heartbeat or financial document was changed by this implementation.
 
+On 13 October 2026, the owner confirmed the Warranty & Aviso VTiger webhook is published to the AP route with the canonical `id` / `secret` JSON body and the Operations writer is switched off. The AP family remains held because the required current Xero evidence cannot be collected: a bounded read-only Xero tenant check returned HTTP 429. The dedicated Warranty runtime gate remains false and no release policy has been enabled.
+
 **Migration 0045 was generated, inspected and applied through the managed AP SQL tool.** `drizzle/0045_slow_archangel.sql` adds only the AP immutable warranty event table. A read-only query confirmed the newly applied ledger has 0 events and 0 execution-or-receipt rows. This local schema change did not access or modify Operations, VTiger, Make or Xero.
 
 ## Legacy inventory is not handover evidence
