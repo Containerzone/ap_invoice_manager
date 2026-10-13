@@ -301,3 +301,11 @@
 - [x] Main Draft deduction now uses the current VTiger inclusive deposit amount, requires equality with the exact Xero Deposit Draft total before amendment, preserves existing Main Draft lines and uses the exact account-200 negative deduction with GST override.
 - [x] Refreshed the audited Deposit release policy to the current rules hash while retaining enabled, isolated, Draft-only and `new_events_only` constraints. No Xero/VTiger/CRM write was performed by this change.
 - [x] Validation: 124 test files / 1,248 tests (8 skipped) in isolated unit-test gate mode, TypeScript, production build and `git diff --check` passed.
+
+## 2026-10-13 — Main Invoice transport item and route description
+
+- [x] Verified the authoritative current source fields by authenticated VTiger metadata read: `Container Situation (Select One)`, `Origin Suburb`, and `Destination Suburb`. No Deal was altered.
+- [x] Verified the live Xero sales-item configuration through GET-only reads: SER9 is active for sale on account 200/OUTPUT with `Loaded Container from <> to <>`; SER60 is active for sale on account 200/OUTPUT with `Empty & Loaded Container from <> to <>`.
+- [x] Implemented the guarded rule: SHIPPER OWN selects SER9; PURCHASED or HIRED selects SER60; IMPORT/blank/unknown Situation or missing suburb holds. Quote quantity and list price remain the financial source; AP never invents a transport price.
+- [x] Bound the final write payload to the exact current Xero template after replacing only its two placeholders with the freshly re-read Deal suburbs, then repeats complete contact/item/collision preflight before ledger bind or Draft write. Account 200/OUTPUT/active-sale-item/template mismatches hold.
+- [ ] Validate, publish and run only a public no-write probe before the mapping affects the next live Main Invoice webhook. No historical document is amended by this release.

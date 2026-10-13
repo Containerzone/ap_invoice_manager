@@ -24,13 +24,17 @@ vi.mock("./financialCustomerContactServiceV2", () => ({ previewCustomerContactRe
 
 import { previewMainCustomerInvoice, processAutomaticMainCustomerInvoice, readMainCustomerInvoiceFacts } from "./financialMainCustomerInvoiceService";
 
-const readyPreflight = () => [{ duplicateState: "not_found", status: null, contactCheck: { found: true, contactId: "xero-customer", count: 1, partyName: "Customer Pty Ltd" }, itemChecks: [] }];
+const readyPreflight = () => [{
+  duplicateState: "not_found", status: null,
+  contactCheck: { found: true, contactId: "xero-customer", count: 1, partyName: "Customer Pty Ltd" },
+  itemChecks: [{ itemCode: "SER9", found: true, isSold: true, salesAccountCode: "200", salesTaxType: "OUTPUT", nativeDescription: "Loaded Container from <> to <>" }],
+}];
 
 beforeEach(() => {
   retrieve.mockReset(); preflight.mockReset(); recordPreview.mockClear(); mocks.getEvent.mockReset(); mocks.claim.mockReset(); mocks.bind.mockReset(); mocks.complete.mockReset(); mocks.hold.mockReset(); mocks.policy.mockReset(); mocks.writer.mockReset(); mocks.contactSource.mockReset(); mocks.contactResolution.mockReset(); mocks.contactV2Source.mockReset(); mocks.contactV2Preview.mockReset(); mocks.contactV2Execute.mockReset(); vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "");
   retrieve.mockImplementation(async (id: string) => {
     const records: Record<string, Record<string, unknown>> = {
-      "5x77": { id: "5x77", potential_no: "D702877", cf_potentials_quotereference: "20x9", related_to: "4x2", modifiedtime: "2026-10-11T01:00:00Z" },
+      "5x77": { id: "5x77", potential_no: "D702877", cf_potentials_quotereference: "20x9", related_to: "4x2", cf_potentials_containersituationselectone: "SHIPPER OWN", cf_potentials_pickuplocation: "Origin", cf_potentials_deliverylocation: "Destination", modifiedtime: "2026-10-11T01:00:00Z" },
       "20x9": { id: "20x9", quote_no: "Q-702877", LineItems: { 1: { productid: "14x1", quantity: "2", listprice: "250" } }, modifiedtime: "2026-10-11T02:00:00Z" },
       "4x2": { id: "4x2", accountname: "Customer Pty Ltd" },
       "14x1": { id: "14x1", servicename: "Rail delivery" },
@@ -54,7 +58,7 @@ describe("Main Customer Invoice current-source evidence", () => {
     expect(facts).toMatchObject({ dealNumber: "D702877", quoteNumber: "Q-702877", customerName: "Customer Pty Ltd", serviceLines: [{ serviceVtigerId: "14x1", description: "Rail delivery", quantity: 2, unitAmount: 250 }] });
     const result = await previewMainCustomerInvoice("5x77");
     expect(result).toMatchObject({ state: "previewed", noWrites: true });
-    expect(result.preview.document).toMatchObject({ proposedDocumentNumber: "INV-702877", partySourceId: "xero-customer", total: 550 });
+    expect(result.preview.document).toMatchObject({ proposedDocumentNumber: "INV-702877", partySourceId: "xero-customer", total: 550, lineItems: [expect.objectContaining({ itemCode: "SER9", description: "Loaded Container from Origin to Destination" })] });
     expect(recordPreview).toHaveBeenCalledWith(expect.objectContaining({ status: "previewed", proposedInvoiceNumber: "INV-702877" }));
   });
 
@@ -66,14 +70,16 @@ describe("Main Customer Invoice current-source evidence", () => {
   });
 
   it("creates a contact only for a contact-only preflight hold, refreshes evidence, then writes the Draft", async () => {
-    preflight.mockResolvedValueOnce([{ ...readyPreflight()[0], contactCheck: { found: false, contactId: null, count: 0, partyName: "Customer Pty Ltd" } }])
+    preflight.mockResolvedValueOnce(readyPreflight())
+      .mockResolvedValueOnce([{ ...readyPreflight()[0], contactCheck: { found: false, contactId: null, count: 0, partyName: "Customer Pty Ltd" } }])
+      .mockResolvedValueOnce(readyPreflight())
       .mockResolvedValueOnce(readyPreflight());
 
     const result = await processAutomaticMainCustomerInvoice("5x77");
 
     expect(result).toMatchObject({ status: "drafts_created", xeroWritesAttempted: 2 });
     expect(mocks.contactResolution).toHaveBeenCalledTimes(1);
-    expect(preflight).toHaveBeenCalledTimes(2);
+    expect(preflight).toHaveBeenCalledTimes(4);
     expect(mocks.writer).toHaveBeenCalledTimes(1);
     expect(mocks.writer.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.contactResolution.mock.invocationCallOrder[0]!);
   });
@@ -92,7 +98,7 @@ describe("Main Customer Invoice current-source evidence", () => {
     const result = await processAutomaticMainCustomerInvoice("5x77");
     expect(result).toMatchObject({ status: "drafts_created", xeroWritesAttempted: 2 });
     expect(mocks.contactV2Execute).toHaveBeenCalledTimes(1);
-    expect(preflight).toHaveBeenCalledTimes(3);
+    expect(preflight).toHaveBeenCalledTimes(6);
     expect(mocks.writer.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.contactV2Execute.mock.invocationCallOrder[0]!);
   });
 });

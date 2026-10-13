@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   MAIN_CUSTOMER_INVOICE_RULES_HASH,
   MAIN_CUSTOMER_INVOICE_RULES_VERSION,
+  applyMainCustomerInvoiceXeroTransportDescription,
   buildMainCustomerInvoice,
   type MainCustomerInvoiceFacts,
   type MainCustomerInvoicePreview,
@@ -98,6 +99,9 @@ export async function readMainCustomerInvoiceFacts(dealId: string): Promise<Main
     customerVtigerId,
     customerName,
     customerKind,
+    containerSituation: text(deal.cf_potentials_containersituationselectone),
+    originSuburb: text(deal.cf_potentials_pickuplocation),
+    destinationSuburb: text(deal.cf_potentials_deliverylocation),
     sourceRefreshedAt: latestTimestamp(deal.modifiedtime ?? deal.modifiedTime ?? deal.createdtime, quote.modifiedtime ?? quote.modifiedTime ?? quote.createdtime),
     serviceLines: services,
   };
@@ -108,6 +112,30 @@ function preflightReason(document: NonNullable<MainCustomerInvoicePreview["docum
   if (preflight.duplicateState !== "not_found") return `Exact Xero invoice ${document.proposedDocumentNumber} is ${preflight.duplicateState}${preflight.status ? ` (${preflight.status})` : ""}; AP will not bypass or adopt it.`;
   if (!preflight.contactCheck.found || !preflight.contactCheck.contactId) return "Xero customer contact is missing, ambiguous or not an exact match.";
   return null;
+}
+
+function bindVerifiedMainTransportDescription(input: {
+  facts: MainCustomerInvoiceFacts;
+  document: NonNullable<MainCustomerInvoicePreview["document"]>;
+  preflight: FinancialXeroPreflight | null;
+}): { document: NonNullable<MainCustomerInvoicePreview["document"]> | null; reason: string | null } {
+  const itemCodes = Array.from(new Set(input.document.lineItems.map((line) => line.itemCode.trim()).filter(Boolean)));
+  if (itemCodes.length !== 1 || !["SER9", "SER60"].includes(itemCodes[0]!)) {
+    return { document: null, reason: "Main Invoice transport item evidence is not an exact SER9 or SER60 selection." };
+  }
+  const item = input.preflight?.itemChecks.find((check) => check.itemCode.trim().toUpperCase() === itemCodes[0]!.toUpperCase());
+  if (!item?.found || item.isSold !== true || item.salesAccountCode !== "200" || item.salesTaxType !== "OUTPUT" || !item.nativeDescription) {
+    return { document: null, reason: `Current Xero sales item ${itemCodes[0]} must be active for sale with account 200, OUTPUT GST and its native route description.` };
+  }
+  const document = applyMainCustomerInvoiceXeroTransportDescription({
+    document: input.document,
+    nativeDescription: item.nativeDescription,
+    originSuburb: input.facts.originSuburb,
+    destinationSuburb: input.facts.destinationSuburb,
+  });
+  return document
+    ? { document, reason: null }
+    : { document: null, reason: `Current Xero ${itemCodes[0]} description does not expose one safe from <> to <> route template.` };
 }
 async function savePreview(input: { facts: MainCustomerInvoiceFacts; preview: MainCustomerInvoicePreview; sourceHash: string; preflight: FinancialXeroPreflight | null; state: "previewed" | "held"; reason: string | null }) {
   return recordMainCustomerInvoicePreview({
@@ -159,6 +187,16 @@ export async function previewMainCustomerInvoice(dealId: string): Promise<MainCu
     if (customerContactPlan?.status === "matched" && customerContactPlan.contactId) {
       preview.document.partySourceId = customerContactPlan.contactId;
     }
+    const [itemPreflight] = await preflightFinancialXeroIntents([preview.document]);
+    const transport = bindVerifiedMainTransportDescription({ facts, document: preview.document, preflight: itemPreflight ?? null });
+    if (!transport.document || transport.reason) {
+      const reason = transport.reason ?? "Current Main Invoice transport item preflight was not completed.";
+      await savePreview({ facts, preview, sourceHash, preflight: itemPreflight ?? null, state: "held", reason });
+      return { facts, sourceSnapshotHash: sourceHash, rulesSnapshotHash: MAIN_CUSTOMER_INVOICE_RULES_HASH, xeroPreflightHash: itemPreflight ? financialSha256(itemPreflight) : null, preview, preflight: itemPreflight ?? null, state: "held", holdReason: reason, customerContactPlan, noWrites: true };
+    }
+    preview.document = transport.document;
+    // The native Xero item description becomes part of the immutable payload;
+    // refresh the full contact/collision/item preflight before saving or writing.
     const [preflight] = await preflightFinancialXeroIntents([preview.document]);
     const reason = customerContactPlan?.status === "held"
       ? customerContactPlan.holdReason ?? "Xero customer-contact resolution is held."

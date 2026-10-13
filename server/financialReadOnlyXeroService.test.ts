@@ -93,7 +93,7 @@ describe("financial read-only Xero service", () => {
       .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
       .mockResolvedValueOnce({ data: { PurchaseOrders: [{ PurchaseOrderID: "po-1", PurchaseOrderNumber: "H1860", Status: "DRAFT", Contact: { Name: "Hire Supplier" } }] } })
       .mockResolvedValueOnce({ data: { Contacts: [{ ContactID: "contact-hire", Name: "Hire Supplier" }] } })
-      .mockResolvedValueOnce({ data: { Items: [{ Description: "Native HC 20 E", PurchaseDetails: { UnitPrice: 8 }, SalesDetails: { UnitPrice: 0 } }] } });
+      .mockResolvedValueOnce({ data: { Items: [{ Description: "Native HC 20 E", IsSold: true, PurchaseDetails: { UnitPrice: 8 }, SalesDetails: { UnitPrice: 0, AccountCode: "312", TaxType: "OUTPUT" } }] } });
     const [result] = await preflightFinancialXeroIntents([{
       documentFamily: "purchase_order", documentType: "recurring_hire", proposedAction: "create_draft", proposedDocumentNumber: "H1860",
       reference: "H1860", partyName: "Hire Supplier", partySourceId: null, accountCode: "312", gstTreatment: "GST_EXCLUSIVE", currency: "AUD",
@@ -101,7 +101,7 @@ describe("financial read-only Xero service", () => {
       validationStatus: "valid", sourceWorkflow: "recurring_for_hire", sourceRecordId: "4x1",
     }]);
     expect(result).toMatchObject({ duplicateState: "found", xeroDocumentId: "po-1", status: "DRAFT", partyName: "Hire Supplier" });
-    expect(result?.itemChecks[0]).toMatchObject({ itemCode: "HC 20 E", found: true, purchaseUnitPrice: 8, nativeDescription: "Native HC 20 E" });
+    expect(result?.itemChecks[0]).toMatchObject({ itemCode: "HC 20 E", found: true, purchaseUnitPrice: 8, nativeDescription: "Native HC 20 E", isSold: true, salesAccountCode: "312", salesTaxType: "OUTPUT" });
     expect(result?.contactCheck).toMatchObject({ found: true, contactId: "contact-hire" });
     noMutationAssertions();
   });

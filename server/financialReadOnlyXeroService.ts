@@ -36,7 +36,16 @@ export type FinancialXeroPreflight = {
   xeroDocumentId: string | null;
   status: string | null;
   partyName: string | null;
-  itemChecks: Array<{ itemCode: string; found: boolean; purchaseUnitPrice: number | null; salesUnitPrice: number | null; nativeDescription: string | null }>;
+  itemChecks: Array<{
+    itemCode: string;
+    found: boolean;
+    purchaseUnitPrice: number | null;
+    salesUnitPrice: number | null;
+    nativeDescription: string | null;
+    salesAccountCode: string | null;
+    salesTaxType: string | null;
+    isSold: boolean | null;
+  }>;
   contactCheck: { partyName: string | null; found: boolean | null; count: number | null; contactId: string | null };
   error: string | null;
 };
@@ -233,13 +242,25 @@ async function preflightItem(auth: ReadOnlyAuth, itemCode: string) {
       found: Boolean(item),
       purchaseUnitPrice: typeof item?.PurchaseDetails?.UnitPrice === "number" ? item.PurchaseDetails.UnitPrice : Number(item?.PurchaseDetails?.UnitPrice ?? NaN) || null,
       salesUnitPrice: typeof item?.SalesDetails?.UnitPrice === "number" ? item.SalesDetails.UnitPrice : Number(item?.SalesDetails?.UnitPrice ?? NaN) || null,
+      salesAccountCode: item?.SalesDetails?.AccountCode ? String(item.SalesDetails.AccountCode).trim() : null,
+      salesTaxType: item?.SalesDetails?.TaxType ? String(item.SalesDetails.TaxType).trim() : null,
+      isSold: typeof item?.IsSold === "boolean" ? item.IsSold : null,
       // Purchase orders must use the purchase-side wording, not the sales description.
       nativeDescription: (itemCode === "JD 20" || itemCode === "JD 40")
         ? (item?.PurchaseDescription ? String(item.PurchaseDescription) : item?.Description ? String(item.Description) : null)
         : (item?.Description ? String(item.Description) : null),
     };
   } catch (error: any) {
-    if (error?.response?.status === 404) return { itemCode, found: false, purchaseUnitPrice: null, salesUnitPrice: null, nativeDescription: null };
+    if (error?.response?.status === 404) return {
+      itemCode,
+      found: false,
+      purchaseUnitPrice: null,
+      salesUnitPrice: null,
+      nativeDescription: null,
+      salesAccountCode: null,
+      salesTaxType: null,
+      isSold: null,
+    };
     throw error;
   }
 }

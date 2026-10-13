@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export const MAIN_CUSTOMER_INVOICE_ACCOUNT_CODE = "200" as const;
-export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v1-operations-aligned" as const;
+export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v2-xero-transport-item-routes" as const;
 export const MAIN_CUSTOMER_INVOICE_RULES_HASH = createHash("sha256").update(MAIN_CUSTOMER_INVOICE_RULES_VERSION).digest("hex");
 
 export type MainCustomerInvoiceServiceLineFacts = {
@@ -20,6 +20,12 @@ export type MainCustomerInvoiceFacts = {
   customerVtigerId: string;
   customerName: string;
   customerKind: "organisation" | "contact";
+  /** VTiger Container Situation (Select One), re-read from the current Deal. */
+  containerSituation: string;
+  /** Current Deal Origin Suburb; never sourced from the webhook body. */
+  originSuburb: string;
+  /** Current Deal Destination Suburb; never sourced from the webhook body. */
+  destinationSuburb: string;
   sourceRefreshedAt: string | null;
   serviceLines: MainCustomerInvoiceServiceLineFacts[];
 };
@@ -31,12 +37,30 @@ export type MainCustomerInvoicePreview = {
   document: ProposedFinancialDocument | null;
 };
 
+export type MainCustomerInvoiceTransportItemCode = "SER9" | "SER60";
+
 function money(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 function normal(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function upper(value: string): string {
+  return normal(value).toUpperCase();
+}
+
+/**
+ * The mapping is deliberately restricted to the current VTiger picklist values.
+ * IMPORT and any new/unknown value must hold rather than silently choosing the
+ * hired/purchased sales item.
+ */
+export function mainCustomerInvoiceTransportItemCode(containerSituation: string): MainCustomerInvoiceTransportItemCode | null {
+  const situation = upper(containerSituation);
+  if (situation === "SHIPPER OWN") return "SER9";
+  if (situation === "PURCHASED" || situation === "HIRED") return "SER60";
+  return null;
 }
 
 function validServiceLine(line: MainCustomerInvoiceServiceLineFacts): boolean {
@@ -50,20 +74,53 @@ export function mainCustomerInvoiceNumber(dealNumber: string): string {
   return `INV-${dealNumber.replace(/^D/i, "").trim()}`;
 }
 
-function toFinancialLine(line: MainCustomerInvoiceServiceLineFacts): FinancialLineItem {
-  const description = normal(line.description);
+/**
+ * Renders the native Xero sales-item description only when it exposes the two
+ * intended route placeholders. The exact native prefix/capitalisation is kept;
+ * AP substitutes the freshly re-read Deal suburbs and never invents wording.
+ */
+export function renderMainCustomerInvoiceRouteDescription(input: {
+  nativeDescription: string;
+  originSuburb: string;
+  destinationSuburb: string;
+}): string | null {
+  const template = normal(input.nativeDescription);
+  const origin = normal(input.originSuburb);
+  const destination = normal(input.destinationSuburb);
+  if (!template || !origin || !destination) return null;
+  const rendered = template.replace(/<>\s+to\s+<>/i, `${origin} to ${destination}`);
+  if (rendered === template || rendered.includes("<>")) return null;
+  return rendered;
+}
+
+function toFinancialLine(line: MainCustomerInvoiceServiceLineFacts, itemCode: MainCustomerInvoiceTransportItemCode): FinancialLineItem {
   return {
-    // Operations resolves a current VTiger Service to its human description.
-    // Do not infer an Xero ItemCode; a free-text customer line is safer than a
-    // mismapped Xero item and the source service ID remains in the evidence hash.
-    itemCode: "",
-    description,
+    // This temporary description is never write-eligible. The current native
+    // Xero item description is read and rendered before the second preflight.
+    itemCode,
+    description: `Pending current Xero ${itemCode} route description`,
     quantity: line.quantity,
     unitAmount: money(line.unitAmount),
     lineAmount: money(line.quantity * line.unitAmount),
     accountCode: MAIN_CUSTOMER_INVOICE_ACCOUNT_CODE,
     taxRate: 10,
     gstTreatment: "GST_EXCLUSIVE",
+  };
+}
+
+/** Replaces all transport-line descriptions with the exact current Xero template. */
+export function applyMainCustomerInvoiceXeroTransportDescription(input: {
+  document: ProposedFinancialDocument;
+  nativeDescription: string;
+  originSuburb: string;
+  destinationSuburb: string;
+}): ProposedFinancialDocument | null {
+  if (input.document.documentType !== "main_customer_invoice") return null;
+  const description = renderMainCustomerInvoiceRouteDescription(input);
+  if (!description || !input.document.lineItems.length) return null;
+  return {
+    ...input.document,
+    lineItems: input.document.lineItems.map((line) => ({ ...line, description })),
   };
 }
 
@@ -82,11 +139,18 @@ export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, now = 
   if (!/^\d+x\d+$/i.test(facts.customerVtigerId) || !normal(facts.customerName)) {
     return { eligible: false, holdReason: "A current Deal or Quote customer organisation/contact is required.", proposedInvoiceNumber: null, document: null };
   }
+  const itemCode = mainCustomerInvoiceTransportItemCode(facts.containerSituation);
+  if (!itemCode) {
+    return { eligible: false, holdReason: "Current Deal Container Situation must be exactly SHIPPER OWN, PURCHASED or HIRED for the Main Invoice transport item.", proposedInvoiceNumber: null, document: null };
+  }
+  if (!normal(facts.originSuburb) || !normal(facts.destinationSuburb)) {
+    return { eligible: false, holdReason: "Current Deal Origin Suburb and Destination Suburb are required for the Main Invoice transport description.", proposedInvoiceNumber: null, document: null };
+  }
   if (!facts.serviceLines.length || facts.serviceLines.some((line) => !validServiceLine(line))) {
     return { eligible: false, holdReason: "The linked VTiger Quote requires one or more current billable Service line items with quantity and list price.", proposedInvoiceNumber: null, document: null };
   }
   const issueDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const lineItems = facts.serviceLines.map(toFinancialLine);
+  const lineItems = facts.serviceLines.map((line) => toFinancialLine(line, itemCode));
   const subtotal = money(lineItems.reduce((total, line) => total + line.lineAmount, 0));
   const invoiceNumber = mainCustomerInvoiceNumber(facts.dealNumber);
   return {

@@ -11,7 +11,7 @@
 | Number | `INV-<Deal digits>`. | Example: `D702877` → `INV-702877`. |
 | Document | One Xero customer invoice, initially `ACCREC` + `DRAFT`. | Create-only Draft POST; never authorise, send, pay, void, delete or replace. |
 | Customer priority | Organisation before contact. | Exact current Account is preferred; fallback exact Contact only when no organisation exists. |
-| Quote lines | Service name, quantity and list price. | Preserve each billable Quote line, its native service/item code, account and description; do not synthesize prices from the webhook. |
+| Quote lines | Service name, quantity and list price. | Preserve each billable Quote quantity and list price; do not synthesize prices from the webhook. The approved AP transport classification then selects the current Xero customer-sales item and its native route description as documented below. |
 | Collision/idempotency | Do not create `INV-…` where it already exists. | Exact Xero number collision is held (including non-Draft/deleted/voided history) and never adopted or suffix-bypassed. |
 | Warranty | A supported Added Services warranty may be appended by the main-invoice/warranty workflow and may create a matching Aviso PO. | Excluded from the first Main Invoice release: main invoice itself only; warranty remains its independently gated family. |
 
@@ -24,11 +24,26 @@
 | `Potentials` | `contact_id` | Contact Name | Fallback customer Contact reference |
 | `Potentials` | `cf_potentials_quotereference` | Quote Reference | Linked Quote reference |
 | `Potentials` | `items_sync_with` | Quote | Alternate linked Quote reference |
+| `Potentials` | `cf_potentials_containersituationselectone` | Container Situation (Select One) | Exact transport-item classification: `SHIPPER OWN` → SER9; `PURCHASED`/`HIRED` → SER60; all other values hold |
+| `Potentials` | `cf_potentials_pickuplocation` | Origin Suburb | Replaces only the first `<>` of the current Xero native transport template |
+| `Potentials` | `cf_potentials_deliverylocation` | Destination Suburb | Replaces only the second `<>` of the current Xero native transport template |
 | `Quotes` | `quote_no` | Quote ID | Invoice reference when present |
 | `Quotes` | `account_id` | Organization Name | Quote customer Account reference |
 | `Quotes` | `contact_id` | Contact Name | Quote customer Contact reference |
 | `Quotes` | `hdnSubTotal`, `hdnGrandTotal` | Sub Total, Total | Cross-check only; not a substitute for billable lines |
 | `Quotes` | `xero_account` | Xero Sales Account | Quote sales account context |
+
+## Approved Main Invoice transport presentation
+
+The current Xero items were independently read with GET-only evidence before implementation:
+
+| Current Deal Container Situation | Required Xero sales item | Native Xero description retained by AP |
+|---|---|---|
+| `SHIPPER OWN` | `SER9` | `Loaded Container from <> to <>` |
+| `PURCHASED` or `HIRED` | `SER60` | `Empty & Loaded Container from <> to <>` |
+| `IMPORT`, blank or any unrecognised value | none | **Hold** — AP never guesses or treats it as Purchased/Hired. |
+
+Both verified items are active for sale with account 200 and OUTPUT GST. Immediately before write AP must replace only the two placeholders using the freshly re-read Deal suburbs, then perform a new full invoice collision/contact/item preflight. This changes presentation/item classification only; the current Quote quantity and list-price calculation remains the financial source.
 
 ## Release boundary
 
