@@ -14,7 +14,7 @@ describe("Final weight read-only preview and immutable protected lifecycle", () 
   it("preview rereads exact current Deal/Xero but NEVER persists evidence even if released", async () => {
     const result = await previewFinalWeightAdjustment("5x77", "overweight", "D702877");
     expect(result).toMatchObject({ noWrites: true, state: "previewed", preview: { eligible: true } });
-    expect(m.facts).toHaveBeenCalledWith("5x77", "overweight"); expect(m.xero).toHaveBeenCalledWith("INV-702877", "Synthetic Customer", "overweight"); noLedger();
+    expect(m.facts).toHaveBeenCalledWith("5x77", "overweight"); expect(m.xero).toHaveBeenCalledWith("INV-702877", "Synthetic Customer", "overweight", { skipCustomerMatch: true }); noLedger();
   });
   it("source ambiguity holds preview before Xero and never saves evidence", async () => {
     m.facts.mockResolvedValue(facts({ sourceHoldReason: "Ambiguous metadata" }));

@@ -99,10 +99,11 @@ export async function previewDepositDraftCorrection(dealId: string): Promise<Dep
   if (!/^D\d{1,12}$/i.test(facts.dealNumber) || !/^Q\d{1,12}$/i.test(facts.quoteNumber)) throw new Error("Current Deal/Quote numbers are not suitable for the approved Deposit correction.");
   const mainNumber = `INV-${facts.dealNumber.slice(1)}`;
   const depositNumber = `${mainNumber}-D`;
-  // This existing guarded GET-only path proves expected tenant plus exact number/contact states.
+  // Exact document preflight intentionally skips current customer matching. A
+  // Draft amendment must retain the immutable ContactID already on each Draft.
   const intents = [mainNumber, depositNumber].map(number => ({ documentFamily: "customer_invoice" as const, documentType: "deposit_correction", proposedAction: "update_draft" as const, proposedDocumentNumber: number, reference: null, partyName: facts.customerName, partySourceId: null, accountCode: "200", gstTreatment: "GST_EXCLUSIVE" as const, currency: "AUD" as const, subtotal: 0, taxAmount: 0, total: 0, issueDate: new Date(), dueDate: null, lineItems: [{ itemCode: "", description: "evidence", quantity: 1, unitAmount: 0, lineAmount: 0, accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" as const }], sourceWorkflow: "deposit_invoice" as const, sourceRecordId: dealId, validationStatus: "valid" as const }));
-  const preflight = await preflightFinancialXeroIntents(intents);
-  if (preflight.some(item => item.duplicateState !== "found" || item.status !== "DRAFT" || !item.xeroDocumentId || !item.contactCheck.found || !item.contactCheck.contactId)) throw new Error("Exact current Deposit/main Draft, customer or tenant preflight is incomplete.");
+  const preflight = await preflightFinancialXeroIntents(intents, { skipContactCheck: true });
+  if (preflight.some(item => item.duplicateState !== "found" || item.status !== "DRAFT" || !item.xeroDocumentId)) throw new Error("Exact current Deposit/main Draft or tenant preflight is incomplete.");
   const auth = await getXeroReadAuthWithRefresh();
   const [mainResponse, depositResponse, itemResponse, itemConfig] = await Promise.all([
     xeroGet(`/Invoices/${encodeURIComponent(preflight[0]!.xeroDocumentId!)}`, auth),
@@ -112,7 +113,7 @@ export async function previewDepositDraftCorrection(dealId: string): Promise<Dep
   ]);
   const main = completeInvoice(mainResponse.data?.Invoices?.[0], mainNumber);
   const deposit = completeInvoice(depositResponse.data?.Invoices?.[0], depositNumber);
-  if (main.LineAmountTypes !== "Exclusive" || deposit.LineAmountTypes !== "Inclusive" || main.Contact?.ContactID !== deposit.Contact?.ContactID || main.Contact?.ContactID !== preflight[0]!.contactCheck.contactId) throw new Error("Deposit and main Draft GST/contact evidence is incompatible.");
+  if (main.LineAmountTypes !== "Exclusive" || deposit.LineAmountTypes !== "Inclusive" || !main.Contact?.ContactID || main.Contact?.ContactID !== deposit.Contact?.ContactID) throw new Error("Deposit and main Draft GST/contact evidence is incompatible.");
   if (!Array.isArray(deposit.LineItems) || deposit.LineItems.length !== 1 || presentString(deposit.LineItems[0]?.ItemCode) !== DEPOSIT_ITEM_CODE || Number(deposit.Total) <= 0 || Math.abs(Number(deposit.Total) - Number(deposit.LineItems[0]?.LineAmount)) > 0.01) throw new Error("Exact Deposit Draft has unexpected lines or amount; correction is held.");
   const item = (itemResponse.data?.Items ?? []).find((row: any) => row?.Code === DEPOSIT_ITEM_CODE);
   const description = expectedDescription(presentString(item?.Description), facts.quoteNumber, mainNumber);

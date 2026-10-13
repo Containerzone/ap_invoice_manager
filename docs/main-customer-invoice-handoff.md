@@ -14,7 +14,7 @@
 | Lines | Current VTiger Service description, Quote quantity and Quote list price; account **200**, AUD, GST exclusive. |
 | Collision | Any existing Xero invoice with the exact `INV-…` number is held. AP will not suffix, adopt, amend or delete it. |
 | Recovery | An ambiguous Xero create/read-back result is marked reconciliation-required. It is never blindly retried. |
-| Missing customer contact | When the separate `FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED=true` gate is deliberately enabled, a zero-match customer may be created once with current Name, Email and Mobile/Phone, using a shared idempotent contact ledger. Xero is re-read and the full invoice preflight is refreshed before any Draft. A name/email conflict, multiple match, archived contact, source change or uncertain POST holds and alerts; supplier fuzzy/first-token matching is never used. |
+| Missing customer contact | V2 is implemented but **not released**: it re-resolves the current Deal/linked Account/Contact, uses organisation-name-first or individual-email-first rules, and records a non-secret resolution audit. Preview returns `would_create_contact` only; it cannot write. A live create also needs both `FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED=true` and `FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED=true`, rechecks the current VTiger snapshot, creates only `{Name, EmailAddress?}`, reads the immutable ContactID back, then refreshes full invoice preflight before a Draft. A conflict, duplicate, inactive contact, source change or uncertain POST holds and alerts; supplier fuzzy/first-token matching is never used. |
 
 ## Current AP endpoints and UI
 

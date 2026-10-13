@@ -49,6 +49,7 @@ describe("Deposit Draft correction preview", () => {
     expect(mainUpdate.LineItems).toHaveLength(2);
     expect(mainUpdate.LineItems[0]).toEqual(main.LineItems[0]);
     expect(mainUpdate.LineItems[1]).toMatchObject({ Description: "Deposit deduction — INV-702933-D", Quantity: 1, UnitAmount: -454.55, AccountCode: "200", TaxType: "OUTPUT" });
+    expect(m.preflight).toHaveBeenCalledWith(expect.any(Array), { skipContactCheck: true });
   });
 
   it("holds if the Deposit item description is not the approved native template", async () => {

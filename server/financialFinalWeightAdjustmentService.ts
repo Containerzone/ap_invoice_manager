@@ -15,7 +15,7 @@ export async function previewFinalWeightAdjustment(dealId: string, direction: Fi
   let xero: FinalWeightXeroEvidence | null = null;
   let readHold: string | null = null;
   if (!finalWeightSourceHold(facts, direction)) {
-    try { xero = await readFinalWeightXeroEvidence(`INV-${facts.dealNumber.slice(1)}`, facts.customerName, direction); }
+    try { xero = await readFinalWeightXeroEvidence(`INV-${facts.dealNumber.slice(1)}`, facts.customerName, direction, { skipCustomerMatch: true }); }
     catch (error) { readHold = error instanceof Error ? error.message : "Exact Xero GET-only preflight unavailable."; }
   }
   const preview = buildFinalWeightAdjustment(facts, direction, xero);

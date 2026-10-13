@@ -14,8 +14,8 @@ export type ExtraHireXeroEvidence = {
   history: ExtraHireHistoryRow[];
   historyComplete: true;
   exactCandidateMatches: ExtraHireHistoryRow[];
-  contactId: string;
-  contactName: string;
+  contactId: string | null;
+  contactName: string | null;
   item: ExtraHireItemEvidence;
 };
 /** Explicit ALL-status evidence, including DELETED/VOIDED, never active-only. Never truncates silently. */
@@ -23,7 +23,8 @@ export async function readExtraHireXeroEvidence(
   dealNumber: string,
   customerName: string,
   feet: 20 | 40,
-  candidateNumber?: string
+  candidateNumber?: string,
+  options: { contactOverride?: { contactId: string; contactName: string } | null; skipContactLookup?: boolean } = {}
 ): Promise<ExtraHireXeroEvidence> {
   if (
     !/^D\d{1,12}$/.test(dealNumber) ||
@@ -95,23 +96,16 @@ export async function readExtraHireXeroEvidence(
     throw new Error(
       "Extra Hire bounded history reached its limit; hold rather than infer a free suffix."
     );
-  const contacts = await get("/Contacts", {
-    searchTerm: customerName.trim(),
-    includeArchived: "true",
-  });
-  if (!Array.isArray(contacts?.Contacts) || contacts.Contacts.length >= 100)
-    throw new Error("Extra Hire contact evidence may be incomplete.");
-  const exactContacts = contacts.Contacts.filter(
-    (c: any) => String(c.Name ?? "").trim() === customerName.trim()
-  );
-  if (
-    exactContacts.length !== 1 ||
-    !exactContacts[0].ContactID ||
-    exactContacts[0].ContactStatus !== "ACTIVE"
-  )
-    throw new Error(
-      "Xero exact Extra Hire customer contact missing/archived/ambiguous."
-    );
+  let contactId: string | null = options.contactOverride?.contactId ?? null;
+  let contactName: string | null = options.contactOverride?.contactName ?? null;
+  if (!contactId && !options.skipContactLookup) {
+    const contacts = await get("/Contacts", { searchTerm: customerName.trim(), includeArchived: "true" });
+    if (!Array.isArray(contacts?.Contacts) || contacts.Contacts.length >= 100) throw new Error("Extra Hire contact evidence may be incomplete.");
+    const exactContacts = contacts.Contacts.filter((c: any) => String(c.Name ?? "").trim() === customerName.trim());
+    if (exactContacts.length !== 1 || !exactContacts[0].ContactID || exactContacts[0].ContactStatus !== "ACTIVE") throw new Error("Xero exact Extra Hire customer contact missing/archived/ambiguous.");
+    contactId = String(exactContacts[0].ContactID);
+    contactName = String(exactContacts[0].Name);
+  }
   const code = `${feet}' Hire` as "20' Hire" | "40' Hire";
   const items = await get(`/Items/${encodeURIComponent(code)}`);
   const exactItems = (Array.isArray(items?.Items) ? items.Items : []).filter(
@@ -177,8 +171,8 @@ export async function readExtraHireXeroEvidence(
     history,
     historyComplete: true,
     exactCandidateMatches,
-    contactId: String(exactContacts[0].ContactID),
-    contactName: String(exactContacts[0].Name),
+    contactId,
+    contactName,
     item: { itemCode: code, unitAmount: rate, accountCode, taxType: "OUTPUT" },
   };
 }

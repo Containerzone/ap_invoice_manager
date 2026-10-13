@@ -70,7 +70,9 @@ export function buildFinalWeightAdjustment(facts: FinalWeightFacts, direction: F
   const match = xero.exactMatches[0]!;
   if (!invoice || !invoice.InvoiceID || invoice.InvoiceID !== match.InvoiceID || invoice.InvoiceNumber !== number || match.InvoiceNumber !== number || invoice.Status !== "DRAFT" || match.Status !== "DRAFT" || invoice.Type !== "ACCREC" || match.Type !== "ACCREC") return held("Only the exact same CURRENT DRAFT ACCREC main invoice ID and number may be amended.");
   if (invoice.CurrencyCode !== "AUD" || invoice.LineAmountTypes !== "Exclusive" || Number(invoice.AmountPaid ?? 0) !== 0 || Number(invoice.AmountCredited ?? 0) !== 0 || (invoice.Payments?.length ?? 0) || (invoice.CreditNotes?.length ?? 0) || (invoice.Prepayments?.length ?? 0) || (invoice.Overpayments?.length ?? 0)) return held("Main invoice currency/GST/payment evidence is not an unallocated AUD GST-exclusive Draft.");
-  if (xero.contact.count !== 1 || !xero.contact.contactId || xero.contact.partyName !== facts.customerName || invoice.Contact?.ContactID !== xero.contact.contactId || match.Contact?.ContactID !== xero.contact.contactId) return held("Exact current Deal customer does not uniquely match the Draft invoice contact.");
+  // Existing Draft amendments retain the original immutable Xero ContactID.
+  // They never rematch or replace the invoice customer from current Deal data.
+  if (xero.contact.count !== 1 || !xero.contact.contactId || !invoice.Contact?.ContactID || invoice.Contact?.ContactID !== xero.contact.contactId || match.Contact?.ContactID !== xero.contact.contactId) return held("Exact Draft invoice contact evidence is incomplete or inconsistent; no customer rematch will occur.");
   if (!finalWeightDate(invoice.DateString ?? invoice.Date) || !finalWeightDate(invoice.DueDateString ?? invoice.DueDate)) return held("Existing Draft dates are missing or ambiguous; retained dates cannot be invented.");
   const lines = invoice.LineItems;
   if (!Array.isArray(lines) || !lines.length || lines.some((line: any) => !line || !String(line.LineItemID ?? "").trim() || typeof line.Description !== "string" ||

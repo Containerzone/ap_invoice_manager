@@ -188,6 +188,7 @@ export default function DepositInvoices() {
                   {result.holdReason}
                 </p>
               ) : null}
+              {result.customerContactPlan ? <div className="rounded-md bg-muted/50 p-3 text-xs"><p className="font-medium">Customer contact decision · {String(result.customerContactPlan.outcome).replaceAll("_", " ")}</p><p className="mt-1">Billing kind {result.customerContactPlan.source?.billingKind ?? "unresolved"} · lookup {Array.isArray(result.customerContactPlan.lookupOrder) ? result.customerContactPlan.lookupOrder.join(" → ") : "not recorded"}</p><p className="mt-1 text-muted-foreground">Resolved party {result.customerContactPlan.source?.name ?? "unavailable"} · source email {result.customerContactPlan.source?.email ? "available" : "not available"} · {result.customerContactPlan.status === "would_create" ? "Preview only — no Xero Contact will be created." : result.customerContactPlan.contactId ? `Immutable ContactID ${result.customerContactPlan.contactId}` : "No ContactID bound."}</p></div> : null}
               <div className="grid gap-3 md:grid-cols-3">
                 <div>
                   <p className="text-xs text-muted-foreground">

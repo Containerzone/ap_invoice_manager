@@ -851,11 +851,19 @@ export type InsertFinancialCustomerSalePurchasePoEvent = typeof financialCustome
 export const financialCustomerContactEvents = mysqlTable("financial_customer_contact_events", {
   id: int("id").autoincrement().primaryKey(),
   customerKey: varchar("customerKey", { length: 64 }).notNull(),
+  /** Customer invoice family that owns the proposed contact decision. */
+  workflowFamily: varchar("workflowFamily", { length: 64 }),
   customerVtigerId: varchar("customerVtigerId", { length: 128 }).notNull(),
+  /** Non-secret source provenance: billing kind, IDs, field labels and hash. */
+  sourceSummary: json("sourceSummary"),
   sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
   tenantIdHash: varchar("tenantIdHash", { length: 64 }).notNull(),
   idempotencyKey: varchar("idempotencyKey", { length: 64 }).notNull(),
   xeroContactId: varchar("xeroContactId", { length: 128 }),
+  /** Named v2 decision, e.g. matched_by_name or would_create_contact. */
+  outcome: varchar("outcome", { length: 96 }),
+  /** Non-secret Xero lookup order/counts and contact display evidence. */
+  lookupSummary: json("lookupSummary"),
   status: mysqlEnum("status", ["reserved", "matched", "created", "held", "reconciliation_required"] as const).notNull(),
   evidence: json("evidence"),
   holdReason: text("holdReason"),

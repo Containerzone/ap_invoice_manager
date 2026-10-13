@@ -37,6 +37,8 @@ import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
 import { readCurrentCustomerContactSource } from "./financialCustomerContactSource";
 import { resolveOrCreateAutomaticCustomerContact } from "./financialCustomerContactService";
+import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
+import { executeCustomerContactCreationV2, previewCustomerContactResolution, type CustomerContactPlan } from "./financialCustomerContactServiceV2";
 import { processAutomaticDepositMainDeduction } from "./financialDepositMainDeductionService";
 
 export const DEPOSIT_INVOICE_WEBHOOK_PATH =
@@ -50,6 +52,7 @@ export type DepositInvoicePreviewResult = {
   xeroPreflightHash: string | null;
   state: "previewed" | "held";
   holdReason: string | null;
+  customerContactPlan: CustomerContactPlan | null;
   noWrites: true;
 };
 
@@ -71,6 +74,7 @@ export async function previewDepositInvoice(
     rulesVersion: DEPOSIT_INVOICE_RULES_VERSION,
   });
   const preview = buildDepositInvoice(facts);
+  let customerContactPlan: CustomerContactPlan | null = null;
   const result = (
     preflight: FinancialXeroPreflight | null,
     reason: string | null
@@ -83,6 +87,7 @@ export async function previewDepositInvoice(
     xeroPreflightHash: preflight ? financialSha256(preflight) : null,
     state: reason ? "held" : "previewed",
     holdReason: reason,
+    customerContactPlan,
     noWrites: true,
   });
   if (!preview.eligible || !preview.document)
@@ -92,14 +97,25 @@ export async function previewDepositInvoice(
     );
   let preflight: FinancialXeroPreflight | null = null;
   try {
+    if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true") {
+      customerContactPlan = await previewCustomerContactResolution(await readCurrentCustomerContactResolution(dealId));
+      if (customerContactPlan.status === "matched" && customerContactPlan.contactId) {
+        preview.document.partySourceId = customerContactPlan.contactId;
+      }
+    }
     [preflight = null] = await preflightFinancialXeroIntents([
       preview.document,
     ]);
-    const reason = depositPreflightHold(
+    const baseReason = depositPreflightHold(
       preview.document.proposedDocumentNumber!,
       facts.customerName,
       preflight
     );
+    const reason = customerContactPlan?.status === "held"
+      ? customerContactPlan.holdReason ?? "Xero customer-contact resolution is held."
+      : customerContactPlan?.status === "would_create"
+        ? "Xero customer contact is absent; preview proposes one guarded contact creation and no Draft write."
+        : baseReason;
     if (reason || !preflight)
       return result(
         preflight,
@@ -155,7 +171,8 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
   }
-  const contactOnlyHold = reason === "Exact current Deal Xero customer is missing or ambiguous.";
+  const contactOnlyHold = reason === "Exact current Deal Xero customer is missing or ambiguous."
+    || evidence.customerContactPlan?.status === "would_create";
   if (reason && !contactOnlyHold) {
     const event = await recordDepositInvoicePreview({
       facts: evidence.facts, sourceHash: evidence.sourceSnapshotHash, proposal: evidence.preview.document,
@@ -166,6 +183,27 @@ export async function processAutomaticDepositInvoice(dealId: string) {
   // Validate the Deposit item's Xero configuration before creating a customer
   // contact. If it is absent, a contact-only write would not lead to an invoice.
   if (contactOnlyHold) await readDepositInvoiceXeroItemConfiguration();
+  let customerContactWrites = 0;
+  if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true") {
+    const plan = evidence.customerContactPlan;
+    if (!plan) {
+      const event = await recordDepositInvoicePreview({ facts: evidence.facts, sourceHash: evidence.sourceSnapshotHash, proposal: evidence.preview.document, preflight: evidence.preflight, proposedInvoiceNumber: evidence.preview.proposedInvoiceNumber, status: "held", holdReason: "Customer-contact v2 evidence is unavailable." });
+      return { ok: false, status: "held" as const, recordId: dealId, eventId: event.id, warning: "Customer-contact v2 evidence is unavailable.", xeroWritesAttempted: 0, postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD };
+    }
+    if (plan.status === "would_create") {
+      const created = await executeCustomerContactCreationV2(plan);
+      customerContactWrites = created.contactWritesAttempted;
+      if (created.status === "would_create" || created.status === "held" || created.status === "reconciliation_required") {
+        const event = await recordDepositInvoicePreview({ facts: evidence.facts, sourceHash: evidence.sourceSnapshotHash, proposal: evidence.preview.document, preflight: evidence.preflight, proposedInvoiceNumber: evidence.preview.proposedInvoiceNumber, status: "held", holdReason: created.holdReason ?? "Customer contact creation remains held by its independent release gate." });
+        return { ok: false, status: created.status === "reconciliation_required" ? "reconciliation_required" as const : "held" as const, recordId: dealId, eventId: event.id, warning: created.holdReason ?? "Customer contact creation remains held by its independent release gate.", xeroWritesAttempted: customerContactWrites, postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD };
+      }
+      evidence = await previewDepositInvoice(dealId);
+    }
+    if (evidence.state !== "previewed" || !evidence.preview.document || !evidence.preflight?.contactCheck.contactId) {
+      const event = await recordDepositInvoicePreview({ facts: evidence.facts, sourceHash: evidence.sourceSnapshotHash, proposal: evidence.preview.document, preflight: evidence.preflight, proposedInvoiceNumber: evidence.preview.proposedInvoiceNumber, status: "held", holdReason: evidence.holdReason ?? "Current customer-contact preflight changed before Deposit Draft creation." });
+      return { ok: false, status: "held" as const, recordId: dealId, eventId: event.id, warning: evidence.holdReason ?? "Current customer-contact preflight changed before Deposit Draft creation.", xeroWritesAttempted: customerContactWrites, postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD };
+    }
+  } else {
   const source = await readCurrentCustomerContactSource({
     customerVtigerId: evidence.facts.customerVtigerId,
     customerKind: evidence.facts.customerKind,
@@ -190,6 +228,9 @@ export async function processAutomaticDepositInvoice(dealId: string) {
   } else {
     reason = evidence.holdReason;
   }
+  customerContactWrites = contact.contactWritesAttempted;
+  }
+  if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true") reason = evidence.holdReason;
   const event = await recordDepositInvoicePreview({
     facts: evidence.facts,
     sourceHash: evidence.sourceSnapshotHash,
@@ -206,7 +247,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       recordId: dealId,
       eventId: event.id,
       warning: reason ?? "Deposit evidence is held.",
-      xeroWritesAttempted: contact.contactWritesAttempted,
+      xeroWritesAttempted: customerContactWrites,
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
   const token = randomUUID();
@@ -225,7 +266,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       eventId: event.id,
         warning:
           "Deposit exact evidence or number is already claimed; no duplicate creation.",
-        xeroWritesAttempted: contact.contactWritesAttempted,
+        xeroWritesAttempted: customerContactWrites,
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
   try {
@@ -276,7 +317,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
         warning:
           "Reconcile the exact Deposit invoice before any further action.",
         xeroWritesAttempted:
-          contact.contactWritesAttempted + (outcome.outcome === "reconciliation_required" ? 1 : 0),
+          customerContactWrites + (outcome.outcome === "reconciliation_required" ? 1 : 0),
         postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
       };
     }
@@ -294,7 +335,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       eventId: event.id,
       invoiceNumber: outcome.result.documentNumber,
       xeroInvoiceId: outcome.result.xeroDocumentId,
-      xeroWritesAttempted: contact.contactWritesAttempted + 1 + deduction.xeroWritesAttempted,
+      xeroWritesAttempted: customerContactWrites + 1 + deduction.xeroWritesAttempted,
       mainDeduction: deduction,
       postconditionHold: deduction.status === "deducted" ? null : DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
@@ -329,6 +370,8 @@ export async function getDepositInvoiceReadiness() {
     writerEnabled,
     customerContactAutomationEnabled:
       process.env.FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED === "true",
+    customerContactV2Enabled:
+      process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true",
     releaseHoldReason,
     policy,
     postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,

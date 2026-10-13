@@ -193,17 +193,35 @@ function initialPreflight(intent: ProposedFinancialDocument): FinancialXeroPrefl
   };
 }
 
+function normalCustomerName(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-AU");
+}
+
 async function preflightContact(auth: ReadOnlyAuth, partyName: string | null): Promise<FinancialXeroPreflight["contactCheck"]> {
   if (!partyName?.trim()) return { partyName: null, found: null, count: null, contactId: null };
   const response = await xeroRead<any>(auth, `contact:${partyName.trim().toUpperCase()}`, `${XERO_API_BASE}/Contacts`, { searchTerm: partyName.trim() });
   const contacts = Array.isArray(response?.Contacts) ? response.Contacts : [];
-  const exact = contacts.filter((contact: any) => String(contact?.Name ?? "").trim().toLowerCase() === partyName.trim().toLowerCase());
+  const exact = contacts.filter((contact: any) => normalCustomerName(String(contact?.Name ?? "")) === normalCustomerName(partyName));
   return {
     partyName,
     found: exact.length === 1,
     count: exact.length,
     contactId: exact.length === 1 && exact[0]?.ContactID ? String(exact[0].ContactID) : null,
   };
+}
+
+/**
+ * An immutable ContactID is stronger than a fresh name lookup. This is used
+ * after a guarded contact create and for Draft amendments, where customer
+ * matching must never replace the existing invoice customer.
+ */
+async function preflightContactId(auth: ReadOnlyAuth, contactId: string, partyName: string | null): Promise<FinancialXeroPreflight["contactCheck"]> {
+  const response = await xeroRead<any>(auth, `contact-id:${contactId}`, `${XERO_API_BASE}/Contacts/${encodeURIComponent(contactId)}`);
+  const contact = response?.Contacts?.[0] ?? null;
+  const returnedId = String(contact?.ContactID ?? "").trim();
+  const status = String(contact?.ContactStatus ?? "").trim().toUpperCase();
+  const found = returnedId === contactId && status === "ACTIVE";
+  return { partyName, found, count: returnedId ? 1 : 0, contactId: found ? returnedId : null };
 }
 
 async function preflightItem(auth: ReadOnlyAuth, itemCode: string) {
@@ -262,7 +280,7 @@ async function preflightDocument(auth: ReadOnlyAuth, result: FinancialXeroPrefli
  * intentionally sequential (and capped) so the central Xero rate manager can
  * pace the tenant. Results are evidence, never a permission to write.
  */
-export async function preflightFinancialXeroIntents(intents: ProposedFinancialDocument[]): Promise<FinancialXeroPreflight[]> {
+export async function preflightFinancialXeroIntents(intents: ProposedFinancialDocument[], options: { skipContactCheck?: boolean } = {}): Promise<FinancialXeroPreflight[]> {
   if (intents.length > MAX_FINANCIAL_PREFLIGHTS) throw new Error("Too many proposed documents for a single read-only Xero preflight");
   const auth = await readOnlyAuth();
   await assertExpectedFinancialTenant(auth);
@@ -271,7 +289,11 @@ export async function preflightFinancialXeroIntents(intents: ProposedFinancialDo
     const result = initialPreflight(intent);
     try {
       await preflightDocument(auth, result);
-      result.contactCheck = await preflightContact(auth, intent.partyName);
+      result.contactCheck = options.skipContactCheck
+        ? { partyName: intent.partyName, found: null, count: null, contactId: null }
+        : intent.partySourceId
+          ? await preflightContactId(auth, intent.partySourceId, intent.partyName)
+          : await preflightContact(auth, intent.partyName);
       const codes = Array.from(new Set(intent.lineItems.map((line) => line.itemCode.trim()).filter(Boolean))).slice(0, 12);
       for (const code of codes) result.itemChecks.push(await preflightItem(auth, code));
     } catch (error) {
@@ -400,7 +422,7 @@ export async function readBackFinancialDraft(input: {
 }
 
 /** Final weight: exact number search INCLUDING all statuses, followed by exact ID full-line GET. */
-export async function readFinalWeightXeroEvidence(invoiceNumber: string, customerName: string, direction: FinalWeightDirection): Promise<FinalWeightXeroEvidence> {
+export async function readFinalWeightXeroEvidence(invoiceNumber: string, customerName: string, direction: FinalWeightDirection, options: { skipCustomerMatch?: boolean } = {}): Promise<FinalWeightXeroEvidence> {
   if (!/^INV-\d{1,12}$/.test(invoiceNumber)) throw new Error("Final-weight requires an exact main INV-number.");
   const auth = await readOnlyAuth();
   await assertExpectedFinancialTenant(auth);
@@ -411,7 +433,11 @@ export async function readFinalWeightXeroEvidence(invoiceNumber: string, custome
     const detail = await xeroRead<any>(auth, `final-weight-id:${exactMatches[0].InvoiceID}`, `${XERO_API_BASE}/Invoices/${encodeURIComponent(exactMatches[0].InvoiceID)}`);
     if (Array.isArray(detail?.Invoices) && detail.Invoices.length === 1) invoice = detail.Invoices[0];
   }
-  const contact = await preflightContact(auth, customerName);
+  // Draft amendments retain Invoice.Contact.ContactID and must not select a
+  // current Deal customer by a new Xero name/email lookup.
+  const contact = options.skipCustomerMatch
+    ? { count: invoice?.Contact?.ContactID ? 1 : 0, contactId: invoice?.Contact?.ContactID ? String(invoice.Contact.ContactID) : null, partyName: invoice?.Contact?.Name ? String(invoice.Contact.Name) : customerName }
+    : await preflightContact(auth, customerName);
   let ser70: FinalWeightXeroEvidence["ser70"] = null;
   if (direction === "overweight" && invoice) {
     const items = await xeroRead<any>(auth, "final-weight-SER70", `${XERO_API_BASE}/Items/SER70`);
@@ -423,7 +449,7 @@ export async function readFinalWeightXeroEvidence(invoiceNumber: string, custome
       if ((accounts?.Accounts ?? []).filter((row: any) => String(row.Code) === accountCode && row.Status === "ACTIVE").length === 1) ser70 = { itemCode: "SER70", accountCode, taxType: "OUTPUT" };
     }
   }
-  return { exactMatches, invoice, contact: { count: contact.count ?? 0, contactId: contact.contactId, partyName: customerName }, ser70 };
+  return { exactMatches, invoice, contact: { count: contact.count ?? 0, contactId: contact.contactId, partyName: contact.partyName ?? customerName }, ser70 };
 }
 
 function historicalFamily(reference: string): HistoricalXeroPreviewRow["inferredFamily"] {

@@ -10,6 +10,9 @@ const m = vi.hoisted(() => ({
   complete: vi.fn(),
   hold: vi.fn(),
   writer: vi.fn(),
+  contactV2Source: vi.fn(),
+  contactV2Preview: vi.fn(),
+  contactV2Execute: vi.fn(),
 }));
 vi.mock("./financialExtraHireInvoiceSource", () => ({
   readExtraHireFacts: m.source,
@@ -32,6 +35,8 @@ vi.mock("./financialExtraHireInvoiceDb", () => ({
 vi.mock("./financialWriterExecutionService", () => ({
   executeGuardedFinancialWriterCommand: m.writer,
 }));
+vi.mock("./financialCustomerContactSourceV2", () => ({ readCurrentCustomerContactResolution: m.contactV2Source }));
+vi.mock("./financialCustomerContactServiceV2", () => ({ previewCustomerContactResolution: m.contactV2Preview, executeCustomerContactCreationV2: m.contactV2Execute }));
 import {
   previewExtraHireInvoice,
   processAutomaticExtraHireInvoice,
@@ -101,6 +106,9 @@ beforeEach(() => {
       executionId: 11,
       result: { xeroDocumentId: "xero-1", documentNumber: "INV-77-EH1" },
     });
+  m.contactV2Source.mockResolvedValue({ dealId: "5x77", billingKind: "organisation", customerVtigerId: "3x88", organisationName: "Synthetic", contactName: null, name: "Synthetic", email: "customer@example.test", linkedAccountId: "3x88", linkedContactId: null, sourceFieldsUsed: ["Accounts.accountname"], resolvedAt: "2026-01-01T00:00:00.000Z", sourceSnapshotHash: "v".repeat(64) });
+  m.contactV2Preview.mockReset();
+  m.contactV2Execute.mockReset();
 });
 afterEach(() => vi.unstubAllEnvs());
 const noWrites = () => {
@@ -120,10 +128,34 @@ describe("Extra Hire current source preview and automatic receiver lifecycle", (
       },
     });
     expect(m.xero.mock.calls).toEqual([
-      ["D77", "Synthetic", 20],
-      ["D77", "Synthetic", 20, "INV-77-EH1"],
+      ["D77", "Synthetic", 20, undefined, {}],
+      ["D77", "Synthetic", 20, "INV-77-EH1", {}],
     ]);
     noWrites();
+  });
+  it("records a v2 would-create contact decision as a no-write Extra Hire preview", async () => {
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const plan = { source: await m.contactV2Source(), status: "would_create", outcome: "would_create_contact", contactId: null, contactName: "Synthetic", includeEmailOnCreate: true, lookupOrder: ["name", "email"], nameMatchCount: 0, emailMatchCount: 0, holdReason: null };
+    m.contactV2Preview.mockResolvedValue(plan);
+    const result = await previewExtraHireInvoice("5x77");
+    expect(result).toMatchObject({ state: "held", noWrites: true, customerContactPlan: { outcome: "would_create_contact" } });
+    expect(m.xero.mock.calls[0]).toEqual(["D77", "Synthetic", 20, undefined, { skipContactLookup: true }]);
+    expect(m.contactV2Execute).not.toHaveBeenCalled();
+    noWrites();
+  });
+  it("creates a v2 contact only after a held preview, then refreshes Extra Hire evidence before the Draft", async () => {
+    vi.stubEnv("FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const wouldCreate = { source: await m.contactV2Source(), status: "would_create", outcome: "would_create_contact", contactId: null, contactName: "Synthetic", includeEmailOnCreate: true, lookupOrder: ["name", "email"], nameMatchCount: 0, emailMatchCount: 0, holdReason: null };
+    const matched = { ...wouldCreate, status: "matched", outcome: "matched_by_name", contactId: "v2-contact", includeEmailOnCreate: false };
+    m.contactV2Preview.mockResolvedValueOnce(wouldCreate).mockResolvedValueOnce(matched);
+    m.contactV2Execute.mockResolvedValue({ ...matched, status: "created", outcome: "created_contact", contactEventId: 99, contactWritesAttempted: 1 });
+    const result = await processAutomaticExtraHireInvoice("5x77");
+    expect(result).toMatchObject({ status: "drafts_created", xeroWritesAttempted: 2 });
+    expect(m.contactV2Execute).toHaveBeenCalledTimes(1);
+    expect(m.xero.mock.calls[0]).toEqual(["D77", "Synthetic", 20, undefined, { skipContactLookup: true }]);
+    expect(m.xero.mock.calls[2]).toEqual(["D77", "Synthetic", 20, undefined, { contactOverride: { contactId: "v2-contact", contactName: "Synthetic" } }]);
+    expect(m.writer.mock.invocationCallOrder[0]).toBeGreaterThan(m.contactV2Execute.mock.invocationCallOrder[0]!);
   });
   it("default-off process rejects before source, ledger/Xero/alerts", async () => {
     vi.stubEnv("FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED", "");

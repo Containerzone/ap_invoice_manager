@@ -32,6 +32,10 @@ Only a current exact Deal meeting every condition can be proposed:
 
 `-D` is never used by Extra Hire because it belongs to Deposit. An existing/deleted/voided/changed/ambiguous Extra Hire number, a missing period, a historical unowned invoice or a gap in the AP ordinal chain is a **hold**, not a reason to skip a suffix or adopt an invoice.
 
+### Customer-contact v2 rollout
+
+Customer-contact v2 is implemented but **default-off**. It re-resolves the current Deal and linked party; organisation invoices resolve exact normalized Xero organisation names before treating a linked-person email as duplicate evidence, and individual invoices resolve exact email first. GET-only previews can show `would_create_contact` but never create a contact. A live Xero Contact create requires **both** `FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED=true` and `FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED=true`, followed by a fresh source/Xero preflight before the Extra Hire Draft. Duplicate/inactive/conflicting contacts, source drift and uncertain POST results remain held.
+
 The current hire end date is used as the Draft issue date and no due date is inferred. This requires the future policy to acknowledge `CURRENT_HIRE_END_DATE_NO_DUE_DATE` after business confirmation.
 
 ## Activation verification checklist

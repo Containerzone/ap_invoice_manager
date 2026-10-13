@@ -17,6 +17,7 @@ import DepositInvoices from "./DepositInvoices";
 import FinalWeightAdjustments from "./FinalWeightAdjustments";
 import ExtraHireInvoices from "./ExtraHireInvoices";
 import WarrantyAviso from "./WarrantyAviso";
+import { CustomerContactAuditPanel } from "@/components/CustomerContactAuditPanel";
 
 const WORKSPACE_CONTENT: Record<FinancialAutomationTab, React.ReactNode> = {
   storage: <StorageAutomation />,
@@ -51,6 +52,8 @@ export default function FinancialAutomation() {
           <Workflow className="h-3.5 w-3.5" /> Admin workspace
         </Badge>
       </header>
+
+      <CustomerContactAuditPanel />
 
       <Tabs
         value={tab}

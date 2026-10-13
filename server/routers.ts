@@ -87,6 +87,7 @@ import { getCustomerSalePurchasePoEvents } from "./financialCustomerSalePurchase
 import { getCustomerSalePurchaseReadiness, previewCustomerSalePurchasePo } from "./financialCustomerSalePurchaseService";
 import { getMainCustomerInvoiceEvents } from "./financialMainCustomerInvoiceDb";
 import { getMainCustomerInvoiceReadiness, previewMainCustomerInvoice } from "./financialMainCustomerInvoiceService";
+import { getFinancialCustomerContactEvents } from "./financialCustomerContactDb";
 import { getDepositInvoiceEvents } from "./financialDepositInvoiceDb";
 import { getDepositInvoiceReadiness, previewDepositInvoice } from "./financialDepositInvoiceService";
 import { getFinalWeightEvents } from "./financialFinalWeightAdjustmentDb";
@@ -626,6 +627,8 @@ export const appRouter = router({
     mainCustomerInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getMainCustomerInvoiceEvents(input?.limit ?? 100)),
     mainCustomerInvoiceReadiness: adminProcedure.query(() => getMainCustomerInvoiceReadiness()),
+    customerContactEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getFinancialCustomerContactEvents(input?.limit ?? 100)),
     warrantyAvisoEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getWarrantyEvents(input?.limit ?? 100)),
     warrantyAvisoReadiness: adminProcedure.query(() => getWarrantyReadiness()),

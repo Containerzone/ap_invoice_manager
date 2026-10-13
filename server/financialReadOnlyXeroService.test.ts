@@ -112,6 +112,23 @@ describe("financial read-only Xero service", () => {
     noMutationAssertions();
   });
 
+  it("verifies an immutable Xero ContactID without rematching the current customer name", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
+      .mockResolvedValueOnce({ data: { Invoices: [] } })
+      .mockResolvedValueOnce({ data: { Contacts: [{ ContactID: "contact-bound", ContactStatus: "ACTIVE", Name: "Original Draft Customer" }] } });
+    const [result] = await preflightFinancialXeroIntents([{
+      documentFamily: "customer_invoice", documentType: "main_invoice", proposedAction: "create_draft", proposedDocumentNumber: "INV-7000",
+      reference: null, partyName: "Changed Deal Name", partySourceId: "contact-bound", accountCode: "200", gstTreatment: "GST_EXCLUSIVE", currency: "AUD",
+      issueDate: null, dueDate: null, subtotal: 10, taxAmount: 1, total: 11,
+      lineItems: [{ itemCode: "", description: "Service", quantity: 1, unitAmount: 10, lineAmount: 10, accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" }],
+      validationStatus: "valid", sourceWorkflow: "main_customer_invoice", sourceRecordId: "5x1",
+    }]);
+    expect(result?.contactCheck).toMatchObject({ found: true, contactId: "contact-bound" });
+    expect(mockGet.mock.calls[2]![0]).toMatch(/Contacts\/contact-bound$/);
+    noMutationAssertions();
+  });
+
   it("treats an exact DELETED or VOIDED customer invoice as an occupied number", async () => {
     for (const status of ["DELETED", "VOIDED"]) {
       mockGet

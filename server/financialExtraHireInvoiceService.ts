@@ -29,6 +29,8 @@ import {
 } from "./financialProposalIntegrity";
 import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
+import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
+import { executeCustomerContactCreationV2, previewCustomerContactResolution, type CustomerContactPlan } from "./financialCustomerContactServiceV2";
 export const EXTRA_HIRE_WEBHOOK_PATH =
   "/api/webhooks/vtiger/extra-hire-invoice";
 export const EXTRA_HIRE_POSTCONDITION_HOLD =
@@ -49,6 +51,7 @@ export async function previewExtraHireInvoice(
   let ordinal: number | null = null;
   let number: string | null = null;
   let reason = facts.sourceHoldReason;
+  let customerContactPlan: CustomerContactPlan | null = null;
   if (expectedDealNumber && facts.dealNumber !== expectedDealNumber)
     reason = "Current exact Deal does not match the named D-number requested.";
   if (
@@ -63,11 +66,21 @@ export async function previewExtraHireInvoice(
       "Extra Hire requires duration 30, current end date, supported size/container and exact Deal customer.";
   if (!reason) {
     try {
+      if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true") {
+        customerContactPlan = await previewCustomerContactResolution(await readCurrentCustomerContactResolution(dealId));
+        if (customerContactPlan.status === "held") reason = customerContactPlan.holdReason ?? "Xero customer-contact resolution is held.";
+      }
+      const contactOptions = customerContactPlan?.status === "matched" && customerContactPlan.contactId
+        ? { contactOverride: { contactId: customerContactPlan.contactId, contactName: customerContactPlan.contactName ?? facts.customerName } }
+        : customerContactPlan?.status === "would_create" ? { skipContactLookup: true } : {};
+      if (reason) throw new Error(reason);
       const claims = await getExtraHireDealClaims(dealId);
       const initial = await readExtraHireXeroEvidence(
         facts.dealNumber,
         facts.customerName,
-        facts.containerFeet!
+        facts.containerFeet!,
+        undefined,
+        contactOptions
       );
       const suffix = deriveExtraHireInvoiceNumber(
         facts.dealNumber,
@@ -86,7 +99,8 @@ export async function previewExtraHireInvoice(
             facts.dealNumber,
             facts.customerName,
             facts.containerFeet!,
-            number
+            number,
+            contactOptions
           )
         : initial;
       if (
@@ -111,7 +125,7 @@ export async function previewExtraHireInvoice(
   );
   if (preview.document && preflight)
     preview.document.partySourceId = preflight.contactId;
-  reason = reason ?? preview.holdReason;
+  reason = reason ?? (customerContactPlan?.status === "would_create" ? "Xero customer contact is absent; preview proposes one guarded contact creation and no Draft write." : null) ?? preview.holdReason;
   return {
     facts,
     sourceSnapshotHash: sourceHash,
@@ -125,6 +139,7 @@ export async function previewExtraHireInvoice(
     preflight,
     state: reason ? ("held" as const) : ("previewed" as const),
     holdReason: reason,
+    customerContactPlan,
     postconditionHold: EXTRA_HIRE_POSTCONDITION_HOLD,
     noWrites: true as const,
   };
@@ -132,8 +147,17 @@ export async function previewExtraHireInvoice(
 export async function processAutomaticExtraHireInvoice(dealId: string) {
   const policy = await getExtraHireReleasePolicy();
   assertExtraHireRelease(policy);
-  const result = await previewExtraHireInvoice(dealId);
+  let result = await previewExtraHireInvoice(dealId);
+  let customerContactWrites = 0;
+  let contactCreationHold: string | null = null;
+  if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true" && result.customerContactPlan?.status === "would_create") {
+    const created = await executeCustomerContactCreationV2(result.customerContactPlan);
+    customerContactWrites = created.contactWritesAttempted;
+    if (created.status === "matched" || created.status === "created") result = await previewExtraHireInvoice(dealId);
+    else contactCreationHold = created.holdReason ?? "Customer contact creation remains held by its independent release gate.";
+  }
   let reason = result.holdReason;
+  if (contactCreationHold) reason = contactCreationHold;
   if (
     !result.facts.sourceRefreshedAt ||
     Date.parse(result.facts.sourceRefreshedAt) <
@@ -180,7 +204,7 @@ export async function processAutomaticExtraHireInvoice(dealId: string) {
       recordId: dealId,
       eventId: event.id,
       warning: reason,
-      xeroWritesAttempted: 0,
+      xeroWritesAttempted: customerContactWrites,
     };
   const token = randomUUID();
   if (!(await claimExtraHireEvidence(event.id, token, policy.releaseKey)))
@@ -191,7 +215,7 @@ export async function processAutomaticExtraHireInvoice(dealId: string) {
       eventId: event.id,
       warning:
         "Exact Extra Hire source period/ordinal already claimed, uncertain, or preflight stale. No replay creates a second invoice.",
-      xeroWritesAttempted: 0,
+      xeroWritesAttempted: customerContactWrites,
     };
   try {
     const payload = prepareFinancialDraftPayload(
@@ -246,7 +270,7 @@ export async function processAutomaticExtraHireInvoice(dealId: string) {
       eventId: event.id,
       invoiceNumber: outcome.result.documentNumber,
       xeroInvoiceId: outcome.result.xeroDocumentId,
-      xeroWritesAttempted: 1,
+      xeroWritesAttempted: customerContactWrites + 1,
       postconditionHold: EXTRA_HIRE_POSTCONDITION_HOLD,
     };
   } catch (e) {
