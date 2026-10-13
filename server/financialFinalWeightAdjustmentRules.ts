@@ -65,10 +65,14 @@ export function buildFinalWeightAdjustment(facts: FinalWeightFacts, direction: F
   const held = (reason: string): FinalWeightPreview => ({ direction, eligible: false, invoiceNumber: number, invoiceId: xero?.invoice?.InvoiceID ?? null, holdReason: reason, originalDraft: null, expectedDraft: null, excessAmountExclusive: null });
   const sourceHold = finalWeightSourceHold(facts, direction);
   if (sourceHold) return held(sourceHold);
-  if (!xero || xero.exactMatches.length !== 1) return held("The exact current main invoice is missing or ambiguous, including deleted/voided history. Never create, adopt or suffix an invoice.");
+  if (!xero || xero.exactMatches.length !== 1) return held(xero?.exactMatches.length ? `The exact main invoice ${number} is ambiguous (${xero.exactMatches.length} Xero matches); never create, adopt or suffix an invoice.` : `The exact main invoice ${number} was not found in Xero; never create, adopt or suffix an invoice.`);
   const invoice = xero.invoice;
   const match = xero.exactMatches[0]!;
-  if (!invoice || !invoice.InvoiceID || invoice.InvoiceID !== match.InvoiceID || invoice.InvoiceNumber !== number || match.InvoiceNumber !== number || invoice.Status !== "DRAFT" || match.Status !== "DRAFT" || invoice.Type !== "ACCREC" || match.Type !== "ACCREC") return held("Only the exact same CURRENT DRAFT ACCREC main invoice ID and number may be amended.");
+  if (!invoice || !invoice.InvoiceID || invoice.InvoiceID !== match.InvoiceID || invoice.InvoiceNumber !== number || match.InvoiceNumber !== number || invoice.Status !== "DRAFT" || match.Status !== "DRAFT" || invoice.Type !== "ACCREC" || match.Type !== "ACCREC") {
+    const status = String(match.Status ?? "unknown").trim().toUpperCase();
+    const type = String(match.Type ?? "unknown").trim().toUpperCase();
+    return held(`Exact Xero main invoice ${number} is ${status} ${type}; only the same CURRENT DRAFT ACCREC invoice may be amended.`);
+  }
   if (invoice.CurrencyCode !== "AUD" || invoice.LineAmountTypes !== "Exclusive" || Number(invoice.AmountPaid ?? 0) !== 0 || Number(invoice.AmountCredited ?? 0) !== 0 || (invoice.Payments?.length ?? 0) || (invoice.CreditNotes?.length ?? 0) || (invoice.Prepayments?.length ?? 0) || (invoice.Overpayments?.length ?? 0)) return held("Main invoice currency/GST/payment evidence is not an unallocated AUD GST-exclusive Draft.");
   // Existing Draft amendments retain the original immutable Xero ContactID.
   // They never rematch or replace the invoice customer from current Deal data.

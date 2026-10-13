@@ -35,7 +35,9 @@ describe("Final weight isolated pure Draft amendment rules", () => {
     expect(result.excessAmountExclusive).toBeNull();
   });
   it.each(["AUTHORISED", "PAID", "VOIDED", "DELETED", "SUBMITTED", "DRAFT "])("holds status %s without an invoice proposal", status => {
-    expect(buildFinalWeightAdjustment(facts(), "overweight", xero({ invoice: invoice({ Status: status }) })).eligible).toBe(false);
+    const result = buildFinalWeightAdjustment(facts(), "overweight", xero({ exactMatches: [invoice({ Status: status })], invoice: invoice({ Status: status }) }));
+    expect(result.eligible).toBe(false);
+    expect(result.holdReason).toContain(`is ${status.trim().toUpperCase()} ACCREC`);
   });
   it.each([
     { exactMatches: [] }, { exactMatches: [invoice(), invoice({ InvoiceID: "collision", Status: "DELETED" })] },
