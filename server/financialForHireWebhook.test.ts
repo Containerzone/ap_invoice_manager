@@ -1,11 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
-import { disabledForHireWebhookHandler, parseForHireWebhookEnvelope, registerForHireWebhook } from "./financialForHireWebhook";
+const candidateLookup = vi.hoisted(() => ({ find: vi.fn() }));
+vi.mock("./vtigerFinancialCandidateService", () => ({ findExactFinancialCandidate: candidateLookup.find }));
+
+import { disabledForHireWebhookHandler, parseForHireWebhookEnvelope, registerForHireWebhook, resolveForHireRecordId } from "./financialForHireWebhook";
 
 describe("dormant For Hire webhook contract", () => {
   it("accepts only an exact VTiger Container Control ID or record_id", () => {
     expect(parseForHireWebhookEnvelope({ record_id: "24x901", event: "container-control.request" })).toEqual({ recordId: "24x901", event: "container-control.request" });
     expect(parseForHireWebhookEnvelope({ id: "24x901" })).toEqual({ recordId: "24x901", event: null });
-    expect(() => parseForHireWebhookEnvelope({ id: "C1860" })).toThrow(/requires an exact VTiger/i);
+    expect(parseForHireWebhookEnvelope({ id: "C1860" })).toEqual({ recordId: "C1860", event: null });
+    expect(() => parseForHireWebhookEnvelope({ id: "D702930" })).toThrow(/requires an exact VTiger/i);
+  });
+
+  it("resolves a VTiger C-number through one exact read-only candidate lookup", async () => {
+    candidateLookup.find.mockResolvedValueOnce({
+      outcome: "found",
+      sourceCategory: "container_control",
+      businessNumber: "C1912",
+      candidates: [{ recordId: "5x489278" }],
+      message: "Exact VTiger candidate found",
+    });
+    await expect(resolveForHireRecordId("C1912")).resolves.toBe("5x489278");
+    expect(candidateLookup.find).toHaveBeenCalledWith({ sourceCategory: "container_control", businessNumber: "C1912" });
   });
 
   it("remains a 503 no-write stub even with a valid secret", async () => {
