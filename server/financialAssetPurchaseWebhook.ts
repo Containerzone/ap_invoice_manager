@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { ASSET_PURCHASE_WEBHOOK_PATH, processAutomaticAssetPurchase } from "./financialAssetPurchaseService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
 import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
+import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
 
 export const ASSET_PURCHASE_WEBHOOK_SECRET_HEADER = "x-financial-webhook-secret" as const;
 export const ASSET_PURCHASE_WEBHOOK_EVENT = "container-control.asset-request" as const;
@@ -13,9 +14,21 @@ export function parseAssetPurchaseWebhookEnvelope(body: unknown): AssetPurchaseW
   const source = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
   const recordId = typeof source.record_id === "string" ? source.record_id.trim()
     : typeof source.id === "string" ? source.id.trim() : "";
-  if (!/^\d+x\d+$/i.test(recordId)) throw new Error("Asset purchase webhook requires an exact VTiger Container Control id or record_id.");
+  if (!/^\d+x\d+$/i.test(recordId) && !/^C\d+$/i.test(recordId)) {
+    throw new Error("Asset purchase webhook requires an exact VTiger Container Control id, record_id or C-number.");
+  }
   const event = typeof source.event === "string" && source.event.trim() ? source.event.trim() : null;
   return { recordId, event };
+}
+
+/** Resolves VTiger's `id -> vtcmcontainercontrolsnumber` mapping by one exact, read-only query. */
+export async function resolveAssetPurchaseRecordId(reference: string): Promise<string> {
+  if (/^\d+x\d+$/i.test(reference)) return reference;
+  const lookup = await findExactFinancialCandidate({ sourceCategory: "container_control", businessNumber: reference });
+  if (lookup.outcome !== "found" || lookup.candidates.length !== 1) {
+    throw new Error(lookup.message || "Asset Container Control business reference is missing or ambiguous.");
+  }
+  return lookup.candidates[0].recordId;
 }
 
 export function hasAssetPurchaseWebhookSecret(req: Pick<Request, "header" | "body">): boolean {
@@ -30,29 +43,38 @@ export function registerAssetPurchaseWebhook(app: Express): void {
     try {
       envelope = parseAssetPurchaseWebhookEnvelope(req.body);
     } catch (error) {
+      reportWorkflowFailureSafely({
+        workflowType: "asset_purchase",
+        recordKey: "asset-purchase:webhook-envelope",
+        title: "Asset purchase webhook rejected",
+        errorMessage: error instanceof Error ? error.message : "Invalid Asset purchase webhook envelope.",
+        details: { route: ASSET_PURCHASE_WEBHOOK_PATH },
+        severity: "error",
+      });
       return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : "invalid-asset-purchase-webhook" });
     }
     if (process.env.FINANCIAL_ASSET_PURCHASE_AUTOMATIC_ENABLED !== "true") {
       return res.status(503).json({ ok: false, status: "held", error: "asset-purchase-release-disabled", xeroWritesAttempted: 0 });
     }
     try {
-      const result = await processAutomaticAssetPurchase(envelope.recordId);
+      const resolvedRecordId = await resolveAssetPurchaseRecordId(envelope.recordId);
+      const result = await processAutomaticAssetPurchase(resolvedRecordId);
       if (!result.ok) reportWorkflowFailureSafely({
         workflowType: "asset_purchase",
-        recordKey: `asset-purchase:${envelope.recordId}`,
+        recordKey: `asset-purchase:${resolvedRecordId}`,
         title: "Asset purchase PO held",
         errorMessage: ("warning" in result ? result.warning : null) ?? result.status,
-        details: { containerControlId: envelope.recordId, status: result.status },
+        details: { containerControlId: resolvedRecordId, webhookReference: envelope.recordId, status: result.status },
         severity: "error",
       });
       return res.status(result.ok ? 200 : 202).json(result);
-    } catch {
+    } catch (error) {
       reportWorkflowFailureSafely({
         workflowType: "asset_purchase",
         recordKey: `asset-purchase:${envelope.recordId}`,
         title: "Asset purchase PO held",
-        errorMessage: "Asset purchase source, release or Xero preflight could not be completed.",
-        details: { containerControlId: envelope.recordId },
+        errorMessage: error instanceof Error ? error.message : "Asset purchase source, release or Xero preflight could not be completed.",
+        details: { containerControlReference: envelope.recordId },
         severity: "error",
       });
       return res.status(202).json({ ok: false, status: "held", warning: "Asset purchase PO held; inspect the AP lifecycle ledger.", xeroWritesAttempted: 0 });

@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseAssetPurchaseWebhookEnvelope, registerAssetPurchaseWebhook } from "./financialAssetPurchaseWebhook";
+const candidateLookup = vi.hoisted(() => ({ find: vi.fn() }));
+vi.mock("./vtigerFinancialCandidateService", () => ({ findExactFinancialCandidate: candidateLookup.find }));
+
+import { parseAssetPurchaseWebhookEnvelope, registerAssetPurchaseWebhook, resolveAssetPurchaseRecordId } from "./financialAssetPurchaseWebhook";
 
 afterEach(() => {
   delete process.env.FINANCIAL_AP_WEBHOOK_SECRET;
@@ -9,7 +12,20 @@ afterEach(() => {
 describe("Asset purchase webhook contract", () => {
   it("accepts an exact VTiger record id only and ignores financial body fields", () => {
     expect(parseAssetPurchaseWebhookEnvelope({ record_id: "24x901", event: "container-control.asset-request", amount: 0 })).toEqual({ recordId: "24x901", event: "container-control.asset-request" });
-    expect(() => parseAssetPurchaseWebhookEnvelope({ id: "C1860" })).toThrow(/exact VTiger/i);
+    expect(parseAssetPurchaseWebhookEnvelope({ id: "C1860" })).toEqual({ recordId: "C1860", event: null });
+    expect(() => parseAssetPurchaseWebhookEnvelope({ id: "D702930" })).toThrow(/exact VTiger/i);
+  });
+
+  it("resolves the Asset C-number through one exact read-only candidate lookup", async () => {
+    candidateLookup.find.mockResolvedValueOnce({
+      outcome: "found",
+      sourceCategory: "container_control",
+      businessNumber: "C1912",
+      candidates: [{ recordId: "5x489278" }],
+      message: "Exact VTiger candidate found",
+    });
+    await expect(resolveAssetPurchaseRecordId("C1912")).resolves.toBe("5x489278");
+    expect(candidateLookup.find).toHaveBeenCalledWith({ sourceCategory: "container_control", businessNumber: "C1912" });
   });
 
   it("mounts the protected route but holds before source reads or Xero writes while its release gate is off", async () => {
