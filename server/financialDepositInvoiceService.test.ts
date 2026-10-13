@@ -20,6 +20,7 @@ const m = vi.hoisted(() => ({
 }));
 vi.mock("./vtigerFinancialReadService", () => ({
   retrieveCurrentVtigerFinancialRecord: m.retrieve,
+  queryCurrentVtigerFinancialRecords: vi.fn(async () => [{ id: "20x9", quote_no: "Q-702877", modifiedtime: "2026-10-11T02:00:00Z" }]),
   describeVtigerFinancialModuleFields: m.describe,
 }));
 vi.mock("./financialReadOnlyXeroService", () => ({
@@ -61,9 +62,9 @@ const fieldMetadata = () => ({
   fields: [
     { name: "potential_no", label: "Deal Number" },
     { name: "cf_real_status", label: "Deposit Status" },
-    { name: "cf_real_amount", label: "Deposit Amount Required" },
-    { name: "cf_real_supply", label: "Empty Container Supply Date" },
-    { name: "cf_real_collection", label: "Full Container Collection Date" },
+    { name: "cf_potentials_extras", label: "Deposit Amount Required" },
+    { name: "cf_potentials_emptycontainersupplydate", label: "Empty Container Supply Date" },
+    { name: "cf_potentials_fullcontainercollectiondate", label: "Full Container Collection Date" },
   ],
 });
 const deal = (patch: Record<string, unknown> = {}) => ({
@@ -72,10 +73,11 @@ const deal = (patch: Record<string, unknown> = {}) => ({
   potentialname: "Named Deal",
   related_to: "4x2",
   contact_id: "12x3",
+  cf_potentials_quotereference: "20x9",
   cf_real_status: "PENDING",
-  cf_real_amount: "110.00",
-  cf_real_supply: "2026-10-12",
-  cf_real_collection: "",
+  cf_potentials_extras: "110.00",
+  cf_potentials_emptycontainersupplydate: "2026-10-12",
+  cf_potentials_fullcontainercollectiondate: "",
   modifiedtime: "2026-10-11T01:00:00Z",
   ...patch,
 });
@@ -97,6 +99,7 @@ const ready = () => ({
 });
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "false");
   m.retrieve.mockImplementation(async (id: string) =>
     id === "5x77"
       ? deal()
@@ -106,13 +109,15 @@ beforeEach(() => {
             accountname: "Customer Pty Ltd",
             modifiedtime: "2026-10-10T01:00:00Z",
           }
-        : { id, firstname: "Jane", lastname: "Customer" }
+        : id === "20x9"
+          ? { id, quote_no: "Q-702877", account_id: "4x2", modifiedtime: "2026-10-11T02:00:00Z" }
+          : { id, firstname: "Jane", lastname: "Customer" }
   );
   m.describe.mockResolvedValue(fieldMetadata());
   m.preflight.mockResolvedValue([ready()]);
   m.item.mockResolvedValue({
     itemCode: "Deposit Required",
-    accountCode: "201",
+    accountCode: "200",
     taxType: "OUTPUT",
   });
   m.record.mockResolvedValue({ id: 61, status: "previewed" });
@@ -149,7 +154,7 @@ afterEach(() => vi.unstubAllEnvs());
 describe("Deposit exact current source and read-only preview", () => {
   it("refreshes exact Deal and Deal organisation first, resolves metadata labels, and previews without any local or remote write", async () => {
     const result = await previewDepositInvoice("5x77");
-    expect(m.retrieve.mock.calls.map(([id]) => id)).toEqual(["5x77", "4x2"]);
+    expect(m.retrieve.mock.calls.map(([id]) => id)).toEqual(["5x77", "20x9", "4x2"]);
     expect(m.describe).toHaveBeenCalledWith("Potentials");
     expect(result).toMatchObject({
       state: "previewed",
@@ -157,14 +162,14 @@ describe("Deposit exact current source and read-only preview", () => {
       facts: {
         mappingEvidence: {
           depositStatus: "cf_real_status",
-          depositAmountRequired: "cf_real_amount",
+          depositAmountRequired: "cf_potentials_extras",
         },
       },
     });
     expect(result.preview.document).toMatchObject({
       proposedDocumentNumber: "INV-702877-D",
       total: 110,
-      accountCode: "201",
+      accountCode: "200",
       partySourceId: "xero-customer",
     });
     expect(m.record).not.toHaveBeenCalled();
@@ -182,7 +187,7 @@ describe("Deposit exact current source and read-only preview", () => {
       customerVtigerId: "12x3",
       customerName: "Jane Customer",
     });
-    expect(m.retrieve.mock.calls.map(([id]) => id)).toEqual(["5x77", "12x3"]);
+    expect(m.retrieve.mock.calls.map(([id]) => id)).toEqual(["5x77", "20x9", "12x3"]);
   });
   it("holds missing/ambiguous schema fields rather than treating an absent Deposit Status as blank", async () => {
     m.describe.mockResolvedValue({
@@ -213,7 +218,7 @@ describe("Deposit exact current source and read-only preview", () => {
     });
     m.retrieve.mockImplementation(async (id: string) =>
       id === "5x77"
-        ? deal({ cf_real_supply: undefined, cf_real_collection: undefined })
+        ? deal({ cf_potentials_emptycontainersupplydate: undefined, cf_potentials_fullcontainercollectiondate: undefined })
         : { id, accountname: "Customer Pty Ltd", modifiedtime: "2026-10-10T01:00:00Z" }
     );
 

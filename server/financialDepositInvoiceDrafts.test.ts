@@ -10,6 +10,8 @@ const facts = (
 ): DepositInvoiceFacts => ({
   dealId: "5x77",
   dealNumber: "D702877",
+  quoteId: "20x9",
+  quoteNumber: "Q-702877",
   depositStatus: "PENDING",
   depositAmountRequiredInclusive: 110,
   customerVtigerId: "4x2",
@@ -99,7 +101,7 @@ describe("Deposit isolated Draft calculations", () => {
       expect(depositInvoiceNumber(value)).toBeNull();
     expect(depositInvoiceNumber("D000123")).toBe("INV-000123-D");
   });
-  it("uses collection when supply is absent, preserves equal-date evidence, and holds only conflicting or malformed dates", () => {
+  it("uses the earliest valid Operations date and holds only malformed populated dates", () => {
     expect(
       buildDepositInvoice(
         facts({
@@ -112,10 +114,7 @@ describe("Deposit isolated Draft calculations", () => {
       buildDepositInvoice(facts({ fullContainerCollectionDate: "2026-10-12" }))
         .eligible
     ).toBe(true);
-    expect(
-      buildDepositInvoice(facts({ fullContainerCollectionDate: "2026-10-13" }))
-        .holdReason
-    ).toMatch(/precedence/);
+    expect(buildDepositInvoice(facts({ fullContainerCollectionDate: "2026-10-13" }))).toMatchObject({ eligible: true });
     expect(
       buildDepositInvoice(facts({ emptyContainerSupplyDate: "2026-02-30" }))
         .holdReason

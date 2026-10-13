@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ get: vi.fn(), policy: vi.fn(), assertRelease: vi.fn(), facts: vi.fn(), mainEvent: vi.fn(), auth: vi.fn(), reserve: vi.fn(), bind: vi.fn(), complete: vi.fn(), hold: vi.fn(), execute: vi.fn() }));
+const m = vi.hoisted(() => ({ get: vi.fn(), policy: vi.fn(), assertRelease: vi.fn(), facts: vi.fn(), depositFacts: vi.fn(), mainEvent: vi.fn(), auth: vi.fn(), reserve: vi.fn(), bind: vi.fn(), complete: vi.fn(), hold: vi.fn(), execute: vi.fn() }));
 vi.mock("axios", () => ({ default: { get: m.get } }));
 vi.mock("./financialDepositInvoiceRelease", () => ({ getDepositInvoiceReleasePolicy: m.policy, assertDepositMainDeductionRelease: m.assertRelease }));
 vi.mock("./financialMainCustomerInvoiceService", () => ({ readMainCustomerInvoiceFacts: m.facts }));
+vi.mock("./financialDepositInvoiceSource", () => ({ readDepositInvoiceFacts: m.depositFacts }));
 vi.mock("./financialMainCustomerInvoiceDb", () => ({ getMainCustomerInvoiceEvent: m.mainEvent }));
 vi.mock("./xeroService", () => ({ getXeroReadAuthWithRefresh: m.auth, EXPECTED_AP_XERO_TENANT_LABEL: "CONTAINERZONE" }));
 vi.mock("./financialDepositMainDeductionDb", () => ({ reserveDepositMainDeduction: m.reserve, bindDepositMainDeductionPayload: m.bind, completeDepositMainDeduction: m.complete, holdDepositMainDeduction: m.hold }));
@@ -19,6 +20,7 @@ beforeEach(() => {
   m.policy.mockResolvedValue({ releaseKey: "deposit-release", approvedBy: 1 });
   m.assertRelease.mockImplementation(() => undefined);
   m.facts.mockResolvedValue({ dealId: "5x990", dealNumber: "D702990", quoteId: "6x1", quoteNumber: "Q1", customerVtigerId: "4x1", customerName: "Customer", customerKind: "organisation", sourceRefreshedAt: "2026-10-12T00:00:00.000Z", serviceLines: [] });
+  m.depositFacts.mockResolvedValue({ dealId: "5x990", dealNumber: "D702990", quoteId: "6x1", quoteNumber: "Q1", depositAmountRequiredInclusive: 500 });
   m.mainEvent.mockResolvedValue({ status: "drafts_created", xeroInvoiceId: "main-id" });
   m.auth.mockResolvedValue({ token: "token", tenantId: "tenant" });
   m.reserve.mockResolvedValue({ state: "reserved", event: { id: 91 } });

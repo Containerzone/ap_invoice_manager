@@ -519,9 +519,9 @@ export async function executeFinancialDraftWrite(
       !/^INV-\d{1,12}-D$/.test(payload.documentNumber) || !row || row.InvoiceID || row.InvoiceNumber !== payload.documentNumber ||
       row.Status !== "DRAFT" || row.Type !== "ACCREC" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Inclusive" ||
       !row.Contact?.ContactID || !Array.isArray(row.LineItems) || row.LineItems.length !== 1 || !row.LineItems.every((line: any) =>
-        line.ItemCode === "Deposit Required" && line.Description === "Deposit Required" && line.Quantity === 1 && typeof line.UnitAmount === "number" &&
-        Number.isFinite(line.UnitAmount) && line.UnitAmount > 0 && String(line.AccountCode ?? "").trim() && line.TaxType === "OUTPUT")) {
-      throw new FinancialWriteDisabledError("Deposit release permits only one new exact AUD Inclusive Draft ACCREC -D with a positive Deposit Required line; amendments and deductions are excluded.");
+        line.ItemCode === "Deposit Required" && /^Deposit for .+ from INV-\d{1,12}$/.test(String(line.Description ?? "")) && line.Quantity === 1 && typeof line.UnitAmount === "number" &&
+        Number.isFinite(line.UnitAmount) && line.UnitAmount > 0 && String(line.AccountCode ?? "") === "200" && line.TaxType === "OUTPUT")) {
+      throw new FinancialWriteDisabledError("Deposit release permits only one new exact AUD Inclusive Draft ACCREC -D with the Operations Deposit Required line and account 200; amendments and deductions are excluded.");
     }
     await verifyDepositInvoiceAutomaticWriteAccess({ eventId: context.depositInvoiceAutomaticEventId, releaseKey: context.depositInvoiceReleaseKey!, preparedBy: context.depositInvoiceApprovedBy!, payload });
   }

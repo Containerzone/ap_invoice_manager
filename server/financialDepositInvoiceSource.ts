@@ -1,5 +1,6 @@
 import {
   describeVtigerFinancialModuleFields,
+  queryCurrentVtigerFinancialRecords,
   retrieveCurrentVtigerFinancialRecord,
 } from "./vtigerFinancialReadService";
 import type { DepositInvoiceFacts } from "./financialDepositInvoiceDrafts";
@@ -19,6 +20,11 @@ const OPTIONAL_DEPOSIT_DATE_FIELD_KEYS = [
   "emptyContainerSupplyDate",
   "fullContainerCollectionDate",
 ] as const;
+const OPERATIONS_FIELD_NAMES: Partial<Record<keyof typeof DEPOSIT_FIELD_LABELS, string>> = {
+  depositAmountRequired: "cf_potentials_extras",
+  emptyContainerSupplyDate: "cf_potentials_emptycontainersupplydate",
+  fullContainerCollectionDate: "cf_potentials_fullcontainercollectiondate",
+};
 const text = (value: unknown) =>
   typeof value === "string"
     ? value.trim()
@@ -48,7 +54,21 @@ async function exactRecord(reference: string, description: string) {
   return result;
 }
 
-/** Read-only metadata plus the exact Deal/customer. No Quote or webhook financial inputs are used. */
+function quoteReference(value: unknown): string { return text(value); }
+
+async function resolveQuote(reference: string): Promise<{ quote: Record<string, unknown> | null; quoteId: string; quoteNumber: string; hold: string | null }> {
+  if (!reference) return { quote: null, quoteId: "", quoteNumber: "", hold: "A current linked VTiger Quote is required for the Deposit Invoice." };
+  if (id(reference)) {
+    const quote = await exactRecord(reference, "Deposit Quote");
+    return { quote, quoteId: reference, quoteNumber: text(quote.quote_no) || reference, hold: null };
+  }
+  const matches = await queryCurrentVtigerFinancialRecords("Quotes", "quote_no", reference);
+  const exact = matches.filter((row) => id(row.id) && text(row.quote_no).toUpperCase() === reference.toUpperCase());
+  if (exact.length !== 1) return { quote: null, quoteId: "", quoteNumber: reference, hold: "The current Deposit Quote number is absent or ambiguous; no Quote will be guessed." };
+  return { quote: exact[0]!, quoteId: id(exact[0]!.id), quoteNumber: text(exact[0]!.quote_no) || reference, hold: null };
+}
+
+/** Read-only metadata plus the exact Deal, linked Quote and current customer. */
 export async function readDepositInvoiceFacts(
   dealId: string
 ): Promise<DepositInvoiceFacts> {
@@ -65,9 +85,8 @@ export async function readDepositInvoiceFacts(
     holds.push("Current metadata does not confirm the Potentials Deal schema.");
   for (const key of REQUIRED_DEPOSIT_FIELD_KEYS) {
     const label = DEPOSIT_FIELD_LABELS[key];
-    const fields = metadata.fields.filter(
-      field => field.label.trim().toLowerCase() === label.toLowerCase()
-    );
+    const expectedName = OPERATIONS_FIELD_NAMES[key];
+    const fields = metadata.fields.filter(field => expectedName ? field.name === expectedName : field.label.trim().toLowerCase() === label.toLowerCase());
     if (fields.length !== 1) {
       holds.push(
         `Deal field mapping for ${label} is absent or ambiguous; no alias will be guessed.`
@@ -93,9 +112,8 @@ export async function readDepositInvoiceFacts(
   // buildDepositInvoice still rejects a populated malformed or conflicting date.
   for (const key of OPTIONAL_DEPOSIT_DATE_FIELD_KEYS) {
     const label = DEPOSIT_FIELD_LABELS[key];
-    const fields = metadata.fields.filter(
-      field => field.label.trim().toLowerCase() === label.toLowerCase()
-    );
+    const expectedName = OPERATIONS_FIELD_NAMES[key];
+    const fields = metadata.fields.filter(field => expectedName ? field.name === expectedName : field.label.trim().toLowerCase() === label.toLowerCase());
     if (fields.length !== 1) continue;
     const name = fields[0]!.name;
     const value = deal[name];
@@ -108,9 +126,11 @@ export async function readDepositInvoiceFacts(
       mappingEvidence[key] = name;
     }
   }
-  // Standard current Deal mapping used by Main Customer Invoice, without its Quote-first resolution.
-  const organisationRaw = text(deal.related_to ?? deal.relatedto);
-  const contactRaw = text(deal.contact_id);
+  const quoteResolution = await resolveQuote(quoteReference(deal.cf_potentials_quotereference ?? deal.quote_reference));
+  if (quoteResolution.hold) holds.push(quoteResolution.hold);
+  // Organisation on the linked Quote takes precedence, then the current Deal.
+  const organisationRaw = text(quoteResolution.quote?.account_id ?? deal.related_to ?? deal.relatedto);
+  const contactRaw = text(quoteResolution.quote?.contact_id ?? deal.contact_id);
   if (organisationRaw && !id(organisationRaw))
     holds.push(
       "Current Deal organisation reference is not an exact VTiger ID; contact fallback cannot bypass it."
@@ -124,7 +144,7 @@ export async function readDepositInvoiceFacts(
     : null;
   const customerName = customer
     ? customerKind === "organisation"
-      ? text(customer.accountname)
+      ? text(customer.accountname ?? customer.organizationname ?? customer.name)
       : [text(customer.firstname), text(customer.lastname)]
           .filter(Boolean)
           .join(" ")
@@ -143,6 +163,8 @@ export async function readDepositInvoiceFacts(
   return {
     dealId,
     dealNumber,
+    quoteId: quoteResolution.quoteId,
+    quoteNumber: quoteResolution.quoteNumber,
     depositStatus: text(field("depositStatus")),
     depositAmountRequiredInclusive: amount(field("depositAmountRequired")),
     customerVtigerId,

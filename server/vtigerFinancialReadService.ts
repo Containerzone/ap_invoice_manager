@@ -140,6 +140,18 @@ export async function retrieveCurrentVtigerFinancialRecord(recordId: string): Pr
   return vtigerRequest<Record<string, unknown>>({ operation: "retrieve", id: recordId.trim(), sessionName });
 }
 
+/** One bounded, exact, read-only query for a human-readable VTiger reference. */
+export async function queryCurrentVtigerFinancialRecords(moduleName: string, fieldName: string, value: string): Promise<Array<Record<string, unknown>>> {
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(moduleName) || !/^[A-Za-z][A-Za-z0-9_]*$/.test(fieldName)) throw new Error("VTiger query module or field is invalid.");
+  const exactValue = value.trim();
+  if (!exactValue || exactValue.length > 128 || /[\r\n]/.test(exactValue)) throw new Error("VTiger exact query value is invalid.");
+  const sessionName = await readOnlyVtigerSession();
+  const escaped = exactValue.replace(/'/g, "''");
+  const result = await vtigerRequest<unknown>({ operation: "query", query: `select * from ${moduleName} where ${fieldName}='${escaped}';`, sessionName });
+  const records: unknown[] = Array.isArray((result as any)?.records) ? (result as any).records : Array.isArray(result) ? result : [];
+  return records.filter((record): record is Record<string, unknown> => Boolean(record) && typeof record === "object");
+}
+
 /**
  * Reads VTiger module metadata through the authenticated GET-only webservice
  * API. It validates disabled post-success mapping configuration and never

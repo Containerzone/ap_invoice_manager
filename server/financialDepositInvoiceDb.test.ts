@@ -80,6 +80,8 @@ import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 const facts = (): DepositInvoiceFacts => ({
   dealId: "5x77",
   dealNumber: "D702877",
+  quoteId: "6x1",
+  quoteNumber: "Q1",
   depositStatus: "PENDING",
   depositAmountRequiredInclusive: 110,
   customerVtigerId: "4x2",
@@ -115,8 +117,8 @@ function readyEvent() {
     new Date("2026-10-11T00:00:00Z")
   ).document!;
   proposal.partySourceId = "customer";
-  proposal.accountCode = "201";
-  proposal.lineItems[0]!.accountCode = "201";
+  proposal.accountCode = "200";
+  proposal.lineItems[0]!.accountCode = "200";
   const sourceHash = sourceSnapshotHash({
     ...source,
     rulesVersion: DEPOSIT_INVOICE_RULES_VERSION,
@@ -171,7 +173,7 @@ beforeEach(() => {
   m.preflight.mockResolvedValue([preflight()]);
   m.item.mockResolvedValue({
     itemCode: "Deposit Required",
-    accountCode: "201",
+    accountCode: "200",
     taxType: "OUTPUT",
   });
   m.policy.mockResolvedValue({

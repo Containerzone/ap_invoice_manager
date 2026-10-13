@@ -58,10 +58,10 @@ const payload = (): FinancialDraftPayload => ({
         LineItems: [
           {
             ItemCode: "Deposit Required",
-            Description: "Deposit Required",
+            Description: "Deposit for Q1 from INV-123",
             Quantity: 1,
             UnitAmount: 110,
-            AccountCode: "201",
+            AccountCode: "200",
             TaxType: "OUTPUT",
           },
         ],

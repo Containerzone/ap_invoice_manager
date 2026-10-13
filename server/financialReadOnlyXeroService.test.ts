@@ -195,9 +195,9 @@ describe("financial read-only Xero service", () => {
 
   it("resolves Deposit Required sales account/tax from the exact current item with GET-only evidence", async () => {
     mockGet.mockResolvedValueOnce({ data: { Organisations: [{ Name: "CONTAINERZONE" }] } })
-      .mockResolvedValueOnce({ data: { Items: [{ Code: "Deposit Required", IsSold: true, SalesDetails: { AccountCode: "201", TaxType: "OUTPUT" } }] } })
-      .mockResolvedValueOnce({ data: { Accounts: [{ Code: "201", Status: "ACTIVE" }] } });
-    await expect(readDepositInvoiceXeroItemConfiguration()).resolves.toEqual({ itemCode: "Deposit Required", accountCode: "201", taxType: "OUTPUT" });
+      .mockResolvedValueOnce({ data: { Items: [{ Code: "Deposit Required", IsSold: true, SalesDetails: { AccountCode: "200", TaxType: "OUTPUT" } }] } })
+      .mockResolvedValueOnce({ data: { Accounts: [{ Code: "200", Status: "ACTIVE" }] } });
+    await expect(readDepositInvoiceXeroItemConfiguration()).resolves.toEqual({ itemCode: "Deposit Required", accountCode: "200", taxType: "OUTPUT" });
     expect(mockGet.mock.calls[1]![0]).toMatch(/Items\/Deposit%20Required$/);
     noMutationAssertions();
   });
@@ -212,10 +212,10 @@ describe("financial read-only Xero service", () => {
 
   it("verifies Deposit inclusive amounts, AUD, exact item, contact and GST in GET-only Draft read-back", async () => {
     const expected = { documentFamily: "customer_invoice", documentType: "deposit_invoice", sourceWorkflow: "deposit_invoice", proposedAction: "create_draft", proposedDocumentNumber: "INV-123-D", reference: null,
-      partyName: "Customer", partySourceId: "contact-1", accountCode: "201", gstTreatment: "GST_INCLUSIVE", currency: "AUD", subtotal: 100, taxAmount: 10, total: 110,
-      issueDate: new Date("2026-10-11T00:00:00Z"), dueDate: new Date("2026-10-12T00:00:00Z"), lineItems: [{ itemCode: "Deposit Required", description: "Deposit Required", quantity: 1, unitAmount: 110, lineAmount: 110, accountCode: "201", taxRate: 10, gstTreatment: "GST_INCLUSIVE" }], sourceRecordId: "5x77", validationStatus: "valid" } as any;
+      partyName: "Customer", partySourceId: "contact-1", accountCode: "200", gstTreatment: "GST_INCLUSIVE", currency: "AUD", subtotal: 100, taxAmount: 10, total: 110,
+      issueDate: new Date("2026-10-11T00:00:00Z"), dueDate: new Date("2026-10-12T00:00:00Z"), lineItems: [{ itemCode: "Deposit Required", description: "Deposit for Q1 from INV-123", quantity: 1, unitAmount: 110, lineAmount: 110, accountCode: "200", taxRate: 10, gstTreatment: "GST_INCLUSIVE" }], sourceRecordId: "5x77", validationStatus: "valid" } as any;
     const actual = { InvoiceID: "id-deposit", InvoiceNumber: "INV-123-D", Type: "ACCREC", Status: "DRAFT", CurrencyCode: "AUD", Contact: { ContactID: "contact-1" }, LineAmountTypes: "Inclusive",
-      Date: "2026-10-11", DueDate: "2026-10-12", SubTotal: 100, TotalTax: 10, Total: 110, LineItems: [{ ItemCode: "Deposit Required", Description: "Deposit Required", Quantity: 1, UnitAmount: 110, AccountCode: "201", TaxType: "OUTPUT" }] };
+      Date: "2026-10-11", DueDate: "2026-10-12", SubTotal: 100, TotalTax: 10, Total: 110, LineItems: [{ ItemCode: "Deposit Required", Description: "Deposit for Q1 from INV-123", Quantity: 1, UnitAmount: 110, AccountCode: "200", TaxType: "OUTPUT" }] };
     mockGet.mockResolvedValueOnce({ data: { Organisations: [{ Name: "CONTAINERZONE" }] } }).mockResolvedValueOnce({ data: { Invoices: [actual] } });
     await expect(readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-123-D", expectedXeroDocumentId: "id-deposit", expectedDocument: expected })).resolves.toMatchObject({ total: 110, subtotal: 100 });
     for (const patch of [{ CurrencyCode: "USD" }, { LineAmountTypes: "Exclusive" }, { TotalTax: 11 }, { LineItems: [{ ...actual.LineItems[0], ItemCode: "Wrong" }] }]) {

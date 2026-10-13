@@ -306,18 +306,18 @@ export async function preflightFinancialXeroIntents(intents: ProposedFinancialDo
 }
 
 /** Deposit account comes from the current exact sales item, never an invented main-invoice account. */
-export async function readDepositInvoiceXeroItemConfiguration(): Promise<{ itemCode: "Deposit Required"; accountCode: string; taxType: "OUTPUT" }> {
+export async function readDepositInvoiceXeroItemConfiguration(): Promise<{ itemCode: "Deposit Required"; accountCode: "200"; taxType: "OUTPUT" }> {
   const auth = await readOnlyAuth();
   await assertExpectedFinancialTenant(auth);
   const response = await xeroRead<any>(auth, "deposit-sales-configuration", `${XERO_API_BASE}/Items/${encodeURIComponent("Deposit Required")}`);
   const items = (Array.isArray(response?.Items) ? response.Items : []).filter((item: any) => item.Code === "Deposit Required");
   const item = items.length === 1 ? items[0] : null;
   const accountCode = String(item?.SalesDetails?.AccountCode ?? "").trim();
-  if (!item || item.IsSold !== true || !accountCode || item.SalesDetails?.TaxType !== "OUTPUT") throw new Error("Current exact Xero Deposit Required sales item must supply a sales account and 10% GST OUTPUT tax; otherwise hold.");
+  if (!item || item.IsSold !== true || accountCode !== "200" || item.SalesDetails?.TaxType !== "OUTPUT") throw new Error("Current exact Xero Deposit Required sales item must use account 200 with GST OUTPUT tax; otherwise hold.");
   const responseAccounts = await xeroRead<any>(auth, "deposit-account-configuration", `${XERO_API_BASE}/Accounts`);
   const accounts = (Array.isArray(responseAccounts?.Accounts) ? responseAccounts.Accounts : []).filter((account: any) => String(account.Code) === accountCode && account.Status === "ACTIVE");
   if (accounts.length !== 1) throw new Error("Current Xero Deposit Required sales account is absent, inactive or ambiguous.");
-  return { itemCode: "Deposit Required", accountCode, taxType: "OUTPUT" };
+  return { itemCode: "Deposit Required", accountCode: "200", taxType: "OUTPUT" };
 }
 
 /** GET-only verification of the three account codes required for loaded storage. */

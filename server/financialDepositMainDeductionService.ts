@@ -4,6 +4,7 @@ import { getDepositInvoiceReleasePolicy, assertDepositMainDeductionRelease } fro
 import { financialSha256, sourceSnapshotHash } from "./financialProposalIntegrity";
 import { getXeroReadAuthWithRefresh } from "./xeroService";
 import { readMainCustomerInvoiceFacts } from "./financialMainCustomerInvoiceService";
+import { readDepositInvoiceFacts } from "./financialDepositInvoiceSource";
 import { getMainCustomerInvoiceEvent } from "./financialMainCustomerInvoiceDb";
 import { completeInvoice, writableDraft } from "./financialDepositDraftCorrectionService";
 import type { FinancialDraftPayload } from "./financialProductionWriter";
@@ -49,8 +50,8 @@ function existingDeductions(main: XeroInvoice, depositNumber: string) {
     return description === deductionDescription(depositNumber) || description === `Deposit deduction — ${depositNumber}`;
   });
 }
-function buildPayload(main: XeroInvoice, deposit: XeroInvoice, sourceHash: string): FinancialDraftPayload {
-  const totalCents = cents(deposit.Total);
+function buildPayload(main: XeroInvoice, deposit: XeroInvoice, sourceHash: string, depositInclusiveAmount: number): FinancialDraftPayload {
+  const totalCents = cents(depositInclusiveAmount);
   if (totalCents <= 0) throw new Error("Exact Deposit Draft total must be positive.");
   const exclusiveCents = Math.round(totalCents * 10 / 11);
   const gstCents = totalCents - exclusiveCents;
@@ -87,6 +88,7 @@ export async function processAutomaticDepositMainDeduction(dealId: string): Prom
   catch (error) { return { status: "disabled", reason: error instanceof Error ? error.message : "Deposit deduction release is disabled.", xeroWritesAttempted: 0 }; }
   try {
     const facts = await readMainCustomerInvoiceFacts(dealId);
+    const depositFacts = await readDepositInvoiceFacts(dealId);
     if (!/^D\d{1,12}$/i.test(facts.dealNumber)) return { status: "held", reason: "Current Deal number is not suitable for a Deposit/main deduction.", xeroWritesAttempted: 0 };
     const mainNumber = `INV-${facts.dealNumber.slice(1)}`;
     const depositNumber = `${mainNumber}-D`;
@@ -104,13 +106,15 @@ export async function processAutomaticDepositMainDeduction(dealId: string): Prom
     const duplicates = existingDeductions(main, depositNumber);
     if (duplicates.length === 1) return { status: "already_deducted", reason: "Exact main Draft already contains the one Deposit deduction line.", xeroWritesAttempted: 0 };
     if (duplicates.length > 1) throw new Error("More than one Deposit deduction line exists; no line will be selected or removed.");
-    const factsHash = sourceSnapshotHash({ ...facts, source: "deposit_main_deduction_v1" });
+    const sourceDepositCents = cents(depositFacts.depositAmountRequiredInclusive);
+    if (sourceDepositCents !== cents(deposit.Total)) throw new Error("Current VTiger Deposit Amount Required does not equal the exact Xero Deposit Draft total; deduction is held for reconciliation.");
+    const factsHash = sourceSnapshotHash({ mainFacts: facts, depositFacts, source: "deposit_main_deduction_v2_operations_amount" });
     const xeroEvidenceHash = financialSha256({ main, deposit });
     const token = randomUUID();
     const reservation = await reserveDepositMainDeduction({ dealId, dealNumber: facts.dealNumber, depositInvoiceNumber: depositNumber, depositXeroInvoiceId: text(deposit.InvoiceID), mainInvoiceNumber: mainNumber, mainXeroInvoiceId: text(main.InvoiceID), sourceSnapshotHash: factsHash, xeroEvidenceHash, token });
     if (reservation.state === "completed") return { status: "already_deducted", reason: "Exact Deposit deduction is already recorded as completed.", xeroWritesAttempted: 0 };
     if (reservation.state === "blocked") return { status: reservation.event.status === "reconciliation_required" ? "reconciliation_required" : "held", reason: reservation.event.holdReason ?? "Deposit deduction is already reserved; no duplicate update.", xeroWritesAttempted: 0 };
-    const payload = buildPayload(main, deposit, financialSha256({ factsHash, xeroEvidenceHash }));
+    const payload = buildPayload(main, deposit, financialSha256({ factsHash, xeroEvidenceHash }), depositFacts.depositAmountRequiredInclusive!);
     await bindDepositMainDeductionPayload(reservation.event.id, token, policy.releaseKey, payload);
     const authorisation = { workflowType: "deposit_main_deduction", approvalReference: policy.releaseKey, globalShadowMode: false, familyLiveEnabled: true, releaseManifestApproved: true, cutoverPackApproved: true, currentDocumentPreflightPassed: true, legacyWriterHandoffComplete: true, depositMainDeductionAutomaticEventId: reservation.event.id, depositMainDeductionReleaseKey: policy.releaseKey, depositMainDeductionApprovedBy: policy.approvedBy!, depositMainDeductionToken: token };
     const outcome = await executeGuardedFinancialWriterCommand({ workflowType: "deposit_main_deduction", proposedAction: "update_draft", payload, preparedBy: policy.approvedBy!, authorisation, expectedExactDraft: (payload.body.Invoices as Record<string, any>[])[0]! });
