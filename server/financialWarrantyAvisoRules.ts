@@ -1,20 +1,20 @@
 import { financialSha256 } from "./financialProposalIntegrity";
 
-export const WARRANTY_RULES_VERSION = "warranty-aviso-v2-multipicklist-native-war-id-po-post-draft-only";
+export const WARRANTY_RULES_VERSION = "warranty-aviso-v3-current-vtiger-first-ten-native-war-id-po-post-draft-only";
 export const WARRANTY_RULES_HASH = financialSha256(WARRANTY_RULES_VERSION);
 export const AVISO_NAME = "Aviso Broking Pty Ltd";
 export const AVISO_ACCOUNT = "313";
 export const WARRANTY_ADDED_SERVICES_MAPPINGS = [
-  { addedServicesValue: "Warranty $10k", itemCode: "WAR10K", premiumExGst: 41 },
-  { addedServicesValue: "Warranty $15k", itemCode: "WAR15K", premiumExGst: 51 },
-  { addedServicesValue: "Warranty $25k", itemCode: "WAR25K", premiumExGst: 78 },
-  { addedServicesValue: "Warranty $35k", itemCode: "WAR35K", premiumExGst: 100 },
-  { addedServicesValue: "Warranty $50k", itemCode: "WAR50K", premiumExGst: 131 },
-  { addedServicesValue: "Warranty $75k", itemCode: "WAR75K", premiumExGst: 172 },
-  { addedServicesValue: "Warranty $100k", itemCode: "WAR100K", premiumExGst: 246 },
-  { addedServicesValue: "Warranty $150k", itemCode: "WAR150K", premiumExGst: 387 },
-  { addedServicesValue: "Warranty $200k", itemCode: "WAR200K", premiumExGst: 523 },
-  { addedServicesValue: "Warranty $300k", itemCode: "WAR300K", premiumExGst: 822 },
+  { addedServicesValue: "Warranty $25k", itemCode: "WAR25", premiumExGst: 192.5 },
+  { addedServicesValue: "Warranty $30k", itemCode: "WAR30", premiumExGst: 228.9 },
+  { addedServicesValue: "Warranty $40k", itemCode: "WAR40", premiumExGst: 305.2 },
+  { addedServicesValue: "Warranty $50k", itemCode: "WAR50", premiumExGst: 381.5 },
+  { addedServicesValue: "Warranty $60k", itemCode: "WAR60", premiumExGst: 457.8 },
+  { addedServicesValue: "Warranty $70k", itemCode: "WAR70", premiumExGst: 534.1 },
+  { addedServicesValue: "Warranty $75k", itemCode: "WAR75", premiumExGst: 572.25 },
+  { addedServicesValue: "Warranty $80k", itemCode: "WAR80", premiumExGst: 610.4 },
+  { addedServicesValue: "Warranty $90k", itemCode: "WAR90", premiumExGst: 686.7 },
+  { addedServicesValue: "Warranty $100k", itemCode: "WAR100", premiumExGst: 763 },
 ] as const;
 export type FieldBinding = { name: string; label: string; type: Record<string, unknown>; mandatory: boolean };
 export type WarrantyMapping = { addedServicesValue: string; itemCode: string; nativeDescription: string; premiumExGst: number };

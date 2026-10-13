@@ -30,7 +30,11 @@
 
 The current owner-supplied required template specifies a different, exact ten-band map: `Warranty $10k`, `$15k`, `$25k`, `$35k`, `$50k`, `$75k`, `$100k`, `$150k`, `$200k`, and `$300k`, with item codes `WAR10K` through `WAR300K` and the supplied GST-exclusive premiums/native descriptions. Those values do **not** match the current live VTiger field or this historical Operations mapping.
 
-AP implements the supplied ten-band map and rejects metadata drift. It must not silently translate `$30k/$40k/$60k/...` into a different required band or reuse historical premiums. The owner must either update the live VTiger Added Services picklist to the required values or approve a replacement explicit mapping for the live values before a Warranty release policy can be created.
+The owner has approved the historical item-code and GST-exclusive-premium pairs for the first ten current bands (`$25k` through `$100k` above). The native description remains deliberately dynamic: it is read from the exact current Xero item and must match both its sale and purchase description before a release policy can approve it; no description is hard-coded or guessed.
+
+`Warranty $150k`, `$200k` and `$250k` remain unsupported. A separate approval must provide each of those values’ item code, exact native description and GST-exclusive premium before it can enter the mapping.
+
+One bounded Xero GET-only configuration audit was attempted after this selection and was rejected with HTTP 429 before returning item/contact/account/tax evidence. No more Xero requests will be made in this run. The three higher bands must remain unsupported; no premium, item code or description will be inferred.
 
 ## Operations template and lifecycle facts to preserve
 

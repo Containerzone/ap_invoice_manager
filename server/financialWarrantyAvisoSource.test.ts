@@ -32,7 +32,7 @@ describe("Warranty authenticated metadata exact-source resolution", () => {
     if (kind === "invalidPremium") f.config.addedServicesMappings[0].premiumExGst = 0;
     m.describe.mockResolvedValue(meta); const result = await readWarrantyFacts("5x77", f.config); expect(result.holdReason).not.toBeNull(); expect(m.retrieve).not.toHaveBeenCalled();
   });
-  it.each(["No warranty", "Warranty $25k |##| Warranty $35k", "Warranty $23k", ""])("unsupported or ambiguous Added Services %s cannot use Warranty Confirmed", async value => {
+  it.each(["No warranty", "Warranty $25k |##| Warranty $30k", "Warranty $23k", ""])("unsupported or ambiguous Added Services %s cannot use Warranty Confirmed", async value => {
     m.retrieve.mockResolvedValue({ id: "5x77", potential_no: "D77", cf_test_added: value, warranty_confirmed: "Yes", related_to: "4x9", contact_id: "", modifiedtime: "2026-10-01T00:00:00Z" });
     expect((await readWarrantyFacts("5x77", f.config)).holdReason).toMatch(/Added Services/);
   });
