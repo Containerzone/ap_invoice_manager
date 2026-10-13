@@ -83,10 +83,12 @@ function line(facts: AssetPurchaseContainerControlFacts, amountExGst: number): F
 /**
  * Builds exactly one Asset purchase-order proposal. The event receiver always
  * re-reads this current source; webhook body fields never set price, supplier
- * or description. Asset is the only permitted acquisition value.
+ * or description. Asset is the only permitted acquisition family. VTiger's
+ * current picklist serializes that value as ASSETT, so the compatibility alias
+ * is accepted without broadening the branch to For Hire or Customer Sale.
  */
 export function buildAssetPurchasePo(facts: AssetPurchaseContainerControlFacts): AssetPurchasePoPreview {
-  if (normal(facts.acquisition) !== "ASSET") {
+  if (!new Set(["ASSET", "ASSETT"]).has(normal(facts.acquisition))) {
     return { eligible: false, holdReason: "Container Control acquisition is not ASSET.", proposedPoNumber: null, document: null };
   }
   if (normal(facts.status) !== "REQUEST") {

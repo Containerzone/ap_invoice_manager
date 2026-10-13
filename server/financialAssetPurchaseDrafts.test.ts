@@ -26,6 +26,11 @@ describe("Asset Container Control purchase-order rules", () => {
     })]);
   });
 
+  it("accepts VTiger's current ASSETT picklist serialization as Asset", () => {
+    const result = buildAssetPurchasePo(base({ acquisition: "ASSETT" }));
+    expect(result).toMatchObject({ eligible: true, proposedPoNumber: "AC1860" });
+  });
+
   it("holds the proposal when the dedicated Asset / REQUEST source facts are incomplete or belong to another branch", () => {
     expect(buildAssetPurchasePo(base({ acquisition: "FOR HIRE" }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("not ASSET") });
     expect(buildAssetPurchasePo(base({ status: "ON HIRE" }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("REQUEST") });
