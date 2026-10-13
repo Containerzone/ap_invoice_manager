@@ -6,6 +6,7 @@ import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
 
 export const INITIAL_STORAGE_WEBHOOK_PATH = "/api/webhooks/vtiger/deal-storage";
+export const STORAGE_FINALISATION_WEBHOOK_PATH = "/api/webhooks/vtiger/deal-storage-finalise";
 
 /** The pre-existing VTiger action sends `id` and `dryRun`; the AP route owns the
  * event meaning and never trusts any supplied financial values or dry-run flag. */
@@ -50,7 +51,7 @@ export function registerInitialLoadedStorageWebhook(app: Express): void {
       return res.status(202).json({ ok: false, status: "held", warning: message });
     }
   });
-  app.post("/api/webhooks/vtiger/deal-storage-finalise", async (req: Request, res: Response) => {
+  app.post(STORAGE_FINALISATION_WEBHOOK_PATH, async (req: Request, res: Response) => {
     if (!hasFinancialWebhookSecret(req)) return res.status(401).json({ ok: false, error: "Unauthorized storage webhook." });
     const reference = storageRecordReference(req.body); const location = req.body?.storageLocation;
     if ((req.body?.event !== undefined && req.body.event !== "deal.storage-finalised") || !reference || !["origin", "destination"].includes(location)) return res.status(400).json({ ok: false, error: "Exact Deal ID/D-number and origin/destination storageLocation are required for storage finalisation." });

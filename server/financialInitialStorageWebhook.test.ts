@@ -99,6 +99,14 @@ describe("narrow VTiger Deal storage webhook", () => {
     expect(body.status).toBeUndefined();
     expect(lifecycle.processStorageFinalisation).toHaveBeenCalledWith("5x123", "destination");
   });
+  it("accepts the supplied Finalise Origin body and ignores the reason as financial authority", async () => {
+    const lifecycle = await import("./financialStorageLifecycleService");
+    vi.mocked(lifecycle.processStorageFinalisation).mockResolvedValueOnce({ ok: true, status: "duplicate_replay", eventId: 8 });
+    const { body, res } = response();
+    await finalHandler({ header: () => "", body: { id: "D123", secret: "test-storage-secret", storageLocation: "origin", reason: "Origin storage Date Out entered" } }, res);
+    expect(body.status).toBeUndefined();
+    expect(lifecycle.processStorageFinalisation).toHaveBeenCalledWith("5x123", "origin");
+  });
   it("forwards only the exact record/location and holds rejected release without exposing upstream data", async () => {
     const lifecycle = await import("./financialStorageLifecycleService");
     vi.mocked(lifecycle.processStorageFinalisation).mockRejectedValueOnce(new Error("secret upstream details"));
