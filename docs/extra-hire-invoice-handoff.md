@@ -34,7 +34,7 @@ Only a current exact Deal meeting every condition can be proposed:
 
 ### Customer-contact v2 rollout
 
-Customer-contact v2 is implemented but **default-off**. It re-resolves the current Deal and linked party; organisation invoices resolve exact normalized Xero organisation names before treating a linked-person email as duplicate evidence, and individual invoices resolve exact email first. GET-only previews can show `would_create_contact` but never create a contact. A live Xero Contact create requires **both** `FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED=true` and `FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED=true`, followed by a fresh source/Xero preflight before the Extra Hire Draft. Duplicate/inactive/conflicting contacts, source drift and uncertain POST results remain held.
+Customer-contact v2 is enabled for the active customer-invoice automatic paths, including Extra Hire. It re-resolves the current Deal and linked party; organisation invoices resolve exact normalized Xero organisation names before treating a linked-person email as duplicate evidence, and individual invoices resolve exact email first. GET-only previews can show `would_create_contact` but never create a contact. A live Xero Contact create requires **both** `FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED=true` and `FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED=true`, followed by a fresh source/Xero preflight before the Extra Hire Draft. Duplicate/inactive/conflicting contacts, source drift and uncertain POST results remain held.
 
 The current hire end date is used as the Draft issue date and no due date is inferred. This requires the future policy to acknowledge `CURRENT_HIRE_END_DATE_NO_DUE_DATE` after business confirmation.
 
