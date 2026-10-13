@@ -99,3 +99,7 @@ After the recovery checkpoint was published, the separate gate was enabled only 
 - `INV-702934` is now `AUTHORISED`. The Draft-only recovery correctly refuses to retrieve an amendment target and no Due Date change is permitted.
 
 Fresh exact source/Xero evidence and a new explicit approval are required before any future D702915 recovery attempt. An Authorised `INV-702934` must remain outside this Draft-only automation unless a separate, explicitly approved business process is designed.
+
+### 2026-10-13 resumed recovery review — no write
+
+The owner asked to resume Final Weight approval review. AP re-read the immutable records: D702915 Overweight remains the separately declined historical 404 recovery, while D702934 Underweight remains a historical 404 recovery whose prior current read showed `INV-702934` as `AUTHORISED` and therefore outside Draft-only scope. A fresh GET-only D702934 source/Xero eligibility check was attempted before presenting any amendment: source facts remained available (estimated 7 tonnes, actual 4.8 tonnes, source pickup date 2026-10-12), but Xero returned its daily-request-limit hold with a retry window of 2h 57m. No current invoice state or new exact payload could be verified, so no reconciliation gate, receipt, writer execution, Xero document or VTiger record changed.
