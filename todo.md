@@ -292,3 +292,12 @@
 - [ ] Before extending v2 contact creation to default-off Storage/Warranty flows, obtain each family’s independent activation/authorisation and preserve their existing supplier/partner contact semantics.
 
 - [x] After a fresh D702936 GET-only preflight and exact owner approval, temporarily enabled both v2 contact gates, created one guarded Xero customer Contact, refreshed source/Xero evidence, and created one exact AUD GST-exclusive Main Invoice Draft `INV-702936` ($9,506.21 subtotal + $950.62 GST = $10,456.83). Independent Xero read-back confirmed a single contact-bound ACCREC Draft with one line; local Main event `240001` is `drafts_created` and the v2 contact audit is `created`. Both gates were then restored to `false`; no approval/send/payment/void/delete or VTiger update occurred.
+
+## 2026-10-13 — Operations-aligned Deposit rules
+
+- [x] Read and applied the supplied Operations Deposit specification without changing Operations/Supply CRM, VTiger workflows, Make or schedules.
+- [x] Deposit source now requires the exact Operations amount field `cf_potentials_extras`, resolves the current linked Quote from `cf_potentials_quotereference` / controlled `quote_reference`, and uses the exact Operations date fields when present.
+- [x] Deposit Draft line now uses the current Quote reference in `Deposit for <Quote> from INV-<digits>`, `Deposit Required`, account 200, OUTPUT and GST-inclusive amount. Earliest valid populated operational date drives the Sydney due-date rule; no dates means no Due Date; malformed populated dates hold.
+- [x] Main Draft deduction now uses the current VTiger inclusive deposit amount, requires equality with the exact Xero Deposit Draft total before amendment, preserves existing Main Draft lines and uses the exact account-200 negative deduction with GST override.
+- [x] Refreshed the audited Deposit release policy to the current rules hash while retaining enabled, isolated, Draft-only and `new_events_only` constraints. No Xero/VTiger/CRM write was performed by this change.
+- [x] Validation: 124 test files / 1,248 tests (8 skipped) in isolated unit-test gate mode, TypeScript, production build and `git diff --check` passed.
