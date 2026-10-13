@@ -56,8 +56,8 @@ describe("Warranty factual administrator previews and default-off readiness", ()
     expect(result).toMatchObject({ state: "held", holdReason: expect.stringMatching(/already has an immutable AP warranty claim/), noWrites: true });
     expect(m.claim).toHaveBeenCalledWith("D77"); noExecution();
   });
-  it.each(["sourceMappingsHash", "addedServicesMappingHash", "xeroConfigurationHash", "avisoContactId"])("unapproved exact %s remains a preview hold", async key => {
-    m.policy.mockResolvedValue({ ...f.policy, [key]: "unapproved" });
+  it.each(["sourceMappingsHash", "addedServicesMappingHash", "xeroConfigurationHashes", "avisoContactId"])("unapproved exact %s remains a preview hold", async key => {
+    m.policy.mockResolvedValue({ ...f.policy, [key]: key === "xeroConfigurationHashes" ? { ...f.policy.xeroConfigurationHashes, WAR25: "unapproved" } : "unapproved" });
     expect(await previewWarrantyAviso("5x77")).toMatchObject({ state: "held", holdReason: expect.stringMatching(/not explicitly approved/), noWrites: true });
     noExecution();
   });

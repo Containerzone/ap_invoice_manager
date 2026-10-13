@@ -1,17 +1,17 @@
 # Operations reference — Warranty & Aviso alignment
 
-> **Source and scope.** This records the authorised Operations-agent reference task `z4BCTK6qpMx1xSv13ILqTy` and a fresh VTiger metadata read on **2026-10-13**. It is implementation evidence only; it does not approve a Xero write, policy, VTiger change, or activation.
+> **Scope.** This records authorised Operations-agent artifacts and fresh VTiger/Xero GET-only evidence collected on **2026-10-13**. It does not record a financial document write.
 
-## Confirmed current VTiger source
+## Current VTiger source
 
-- The exact Potentials field is `cf_potentials_extra`, label **Added Services**, type **multipicklist**.
-- `cf_potentials_pdssent` / **Warranty Confirmed** is a boolean and is **not** a warranty trigger or fallback.
-- Deal identity and customer links use the metadata-backed standard fields already used by AP: `potential_no`, `related_to`, `contact_id`, and `modifiedtime`; current Accounts/Contacts metadata supplies their names and `modifiedtime`.
-- Any current value with zero or more than one selected supported warranty must hold. The platform must not infer a warranty from free text or the boolean checkbox.
+- Potentials Added Services: `cf_potentials_extra`, label **Added Services**, type **multipicklist**.
+- Deal/customer source: `potential_no`, `related_to`, `contact_id`, `modifiedtime`; current Accounts/Contacts metadata provides names and `modifiedtime`.
+- `cf_potentials_pdssent` / Warranty Confirmed is a boolean and is **not** a trigger or fallback.
+- Zero or more than one selected supported Warranty value holds. No free-text or checkbox inference is permitted.
 
-## Operations warranty mappings
+## Approved first-ten mapping
 
-| Added Services value | Xero item code | GST-exclusive premium |
+| Added Services | Xero item code | GST-exclusive premium |
 | --- | --- | ---: |
 | Warranty $25k | WAR25 | $192.50 |
 | Warranty $30k | WAR30 | $228.90 |
@@ -24,34 +24,25 @@
 | Warranty $90k | WAR90 | $686.70 |
 | Warranty $100k | WAR100 | $763.00 |
 
-`Warranty $150k`, `Warranty $200k`, and `Warranty $250k` are present in the live picklist but remain deliberately unsupported: no item/premium may be guessed.
+`Warranty $150k`, `$200k` and `$250k` are live VTiger values but remain unsupported. They must hold until each is separately mapped and approved.
 
-## Release-blocking mapping conflict
+## Exact Operations template
 
-The current owner-supplied required template specifies a different, exact ten-band map: `Warranty $10k`, `$15k`, `$25k`, `$35k`, `$50k`, `$75k`, `$100k`, `$150k`, `$200k`, and `$300k`, with item codes `WAR10K` through `WAR300K` and the supplied GST-exclusive premiums/native descriptions. Those values do **not** match the current live VTiger field or this historical Operations mapping.
+| Document | Description | Amount authority | Account / tax |
+| --- | --- | --- | --- |
+| Existing customer main Draft append | Exact VTiger Added Services label | Approved mapping premium | `200` / `OUTPUT` |
+| Aviso Draft PO | Exact Xero item **PurchaseDescription** | Same approved mapping premium | `313` / `INPUT` |
 
-The owner has approved the historical item-code and GST-exclusive-premium pairs for the first ten current bands (`$25k` through `$100k` above). The native description remains deliberately dynamic: it is read from the exact current Xero item and must match both its sale and purchase description before a release policy can approve it; no description is hard-coded or guessed.
+The PO reference is `ID<Deal>` (for example, a D-number becomes `ID...`). The item SalesDetails/default price are deliberately not financial authority for this workflow.
 
-`Warranty $150k`, `$200k` and `$250k` remain unsupported and each such event must hold. They do not prevent a future separately approved **first-ten-only** release; a higher-band mapping must be separately approved before that specific band can ever proceed.
+## Fresh release evidence
 
-The initial bounded Xero GET-only configuration audit was rate-limited. After the Accounting quota recovered, a replacement bounded audit proved the expected tenant, one active Aviso contact, active account 313/INPUT and active 10% INPUT/OUTPUT tax records. It also found that all first-ten WAR items currently expose account 313/INPUT in SalesDetails, their sale/purchase descriptions differ, and WAR25 has a $195.50 purchase price. A second audit after the owner reported the corrections found the same values, so no corrected item configuration is yet visible in this Xero tenant. The three higher bands remain unsupported; no premium, item code or description will be inferred.
+The sequential live read verified the expected tenant, one active Aviso contact, account `200`/OUTPUT, account `313`/INPUT, active 10% INPUT/OUTPUT taxes, and all ten exact active purchased WAR items with non-empty purchase descriptions and the required 313/INPUT purchase template.
 
-## Operations template and lifecycle facts to preserve
+The release policy binds each of the ten items to its own configuration hash. A later drift in the tenant, Aviso contact, selected item, account, tax or native purchase description holds the event before reservation/write.
 
-- Customer main draft: retain the exact current Draft and append **one** native WAR line only when it has no existing WAR line.
-- Aviso supplier is **Aviso Broking Pty Ltd**; purchase account `313`; the purchase line uses the same native item description and the mapped GST-exclusive premium.
-- The legacy artefact’s PO reference formatter is `I${dealNumber}` (therefore `ID702...` when the Deal number includes its `D` prefix). AP must confirm the exact current Xero reference convention before enabling a writer; it must not silently adopt the earlier AP readiness placeholder `I<digits>`.
-- The legacy receiver accepted the established JSON `id` / `secret` envelope. AP’s compatibility receiver must continue to authenticate the canonical body secret without logging it, then re-read all financial facts from VTiger.
-- Older Operations behavior included Draft reconciliation and suffix paths. These are **not** adopted automatically by AP: Draft-only append/create remains one-shot, collision-safe and no-retry unless a separately implemented, approved reconciliation path exists.
+## Legacy boundaries retained
 
-## Evidence reviewed
-
-- `conditional-warranty-main-invoice-workflow.md`
-- `warrantyPurchaseOrders.ts`
-- `inspect_vtiger_added_services.mts`
-- `dry_run_d702116_warranty_description.mts`
-- `dry_run_d702870_warranty_po.mts`
-- `inspect_d702116_warranty_invoice.mts`
-- `august_2026_warranty_evidence.json`
-
-The historical evidence file contains personal and legacy document data and is intentionally not copied into this repository. A live Xero configuration audit began but stopped on the current tenant daily allowance 429 response; no Xero document write was attempted.
+- The canonical VTiger JSON `id` / `secret` envelope is accepted; the body never supplies financial authority.
+- Old Operations suffix/retry/reconciliation behaviour is not imported. AP uses one-shot, exact Draft-only operations and immutable receipts.
+- Historical source artifacts contain personal/legacy document data and are intentionally not copied into this repository.

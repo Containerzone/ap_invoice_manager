@@ -2,7 +2,7 @@ import axios from "axios";
 import { getXeroReadAuthWithRefresh, EXPECTED_AP_XERO_TENANT_LABEL } from "./xeroService";
 import { runCachedXeroGet, XERO_CACHE_TTL } from "./xeroRequestManager";
 import { financialSha256 } from "./financialProposalIntegrity";
-import { AVISO_NAME, type WarrantyFacts, type WarrantyXeroEvidence, type XeroRow } from "./financialWarrantyAvisoRules";
+import { AVISO_NAME, WARRANTY_MAIN_ACCOUNT, type WarrantyFacts, type WarrantyXeroEvidence, type XeroRow } from "./financialWarrantyAvisoRules";
 const BASE = "https://api.xero.com/api.xro/2.0";
 export const WARRANTY_INVOICE_STATUSES = "DRAFT,SUBMITTED,AUTHORISED,PAID,DELETED,VOIDED";
 export const WARRANTY_PO_STATUSES = ["DRAFT", "SUBMITTED", "AUTHORISED", "BILLED", "DELETED"] as const;
@@ -70,7 +70,7 @@ export async function readWarrantyXeroEvidence(facts: WarrantyFacts, options: { 
   const customer = await contact(facts.customerName, options.customerContactId); const supplier = await contact(AVISO_NAME);
   const items = rows(await get(`/Items/${encodeURIComponent(facts.mapping.itemCode)}`), "Items").filter(i => i.Code === facts.mapping!.itemCode);
   if (items.length !== 1) throw new Error("Current exact native WAR item absent/ambiguous.");
-  const item = items[0]; const codes = Array.from(new Set(["313", item.SalesDetails?.AccountCode].filter((c): c is string => typeof c === "string" && /^\d+$/.test(c))));
+  const item = items[0]; const codes = Array.from(new Set(["313", WARRANTY_MAIN_ACCOUNT].filter((c): c is string => typeof c === "string" && /^\d+$/.test(c))));
   const accounts = rows(await get("/Accounts", { where: codes.map(c => `Code=="${c}"`).join(" OR ") }), "Accounts");
   const taxes = rows(await get("/TaxRates", { where: 'TaxType=="INPUT" OR TaxType=="OUTPUT"' }), "TaxRates");
   const configurationHash = financialSha256({ tenantId, supplier: { ContactID: supplier.ContactID, Name: supplier.Name, ContactStatus: supplier.ContactStatus },

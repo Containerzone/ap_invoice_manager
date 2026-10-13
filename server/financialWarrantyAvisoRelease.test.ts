@@ -48,7 +48,7 @@ describe("Warranty & Aviso default-off independent release", () => {
     { effectiveFrom: null }, { effectiveFrom: "invalid" }, { effectiveFrom: "2999-01-01" },
     { migrationScope: "historical" }, { sourceConfig: null }, { sourceConfig: [] },
     { sourceMappingsHash: "a".repeat(64) }, { addedServicesMappingHash: "b".repeat(64) },
-    { xeroConfigurationHash: "" }, { xeroConfigurationHash: "A".repeat(64) },
+    { xeroConfigurationHashes: {} }, { xeroConfigurationHashes: { WAR25: "A".repeat(64) } },
     { avisoContactId: "" }, { avisoSupplierName: "Aviso" }, { avisoAccountCode: "312" },
   ])("rejects unapproved or tampered policy %j", patch => {
     vi.stubEnv("FINANCIAL_WARRANTY_AUTOMATIC_ENABLED", "true");

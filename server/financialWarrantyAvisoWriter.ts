@@ -37,7 +37,7 @@ export async function authorizeWarrantyWrite(payload: WarrantyPayload, context: 
   if (facts.holdReason || financialSha256(facts) !== reservation.sourceSnapshotHash || facts.sourceMappingsHash !== policy.sourceMappingsHash || facts.addedServicesMappingHash !== policy.addedServicesMappingHash) throw new Error("Warranty current exact Deal/customer/Added Services/source metadata changed; hold.");
   const current = await readWarrantyXeroEvidence(facts, { customerContactId: originalEvidence.customer.ContactID });
   assertWarrantyConfiguration(facts, current);
-  if (current.configurationHash !== policy.xeroConfigurationHash || current.supplier.ContactID !== policy.avisoContactId) throw new Error("Warranty exact Aviso/item/account/tax configuration does not match approved policy.");
+  if (!facts.mapping || current.configurationHash !== policy.xeroConfigurationHashes[facts.mapping.itemCode] || current.supplier.ContactID !== policy.avisoContactId) throw new Error("Warranty exact Aviso/selected-item/account/tax configuration does not match approved policy.");
   if (context.step === "main") {
     if (current.comparisonHash !== originalEvidence.comparisonHash || financialSha256(buildWarrantyPlan(facts, current, policy.sourceConfig!)) !== financialSha256(rebuilt)) throw new Error("Warranty current full main/line/collision preflight drift; no POST amendment.");
   } else {

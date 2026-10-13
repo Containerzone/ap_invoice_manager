@@ -1,9 +1,10 @@
 import { financialSha256 } from "./financialProposalIntegrity";
 
-export const WARRANTY_RULES_VERSION = "warranty-aviso-v3-current-vtiger-first-ten-native-war-id-po-post-draft-only";
+export const WARRANTY_RULES_VERSION = "warranty-aviso-v4-operations-split-main-label-aviso-purchase-description-id-po-post-draft-only";
 export const WARRANTY_RULES_HASH = financialSha256(WARRANTY_RULES_VERSION);
 export const AVISO_NAME = "Aviso Broking Pty Ltd";
 export const AVISO_ACCOUNT = "313";
+export const WARRANTY_MAIN_ACCOUNT = "200";
 export const WARRANTY_ADDED_SERVICES_MAPPINGS = [
   { addedServicesValue: "Warranty $25k", itemCode: "WAR25", premiumExGst: 192.5 },
   { addedServicesValue: "Warranty $30k", itemCode: "WAR30", premiumExGst: 228.9 },
@@ -79,12 +80,11 @@ export function assertWarrantyConfiguration(facts: WarrantyFacts, e: WarrantyXer
   requireFact(expected && mapping.itemCode === expected.itemCode && mapping.premiumExGst === expected.premiumExGst && mapping.nativeDescription.trim(), "Selected Warranty mapping is not one of the exact approved native WAR items/premiums.");
   requireFact(e.historyComplete === true && e.customer.ContactStatus === "ACTIVE" && e.customer.Name === facts.customerName && e.customer.ContactID, "Exact current Xero customer is missing/archived/ambiguous.");
   requireFact(e.supplier.Name === AVISO_NAME && e.supplier.ContactStatus === "ACTIVE" && e.supplier.ContactID && e.supplier.ContactID !== e.customer.ContactID, "Exact Aviso supplier contact mismatch.");
-  requireFact(e.item.Code === mapping.itemCode && e.item.IsSold === true && e.item.IsPurchased === true &&
-    e.item.Description === mapping.nativeDescription && e.item.PurchaseDescription === mapping.nativeDescription &&
-    e.item.SalesDetails?.UnitPrice === mapping.premiumExGst && e.item.PurchaseDetails?.UnitPrice === mapping.premiumExGst &&
-    e.item.PurchaseDetails?.AccountCode === AVISO_ACCOUNT && e.item.PurchaseDetails?.TaxType === "INPUT" &&
-    typeof e.item.SalesDetails?.AccountCode === "string" && e.item.SalesDetails.AccountCode && e.item.SalesDetails.TaxType === "OUTPUT", "Current native WAR item description/premium/account/GST evidence drift; hold.");
-  for (const [code, tax, kinds] of [[AVISO_ACCOUNT, "INPUT", ["EXPENSE", "DIRECTCOSTS"]], [e.item.SalesDetails.AccountCode, "OUTPUT", ["REVENUE", "SALES"]]] as const) {
+  requireFact(e.item.Code === mapping.itemCode && e.item.IsPurchased === true &&
+    typeof e.item.PurchaseDescription === "string" && e.item.PurchaseDescription === mapping.nativeDescription &&
+    e.item.PurchaseDetails?.AccountCode === AVISO_ACCOUNT && e.item.PurchaseDetails?.TaxType === "INPUT",
+  "Current native WAR purchase description/account/GST evidence drift; hold.");
+  for (const [code, tax, kinds] of [[AVISO_ACCOUNT, "INPUT", ["EXPENSE", "DIRECTCOSTS"]], [WARRANTY_MAIN_ACCOUNT, "OUTPUT", ["REVENUE", "SALES"]]] as const) {
     const rows = e.accounts.filter(a => a.Code === code);
     requireFact(rows.length === 1 && rows[0].Status === "ACTIVE" && rows[0].TaxType === tax && (kinds as readonly string[]).includes(rows[0].Type), `Exact active account ${code} and ${tax} GST evidence required.`);
     const taxes = e.taxes.filter(t => t.TaxType === tax);
@@ -119,12 +119,14 @@ export function buildWarrantyPlan(facts: WarrantyFacts, e: WarrantyXeroEvidence,
     (config.dateSemantics.due === "preserve_main_due_date" && !config.fields.dueDate || config.dateSemantics.due === "source_iso_date" && facts.dueDate === due), "Approved source issue/due semantics mismatch; never amend main dates.");
   const mapping = facts.mapping!;
   const warTax = money(mapping.premiumExGst * 0.1);
-  const warrantyLine = { ItemCode: mapping.itemCode, Description: mapping.nativeDescription, Quantity: 1, UnitAmount: mapping.premiumExGst, AccountCode: e.item.SalesDetails.AccountCode, TaxType: "OUTPUT", LineAmount: mapping.premiumExGst, TaxAmount: warTax };
-  const header: XeroRow = { InvoiceID: main.InvoiceID, InvoiceNumber: mainNumber, Type: "ACCREC", Status: "DRAFT", Contact: { ContactID: e.customer.ContactID }, CurrencyCode: "AUD", LineAmountTypes: "Exclusive", Date: date, LineItems: [...lines, warrantyLine] };
+  // Operations uses the exact VTiger Added Services label on the customer main
+  // invoice. The Aviso PO uses the Xero item's purchase description instead.
+  const mainWarrantyLine = { ItemCode: mapping.itemCode, Description: facts.addedServices, Quantity: 1, UnitAmount: mapping.premiumExGst, AccountCode: WARRANTY_MAIN_ACCOUNT, TaxType: "OUTPUT", LineAmount: mapping.premiumExGst, TaxAmount: warTax };
+  const header: XeroRow = { InvoiceID: main.InvoiceID, InvoiceNumber: mainNumber, Type: "ACCREC", Status: "DRAFT", Contact: { ContactID: e.customer.ContactID }, CurrencyCode: "AUD", LineAmountTypes: "Exclusive", Date: date, LineItems: [...lines, mainWarrantyLine] };
   if (due) header.DueDate = due;
   for (const key of ["Reference", "BrandingThemeID", "Url", "CurrencyRate", "SentToContact"]) if (Object.hasOwn(main, key)) header[key] = main[key];
   const po: XeroRow = { PurchaseOrderNumber: poNumber, Status: "DRAFT", Contact: { ContactID: e.supplier.ContactID }, CurrencyCode: "AUD", LineAmountTypes: "Exclusive", Date: facts.issueDate ?? date,
-    Reference: facts.addedServices, LineItems: [{ ...warrantyLine, AccountCode: AVISO_ACCOUNT, TaxType: "INPUT" }] };
+    Reference: facts.addedServices, LineItems: [{ ItemCode: mapping.itemCode, Description: mapping.nativeDescription, Quantity: 1, UnitAmount: mapping.premiumExGst, AccountCode: AVISO_ACCOUNT, TaxType: "INPUT", LineAmount: mapping.premiumExGst, TaxAmount: warTax }] };
   const payload = (operation: WarrantyPayload["operation"], endpoint: string, body: WarrantyPayload["body"]): WarrantyPayload => ({ operation, method: "POST", endpoint, body, idempotencyKey: financialSha256({ operation, dealId: facts.dealId, sourceHash: financialSha256(facts), body }) });
   return { mainNumber, poNumber, expectedMain: { ...header, SubTotal: money(subtotal + mapping.premiumExGst), TotalTax: money(tax + warTax), Total: money(subtotal + mapping.premiumExGst + tax + warTax) },
     expectedPo: { ...po, SubTotal: mapping.premiumExGst, TotalTax: warTax, Total: money(mapping.premiumExGst + warTax) },

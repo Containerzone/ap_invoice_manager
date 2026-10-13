@@ -44,7 +44,7 @@ export async function previewWarrantyAviso(dealId: string) {
           evidence = await readWarrantyXeroEvidence(facts, { customerContactId: contactPlan.contactId });
           plan = buildWarrantyPlan(facts, evidence, policy.sourceConfig);
           if (facts.sourceMappingsHash !== policy.sourceMappingsHash || facts.addedServicesMappingHash !== policy.addedServicesMappingHash) reason = "Source/Added Services mapping hashes not explicitly approved.";
-          else if (evidence.configurationHash !== policy.xeroConfigurationHash || evidence.supplier.ContactID !== policy.avisoContactId) reason = "Current exact Aviso contact/item/account/tax evidence hash not explicitly approved.";
+          else if (!facts.mapping || evidence.configurationHash !== policy.xeroConfigurationHashes[facts.mapping.itemCode] || evidence.supplier.ContactID !== policy.avisoContactId) reason = "Current exact Aviso contact/selected-item/account/tax evidence hash not explicitly approved.";
           const claim = await getWarrantyDealClaim(facts.dealNumber);
           if (claim) reason = "This Deal already has an immutable AP warranty claim; no adoption, repeat amendment or duplicate PO retry.";
         }

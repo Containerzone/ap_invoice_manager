@@ -19,14 +19,23 @@ describe("Warranty exact Draft append and Aviso rules", () => {
     expect(WARRANTY_ADDED_SERVICES_MAPPINGS.map(row => row.addedServicesValue)).not.toContain("Warranty $200k");
     expect(WARRANTY_ADDED_SERVICES_MAPPINGS.map(row => row.addedServicesValue)).not.toContain("Warranty $250k");
   });
-  it("preserves all original lines, IDs, tracking, reference and dates and appends exactly one native WAR; Aviso PO is ID-prefixed/313/INPUT/AUD/Exclusive", () => {
+  it("preserves all original lines, IDs, tracking, reference and dates; main uses the Added Services label/200/OUTPUT and Aviso uses the native purchase description/313/INPUT", () => {
     const { facts, evidence, config, plan } = warrantyFixture();
     expect(plan.mainPayload.method).toBe("POST"); expect(plan.mainPayload.endpoint).toBe("/Invoices/main-id");
     expect(plan.expectedMain.LineItems).toHaveLength(2); expect(plan.expectedMain.LineItems[0]).toEqual(evidence.main!.LineItems[0]);
     expect(plan.expectedMain.Total).toBe(431.75); expect(plan.expectedMain.TotalTax).toBe(39.25);
     expect(plan.expectedMain.Reference).toBe(evidence.main!.Reference); expect(plan.expectedMain.DueDate).toBe("2026-10-15");
+    expect(plan.expectedMain.LineItems[1]).toMatchObject({ ItemCode: "WAR25", Description: facts.addedServices, AccountCode: "200", TaxType: "OUTPUT", UnitAmount: 192.5 });
     expect(plan.poPayload.body.PurchaseOrders[0]).toMatchObject({ Status: "DRAFT", PurchaseOrderNumber: "ID77", CurrencyCode: "AUD", LineAmountTypes: "Exclusive", LineItems: [{ ItemCode: "WAR25", Description: facts.mapping!.nativeDescription, AccountCode: "313", TaxType: "INPUT", UnitAmount: 192.5 }] });
     expect(buildWarrantyPlan(facts, evidence, config)).toEqual(plan);
+  });
+  it("uses the approved Added Services premium rather than an item default price", () => {
+    const { facts, evidence, config } = warrantyFixture();
+    evidence.item.SalesDetails.UnitPrice = 999;
+    evidence.item.PurchaseDetails.UnitPrice = 888;
+    const plan = buildWarrantyPlan(facts, evidence, config);
+    expect(plan.expectedMain.LineItems.at(-1)).toMatchObject({ UnitAmount: 192.5, LineAmount: 192.5, TaxAmount: 19.25 });
+    expect(plan.expectedPo.LineItems[0]).toMatchObject({ UnitAmount: 192.5, LineAmount: 192.5, TaxAmount: 19.25 });
   });
   it.each(["SUBMITTED", "AUTHORISED", "PAID", "VOIDED", "DELETED", "UNKNOWN"])("non-Draft %s holds requiring unimplemented explicit suffix policy", status => {
     const f = warrantyFixture(); f.evidence.main!.Status = status;
@@ -36,18 +45,14 @@ describe("Warranty exact Draft append and Aviso rules", () => {
     const f = warrantyFixture(); f.evidence.poHistory = [{ PurchaseOrderID: "other-id", PurchaseOrderNumber: "ID77", Status }];
     expect(() => buildWarrantyPlan(f.facts, f.evidence, f.config)).toThrow(/collision/);
   });
-  it.each(["customer", "supplier", "nativeDescription", "purchaseDescription", "salesPremium", "purchasePremium", "purchaseAccount", "salesTax", "purchaseTax", "accountStatus", "taxRate", "currency", "inclusive", "allocations", "existingWar", "mainDuplicate", "unknownLine", "lineTotal", "mainTotal", "duplicateLineId", "oldSuffix"])("holds on exact %s mismatch", scenario => {
+  it.each(["customer", "supplier", "purchaseDescription", "purchaseAccount", "purchaseTax", "accountStatus", "taxRate", "currency", "inclusive", "allocations", "existingWar", "mainDuplicate", "unknownLine", "lineTotal", "mainTotal", "duplicateLineId", "oldSuffix"])("holds on exact %s mismatch", scenario => {
     const f = warrantyFixture(); const e = f.evidence;
     if (scenario === "customer") e.customer.Name = "Wrong customer";
     if (scenario === "supplier") e.supplier.Name = "Aviso";
-    if (scenario === "nativeDescription") e.item.Description = "Guessed";
     if (scenario === "purchaseDescription") e.item.PurchaseDescription = "Wrong";
-    if (scenario === "salesPremium") e.item.SalesDetails.UnitPrice = 99;
-    if (scenario === "purchasePremium") e.item.PurchaseDetails.UnitPrice = 99;
     if (scenario === "purchaseAccount") e.item.PurchaseDetails.AccountCode = "312";
-    if (scenario === "salesTax") e.item.SalesDetails.TaxType = "NONE";
     if (scenario === "purchaseTax") e.item.PurchaseDetails.TaxType = "NONE";
-    if (scenario === "accountStatus") e.accounts[1].Status = "ARCHIVED";
+    if (scenario === "accountStatus") e.accounts[0].Status = "ARCHIVED";
     if (scenario === "taxRate") e.taxes[0].EffectiveRate = 0;
     if (scenario === "currency") e.main!.CurrencyCode = "USD";
     if (scenario === "inclusive") e.main!.LineAmountTypes = "Inclusive";
