@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./financialInitialStorageService", () => ({ processInitialLoadedStorage: vi.fn() }));
 vi.mock("./financialStorageLifecycleService", () => ({ processAutomaticInitialStorage: vi.fn(), processStorageFinalisation: vi.fn() }));
 vi.mock("./workflowAlertService", () => ({ reportWorkflowFailureSafely: vi.fn() }));
+vi.mock("./vtigerFinancialCandidateService", () => ({ findExactFinancialCandidate: vi.fn(async () => ({ outcome: "found", candidates: [{ recordId: "5x123" }] })) }));
 
 type Handler = (req: any, res: any) => Promise<any>;
 function response() {
@@ -44,6 +45,14 @@ describe("narrow VTiger Deal storage webhook", () => {
     vi.mocked(processInitialLoadedStorage).mockResolvedValueOnce({ ok: false, status: "held", dealNumber: "D123", location: "origin", warning: "Gate off." });
     const { body, res } = response();
     await handler({ header: () => "test-storage-secret", body: { id: "5x123", dryRun: true } }, res);
+    expect(body.status).toBe(202);
+    expect(processInitialLoadedStorage).toHaveBeenCalledWith("5x123");
+  });
+  it("resolves the Operations potential_no D-number through one exact Deal lookup", async () => {
+    const { processInitialLoadedStorage } = await import("./financialInitialStorageService");
+    vi.mocked(processInitialLoadedStorage).mockResolvedValueOnce({ ok: false, status: "held", dealNumber: "D123", location: "origin", warning: "Gate off." });
+    const { body, res } = response();
+    await handler({ header: () => "", body: { id: "D123", secret: "test-storage-secret" } }, res);
     expect(body.status).toBe(202);
     expect(processInitialLoadedStorage).toHaveBeenCalledWith("5x123");
   });
