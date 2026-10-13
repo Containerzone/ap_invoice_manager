@@ -41,7 +41,9 @@ beforeEach(() => {
   m.finish.mockImplementation(async (_reservation, status, holdReason, receipt) => { entries.push({ status, holdReason, receipt }); });
   m.request.mockImplementation(async (_auth, _operation, fn) => fn());
   m.put.mockResolvedValue({ status: 200, data: { Invoices: [{ InvoiceID: "main-id", InvoiceNumber: "INV-77", Status: "DRAFT" }] } });
-  m.post.mockResolvedValue({ status: 200, data: { PurchaseOrders: [{ PurchaseOrderID: "po-id", PurchaseOrderNumber: "I77", Status: "DRAFT" }] } });
+  m.post.mockImplementation(async (url: string) => url.includes("/Invoices/")
+    ? { status: 200, data: { Invoices: [{ InvoiceID: "main-id", InvoiceNumber: "INV-77", Status: "DRAFT" }] } }
+    : { status: 200, data: { PurchaseOrders: [{ PurchaseOrderID: "po-id", PurchaseOrderNumber: "ID77", Status: "DRAFT" }] } });
   m.readback.mockImplementation(async kind => kind === "main" ? mainReadback() : { ...structuredClone(f.plan.expectedPo), PurchaseOrderID: "po-id" });
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
@@ -49,7 +51,7 @@ afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 describe("Warranty isolated release-backed exact write authorization", () => {
   it("valid authorization independently re-reads exact source and Xero but performs no write", async () => {
     expect(await authorizeWarrantyWrite(f.plan.mainPayload, context())).toMatchObject({ plan: f.plan });
-    expect(m.source).toHaveBeenCalledWith("5x77", f.config); expect(m.xero).toHaveBeenCalledWith(f.facts); noTransport();
+    expect(m.source).toHaveBeenCalledWith("5x77", f.config); expect(m.xero).toHaveBeenCalledWith(f.facts, { customerContactId: "customer-id" }); noTransport();
   });
   it("missing policy rejects even generic live flags before any reservation/source/Xero access", async () => {
     m.policy.mockResolvedValue(resolveWarrantyRelease(null));
@@ -87,7 +89,7 @@ describe("Warranty isolated release-backed exact write authorization", () => {
   });
   it.each(["method", "endpoint", "operation", "idempotencyKey", "line", "header"])("exact operation/body %s cannot be caller-tampered", async kind => {
     const payload = structuredClone(f.plan.mainPayload);
-    if (kind === "method") payload.method = "POST";
+    if (kind === "method") (payload as any).method = "PUT";
     if (kind === "endpoint") payload.endpoint = "/Invoices";
     if (kind === "operation") payload.operation = "create_aviso_draft";
     if (kind === "idempotencyKey") payload.idempotencyKey = "forged";
@@ -134,15 +136,15 @@ describe("Warranty one-shot mocked transport and reconciliation", () => {
   it("one pair consumes each step before transport, verifies full readback before PO and never retries or queues CRM", async () => {
     const result = await executeWarrantyPair(f.reservation, f.plan, 7);
     expect(result).toMatchObject({ ok: true, status: "drafts_created", xeroWritesAttempted: 2 });
-    expect(m.put).toHaveBeenCalledTimes(1); expect(m.post).toHaveBeenCalledTimes(1);
+    expect(m.put).not.toHaveBeenCalled(); expect(m.post).toHaveBeenCalledTimes(2);
     expect(m.consume.mock.calls.map(c => c[1])).toEqual(["main", "po"]);
-    expect(m.consume.mock.invocationCallOrder[0]).toBeLessThan(m.put.mock.invocationCallOrder[0]);
-    expect(m.consume.mock.invocationCallOrder[1]).toBeLessThan(m.post.mock.invocationCallOrder[0]);
+    expect(m.consume.mock.invocationCallOrder[0]).toBeLessThan(m.post.mock.invocationCallOrder[0]);
+    expect(m.consume.mock.invocationCallOrder[1]).toBeLessThan(m.post.mock.invocationCallOrder[1]);
     expect(m.readback.mock.invocationCallOrder[0]).toBeLessThan(m.receipt.mock.invocationCallOrder[0]);
     expect(m.receipt.mock.calls[0][2].readbackVerified).toBe(true);
-    expect(m.receipt.mock.invocationCallOrder[0]).toBeLessThan(m.post.mock.invocationCallOrder[0]);
+    expect(m.receipt.mock.invocationCallOrder[0]).toBeLessThan(m.post.mock.invocationCallOrder[1]);
     for (const call of m.request.mock.calls) expect(call[3]).toEqual({ retryTransientGatewayFailures: false });
-    expect(m.put).toHaveBeenCalledWith("https://api.xero.com/api.xro/2.0/Invoices/main-id", f.plan.mainPayload.body, {
+    expect(m.post).toHaveBeenCalledWith("https://api.xero.com/api.xro/2.0/Invoices/main-id", f.plan.mainPayload.body, {
       headers: { Authorization: "Bearer synthetic-token", "Xero-tenant-id": "synthetic-tenant", "Content-Type": "application/json", "Idempotency-Key": f.plan.mainPayload.idempotencyKey }, timeout: 20000,
     });
     expect(m.finish).toHaveBeenCalledWith(f.reservation, "drafts_created", null, expect.any(Object));
@@ -159,26 +161,29 @@ describe("Warranty one-shot mocked transport and reconciliation", () => {
     if (kind === "header") current.Reference = "Changed";
     m.readback.mockResolvedValue(current);
     expect(await executeWarrantyPair(f.reservation, f.plan, 7)).toMatchObject({ ok: false, status: "reconciliation_required" });
-    expect(m.post).not.toHaveBeenCalled(); expect(m.put).toHaveBeenCalledTimes(1);
+    expect(m.post).toHaveBeenCalledTimes(1); expect(m.put).not.toHaveBeenCalled();
     expect(m.receipt.mock.calls[0][2]).toMatchObject({ readbackVerified: false, xeroDocumentId: "main-id", httpStatus: 200 });
     await expect(executeWarrantyOperation(f.plan.poPayload, context("po"))).rejects.toThrow(/no retry/);
-    expect(m.post).not.toHaveBeenCalled();
+    expect(m.post).toHaveBeenCalledTimes(1);
   });
   it("response-only main receipt without full document readback is false and terminal", async () => {
     m.readback.mockRejectedValue(new Error("Full GET unavailable"));
     expect(await executeWarrantyPair(f.reservation, f.plan, 7)).toMatchObject({ status: "reconciliation_required" });
     expect(m.receipt.mock.calls[0][2]).toMatchObject({ httpStatus: 200, readbackVerified: false });
-    expect(m.post).not.toHaveBeenCalled();
+    expect(m.post).toHaveBeenCalledTimes(1);
   });
   it("verified main + PO transport failure retains both receipts and terminal reconciliation with no retry", async () => {
-    m.post.mockRejectedValue(new Error("Uncertain gateway response"));
+    m.post.mockImplementation(async (url: string) => {
+      if (url.includes("/Invoices/")) return { status: 200, data: { Invoices: [{ InvoiceID: "main-id", InvoiceNumber: "INV-77", Status: "DRAFT" }] } };
+      throw new Error("Uncertain gateway response");
+    });
     expect(await executeWarrantyPair(f.reservation, f.plan, 7)).toMatchObject({ ok: false, status: "reconciliation_required", xeroWritesAttemptedUpperBound: 2 });
     expect(m.receipt.mock.calls.map(c => [c[1], c[2].readbackVerified])).toEqual([["main", true], ["po", false]]);
     expect(entries.at(-1).status).toBe("reconciliation_required");
     expect(f.reservation.claimKey).toBe("warranty:D77");
     await expect(executeWarrantyOperation(f.plan.mainPayload, context())).rejects.toThrow(/no retry/);
     await expect(executeWarrantyOperation(f.plan.poPayload, context("po"))).rejects.toThrow(/no retry/);
-    expect(m.put).toHaveBeenCalledTimes(1); expect(m.post).toHaveBeenCalledTimes(1);
+    expect(m.put).not.toHaveBeenCalled(); expect(m.post).toHaveBeenCalledTimes(2);
     expect(m.request).toHaveBeenCalledTimes(2);
     expect(m.finish).toHaveBeenCalledTimes(1);
   });
@@ -187,6 +192,6 @@ describe("Warranty one-shot mocked transport and reconciliation", () => {
     expect(await executeWarrantyPair(f.reservation, f.plan, 7)).toMatchObject({ ok: false, status: "reconciliation_required" });
     expect(m.receipt.mock.calls[1][2]).toMatchObject({ httpStatus: 200, xeroDocumentId: "po-id", readbackVerified: false });
     expect(m.finish.mock.calls[0][1]).toBe("reconciliation_required");
-    expect(m.post).toHaveBeenCalledTimes(1);
+    expect(m.post).toHaveBeenCalledTimes(2);
   });
 });

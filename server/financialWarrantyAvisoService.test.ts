@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ policy: vi.fn(), source: vi.fn(), xero: vi.fn(), preview: vi.fn(), claim: vi.fn(), entries: vi.fn(), event: vi.fn(), reserve: vi.fn(), pair: vi.fn() }));
+const m = vi.hoisted(() => ({ policy: vi.fn(), source: vi.fn(), xero: vi.fn(), preview: vi.fn(), claim: vi.fn(), entries: vi.fn(), event: vi.fn(), reserve: vi.fn(), pair: vi.fn(), customerSource: vi.fn(), customerPlan: vi.fn(), customerCreate: vi.fn() }));
 vi.mock("./financialWorkflowDb", () => ({ getFinancialWorkflowConfig: vi.fn() }));
 vi.mock("./financialWarrantyAvisoRelease", async original => ({ ...(await original<any>()), getWarrantyReleasePolicy: m.policy }));
 vi.mock("./financialWarrantyAvisoSource", () => ({ readWarrantyFacts: m.source }));
 vi.mock("./financialWarrantyAvisoXero", () => ({ readWarrantyXeroEvidence: m.xero }));
 vi.mock("./financialWarrantyAvisoDb", () => ({ recordWarrantyPreview: m.preview, getWarrantyDealClaim: m.claim, getWarrantyExecutionEntries: m.entries, getWarrantyEvent: m.event, reserveWarranty: m.reserve }));
 vi.mock("./financialWarrantyAvisoWriter", () => ({ executeWarrantyPair: m.pair }));
+vi.mock("./financialCustomerContactSourceV2", () => ({ readCurrentCustomerContactResolution: m.customerSource }));
+vi.mock("./financialCustomerContactServiceV2", () => ({ previewCustomerContactResolution: m.customerPlan, executeCustomerContactCreationV2: m.customerCreate }));
 import { warrantyFixture } from "./financialWarrantyAvisoFixtures";
 import { resolveWarrantyRelease } from "./financialWarrantyAvisoRelease";
 import { getWarrantyReadiness, previewWarrantyAviso, processAutomaticWarrantyAviso } from "./financialWarrantyAvisoService";
@@ -19,6 +21,9 @@ beforeEach(() => {
   m.preview.mockResolvedValue({ id: 9 }); m.claim.mockResolvedValue(null); m.entries.mockResolvedValue([]);
   m.event.mockResolvedValue({ ...f.reservation, id: 9, status: "previewed" }); m.reserve.mockResolvedValue(f.reservation);
   m.pair.mockResolvedValue({ ok: true, status: "drafts_created" });
+  m.customerSource.mockResolvedValue({ dealId: "5x77", name: f.facts.customerName });
+  m.customerPlan.mockResolvedValue({ status: "matched", contactId: f.evidence.customer.ContactID, holdReason: null });
+  m.customerCreate.mockResolvedValue({ status: "matched", contactId: f.evidence.customer.ContactID, contactWritesAttempted: 0, holdReason: null });
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 const noExecution = () => { expect(m.reserve).not.toHaveBeenCalled(); expect(m.pair).not.toHaveBeenCalled(); };
@@ -91,5 +96,17 @@ describe("Warranty automatic service held boundaries", () => {
     vi.stubEnv("FINANCIAL_WARRANTY_AUTOMATIC_ENABLED", "true"); m.reserve.mockRejectedValue(new Error("ER_DUP_ENTRY"));
     expect(await processAutomaticWarrantyAviso("5x77")).toMatchObject({ status: "held", xeroWritesAttempted: 0, warning: expect.stringMatching(/exclusively reserved/) });
     expect(m.reserve).toHaveBeenCalledTimes(1); expect(m.pair).not.toHaveBeenCalled();
+  });
+  it("creates a missing customer only through v2, then refreshes the exact Warranty preflight before the Draft pair", async () => {
+    vi.stubEnv("FINANCIAL_WARRANTY_AUTOMATIC_ENABLED", "true");
+    const wouldCreate = { status: "would_create", contactId: null, holdReason: null, source: { dealId: "5x77" } };
+    const matched = { status: "matched", contactId: "customer-id", holdReason: null, source: { dealId: "5x77" } };
+    m.customerPlan.mockResolvedValueOnce(wouldCreate).mockResolvedValueOnce(matched);
+    m.customerCreate.mockResolvedValue({ ...matched, status: "created", contactWritesAttempted: 1 });
+    m.pair.mockResolvedValue({ ok: true, status: "drafts_created", eventId: 9, xeroWritesAttempted: 2 });
+    expect(await processAutomaticWarrantyAviso("5x77")).toMatchObject({ ok: true, status: "drafts_created", contactWritesAttempted: 1, xeroWritesAttempted: 3 });
+    expect(m.customerCreate).toHaveBeenCalledWith(wouldCreate);
+    expect(m.xero).toHaveBeenCalledTimes(1); expect(m.xero).toHaveBeenCalledWith(f.facts, { customerContactId: "customer-id" });
+    expect(m.reserve).toHaveBeenCalledTimes(1); expect(m.pair).toHaveBeenCalledTimes(1);
   });
 });

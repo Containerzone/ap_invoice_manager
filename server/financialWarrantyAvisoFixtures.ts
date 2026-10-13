@@ -1,26 +1,30 @@
 // SYNTHETIC TEST FIXTURES ONLY. Not production-approved labels, mapping, price or Xero evidence.
 import { financialSha256 } from "./financialProposalIntegrity";
 import { resolveWarrantyRelease, warrantySourceConfigHash, WARRANTY_RELEASE_KEY } from "./financialWarrantyAvisoRelease";
-import { AVISO_NAME, WARRANTY_RULES_HASH, buildWarrantyPlan, type FieldBinding, type WarrantyFacts, type WarrantySourceConfig, type WarrantyXeroEvidence } from "./financialWarrantyAvisoRules";
+import { AVISO_NAME, WARRANTY_ADDED_SERVICES_MAPPINGS, WARRANTY_RULES_HASH, buildWarrantyPlan, type FieldBinding, type WarrantyFacts, type WarrantySourceConfig, type WarrantyXeroEvidence } from "./financialWarrantyAvisoRules";
 const field = (name: string, label: string, type: string, extra: Record<string, unknown> = {}): FieldBinding => ({ name, label, type: { name: type, ...extra }, mandatory: false });
 export function warrantyFixture() {
+  const syntheticMappings = WARRANTY_ADDED_SERVICES_MAPPINGS.map(mapping => ({ ...mapping, nativeDescription: `Synthetic native ${mapping.itemCode}` }));
+  const selectedMapping = syntheticMappings.find(mapping => mapping.addedServicesValue === "Warranty $25k")!;
+  const addedServiceValues: Array<{ value: string }> = [...WARRANTY_ADDED_SERVICES_MAPPINGS.map(mapping => ({ value: mapping.addedServicesValue })), { value: "Extra Transport" }];
   const config: WarrantySourceConfig = { module: "Potentials", potentialsIdPrefix: "5", fields: {
-    dealNumber: field("potential_no", "Deal ID", "string"), addedServices: field("cf_test_added", "Added Services", "picklist", { picklistValues: [{ value: "Synthetic Warranty" }, { value: "No warranty" }] }),
+    dealNumber: field("potential_no", "Deal ID", "string"), addedServices: field("cf_test_added", "Added Services", "multipicklist", { picklistValues: addedServiceValues }),
     organisation: field("related_to", "Organization Name", "reference", { refersTo: ["Accounts"] }), contact: field("contact_id", "Contact Name", "reference", { refersTo: ["Contacts"] }),
     modifiedTime: field("modifiedtime", "Modified Time", "datetime"), issueDate: null, dueDate: null },
     customerFields: { organisation: { name: field("accountname", "Organization Name", "string"), modifiedTime: field("modifiedtime", "Modified Time", "datetime") },
       contact: { firstName: field("firstname", "First Name", "string"), lastName: field("lastname", "Last Name", "string"), modifiedTime: field("modifiedtime", "Modified Time", "datetime") } },
     dateSemantics: { issue: "preserve_main_date", due: "preserve_main_due_date" },
-    addedServicesMappings: [{ addedServicesValue: "Synthetic Warranty", itemCode: "WAR-TEST", nativeDescription: "Synthetic native warranty", premiumExGst: 100 }] };
-  const facts: WarrantyFacts = { dealId: "5x77", dealNumber: "D77", addedServices: "Synthetic Warranty", customerVtigerId: "4x9", customerName: "Synthetic Customer", customerKind: "organisation",
+    addedServicesMappings: syntheticMappings };
+  const facts: WarrantyFacts = { dealId: "5x77", dealNumber: "D77", addedServices: selectedMapping.addedServicesValue, customerVtigerId: "4x9", customerName: "Synthetic Customer", customerKind: "organisation",
     sourceModifiedAt: "2026-10-01T00:00:00.000Z", customerModifiedAt: "2026-10-01T00:00:00.000Z", issueDate: null, dueDate: null, sourceMappingsHash: warrantySourceConfigHash(config),
-    addedServicesMappingHash: financialSha256(config.addedServicesMappings), mapping: config.addedServicesMappings[0], configurationRequired: [], holdReason: null };
-  const customer = { ContactID: "customer-id", Name: facts.customerName, ContactStatus: "ACTIVE" }; const supplier = { ContactID: "aviso-id", Name: AVISO_NAME, ContactStatus: "ACTIVE" };
+    addedServicesMappingHash: financialSha256(config.addedServicesMappings), mapping: selectedMapping, configurationRequired: [], holdReason: null };
+  const customer = { ContactID: "customer-id", Name: facts.customerName, ContactStatus: "ACTIVE" };
+  const supplier = { ContactID: "aviso-id", Name: AVISO_NAME, ContactStatus: "ACTIVE" };
   const main = { InvoiceID: "main-id", InvoiceNumber: "INV-77", Type: "ACCREC", Status: "DRAFT", Contact: { ContactID: customer.ContactID, Name: customer.Name }, CurrencyCode: "AUD", LineAmountTypes: "Exclusive", Date: "2026-10-01", DueDate: "2026-10-15", Reference: "Preserve reference", SubTotal: 200, TotalTax: 20, Total: 220, AmountPaid: 0,
     LineItems: [{ LineItemID: "line-1", ItemCode: "SERVICE", Description: "Keep every field", Quantity: 2, UnitAmount: 100, AccountCode: "200", TaxType: "OUTPUT", LineAmount: 200, TaxAmount: 20, Tracking: [{ TrackingCategoryID: "category-id", TrackingOptionID: "option-id" }] }] };
   const evidence: WarrantyXeroEvidence = { tenantId: "synthetic-tenant", mainHistory: [{ InvoiceID: main.InvoiceID, InvoiceNumber: main.InvoiceNumber, Status: "DRAFT", Type: "ACCREC" }], main, otherInvoices: [], poHistory: [], purchaseOrders: [], customer, supplier,
-    item: { Code: "WAR-TEST", Description: "Synthetic native warranty", PurchaseDescription: "Synthetic native warranty", IsSold: true, IsPurchased: true,
-      SalesDetails: { UnitPrice: 100, AccountCode: "200", TaxType: "OUTPUT" }, PurchaseDetails: { UnitPrice: 100, AccountCode: "313", TaxType: "INPUT" } },
+    item: { Code: selectedMapping.itemCode, Description: selectedMapping.nativeDescription, PurchaseDescription: selectedMapping.nativeDescription, IsSold: true, IsPurchased: true,
+      SalesDetails: { UnitPrice: selectedMapping.premiumExGst, AccountCode: "200", TaxType: "OUTPUT" }, PurchaseDetails: { UnitPrice: selectedMapping.premiumExGst, AccountCode: "313", TaxType: "INPUT" } },
     accounts: [{ Code: "200", Status: "ACTIVE", TaxType: "OUTPUT", Type: "REVENUE" }, { Code: "313", Status: "ACTIVE", TaxType: "INPUT", Type: "EXPENSE" }],
     taxes: [{ TaxType: "INPUT", Status: "ACTIVE", EffectiveRate: 10 }, { TaxType: "OUTPUT", Status: "ACTIVE", EffectiveRate: 10 }], configurationHash: "a".repeat(64), comparisonHash: "b".repeat(64), historyComplete: true };
   const policy = resolveWarrantyRelease({ enabled: true, releaseKey: WARRANTY_RELEASE_KEY, rulesHash: WARRANTY_RULES_HASH, approvedBy: 7, approvedAt: "2026-09-30T00:00:00Z", effectiveFrom: "2026-09-30T00:00:00Z",

@@ -8,7 +8,7 @@ const metadata = () => ({ name: "Potentials", idPrefix: "5", fields: Object.valu
 beforeEach(() => {
   vi.clearAllMocks(); f = warrantyFixture();
   m.describe.mockImplementation(async (name: string) => name === "Potentials" ? metadata() : { name, idPrefix: name === "Accounts" ? "4" : "3", fields: Object.values(f.config.customerFields[name === "Accounts" ? "organisation" : "contact"]) });
-  m.retrieve.mockImplementation(async (id: string) => id === "5x77" ? { id, potential_no: "D77", cf_test_added: "Synthetic Warranty", related_to: "4x9", contact_id: "", modifiedtime: "2026-10-01T00:00:00Z", warranty_confirmed: "Yes" } : { id, accountname: "Synthetic Customer", firstname: "Synthetic", lastname: "Customer", modifiedtime: "2026-10-01T00:00:00Z" });
+  m.retrieve.mockImplementation(async (id: string) => id === "5x77" ? { id, potential_no: "D77", cf_test_added: "Warranty $25k |##| Extra Transport", related_to: "4x9", contact_id: "", modifiedtime: "2026-10-01T00:00:00Z", warranty_confirmed: "Yes" } : { id, accountname: "Synthetic Customer", firstname: "Synthetic", lastname: "Customer", modifiedtime: "2026-10-01T00:00:00Z" });
 });
 describe("Warranty authenticated metadata exact-source resolution", () => {
   it("reads one exact Deal and assigned customer only with fresh Potentials/customer metadata on every invocation", async () => {
@@ -32,20 +32,20 @@ describe("Warranty authenticated metadata exact-source resolution", () => {
     if (kind === "invalidPremium") f.config.addedServicesMappings[0].premiumExGst = 0;
     m.describe.mockResolvedValue(meta); const result = await readWarrantyFacts("5x77", f.config); expect(result.holdReason).not.toBeNull(); expect(m.retrieve).not.toHaveBeenCalled();
   });
-  it.each(["No warranty", "Synthetic Warranty plus extras", "synthetic warranty", ""])("unsupported Added Services %s cannot use Warranty Confirmed", async value => {
+  it.each(["No warranty", "Warranty $25k |##| Warranty $35k", "Warranty $23k", ""])("unsupported or ambiguous Added Services %s cannot use Warranty Confirmed", async value => {
     m.retrieve.mockResolvedValue({ id: "5x77", potential_no: "D77", cf_test_added: value, warranty_confirmed: "Yes", related_to: "4x9", contact_id: "", modifiedtime: "2026-10-01T00:00:00Z" });
     expect((await readWarrantyFacts("5x77", f.config)).holdReason).toMatch(/Added Services/);
   });
   it.each(["2026-10-01 12:00:00", "future", "", 17])("ambiguous timestamp %s holds without timezone inference", async stamp => {
-    m.retrieve.mockResolvedValue({ id: "5x77", potential_no: "D77", cf_test_added: "Synthetic Warranty", related_to: "4x9", contact_id: "", modifiedtime: stamp });
+    m.retrieve.mockResolvedValue({ id: "5x77", potential_no: "D77", cf_test_added: "Warranty $25k", related_to: "4x9", contact_id: "", modifiedtime: stamp });
     expect((await readWarrantyFacts("5x77", f.config)).holdReason).toMatch(/Modified Time|scalar/);
   });
   it("valid Contact only uses current Contacts name bindings", async () => {
-    m.retrieve.mockImplementation(async (id: string) => id === "5x77" ? { id, potential_no: "D77", cf_test_added: "Synthetic Warranty", related_to: "", contact_id: "3x9", modifiedtime: "2026-10-01T00:00:00Z" } : { id, firstname: "Synthetic", lastname: "Customer", modifiedtime: "2026-10-01T00:00:00Z" });
+    m.retrieve.mockImplementation(async (id: string) => id === "5x77" ? { id, potential_no: "D77", cf_test_added: "Warranty $25k", related_to: "", contact_id: "3x9", modifiedtime: "2026-10-01T00:00:00Z" } : { id, firstname: "Synthetic", lastname: "Customer", modifiedtime: "2026-10-01T00:00:00Z" });
     expect(await readWarrantyFacts("5x77", f.config)).toMatchObject({ customerKind: "contact", customerName: "Synthetic Customer", holdReason: null });
   });
   it("invalid organisation cannot fall back to contact, wrong source ID/module holds", async () => {
-    m.retrieve.mockResolvedValue({ id: "5x77", potential_no: "D77", cf_test_added: "Synthetic Warranty", related_to: "wrong", contact_id: "3x9", modifiedtime: "2026-10-01T00:00:00Z" });
+    m.retrieve.mockResolvedValue({ id: "5x77", potential_no: "D77", cf_test_added: "Warranty $25k", related_to: "wrong", contact_id: "3x9", modifiedtime: "2026-10-01T00:00:00Z" });
     expect((await readWarrantyFacts("5x77", f.config)).holdReason).toMatch(/fallback/);
     await expect(readWarrantyFacts("4x77", f.config)).rejects.toThrow(/module ID/);
   });

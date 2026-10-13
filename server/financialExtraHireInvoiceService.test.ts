@@ -93,6 +93,8 @@ const policy = () => ({
 });
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "false");
+  vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED", "false");
   m.source.mockResolvedValue(facts());
   m.xero.mockResolvedValue(evidence());
   m.policy.mockResolvedValue(policy());
@@ -146,6 +148,7 @@ describe("Extra Hire current source preview and automatic receiver lifecycle", (
   it("creates a v2 contact only after a held preview, then refreshes Extra Hire evidence before the Draft", async () => {
     vi.stubEnv("FINANCIAL_EXTRA_HIRE_AUTOMATIC_ENABLED", "true");
     vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED", "true");
     const wouldCreate = { source: await m.contactV2Source(), status: "would_create", outcome: "would_create_contact", contactId: null, contactName: "Synthetic", includeEmailOnCreate: true, lookupOrder: ["name", "email"], nameMatchCount: 0, emailMatchCount: 0, holdReason: null };
     const matched = { ...wouldCreate, status: "matched", outcome: "matched_by_name", contactId: "v2-contact", includeEmailOnCreate: false };
     m.contactV2Preview.mockResolvedValueOnce(wouldCreate).mockResolvedValueOnce(matched);

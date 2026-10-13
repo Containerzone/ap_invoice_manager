@@ -18,11 +18,11 @@ function rows(response: any, key: string): XeroRow[] {
   if (!Array.isArray(response?.[key]) || response[key].length >= 100) throw new Error(`Warranty exact ${key} evidence incomplete or bounded limit reached; hold, not truncation.`);
   return response[key];
 }
-/** No broad ledger reads: exact INV-number, that Deal's tentative suffixes, exact I-number including every PO state, exact contacts/item/accounts/tax only. */
-export async function readWarrantyXeroEvidence(facts: WarrantyFacts): Promise<WarrantyXeroEvidence> {
+/** No broad ledger reads: exact INV-number, that Deal's tentative suffixes, exact ID-number including every PO state, exact contacts/item/accounts/tax only. */
+export async function readWarrantyXeroEvidence(facts: WarrantyFacts, options: { customerContactId?: string | null } = {}): Promise<WarrantyXeroEvidence> {
   if (facts.holdReason || !/^D\d{1,12}$/.test(facts.dealNumber) || !facts.mapping || !facts.customerName) throw new Error("Exact approved warranty source required before Xero preflight.");
   const { get, tenantId } = await session();
-  const mainNumber = `INV-${facts.dealNumber.slice(1)}`; const poNumber = `I${facts.dealNumber.slice(1)}`;
+  const mainNumber = `INV-${facts.dealNumber.slice(1)}`; const poNumber = `ID${facts.dealNumber.slice(1)}`;
   const mainHistory = rows(await get("/Invoices", { InvoiceNumbers: mainNumber, Statuses: WARRANTY_INVOICE_STATUSES, page: "1", pageSize: "100" }), "Invoices")
     .filter(i => String(i.InvoiceNumber ?? "").toUpperCase() === mainNumber);
   const detail = async (r: XeroRow, kind: "invoice" | "po") => {
@@ -56,12 +56,18 @@ export async function readWarrantyXeroEvidence(facts: WarrantyFacts): Promise<Wa
   }
   const purchaseOrders: XeroRow[] = [];
   for (const r of Array.from(unique.values())) purchaseOrders.push(await detail(r, "po"));
-  const contact = async (name: string) => {
+  const contact = async (name: string, immutableId?: string | null) => {
+    if (immutableId) {
+      const matches = rows(await get(`/Contacts/${encodeURIComponent(immutableId)}`), "Contacts");
+      const row = matches.length === 1 ? matches[0] : null;
+      if (!row || row.ContactID !== immutableId || row.Name !== name || row.ContactStatus !== "ACTIVE") throw new Error(`Exact ${name} Xero contact ID is missing, inactive or changed; hold.`);
+      return row;
+    }
     const matches = rows(await get("/Contacts", { where: `Name=="${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`, includeArchived: "true", page: "1" }), "Contacts").filter(c => c.Name === name);
     if (matches.length !== 1 || !matches[0].ContactID || matches[0].ContactStatus !== "ACTIVE") throw new Error(`Exact ${name} Xero contact absent/archived/ambiguous; hold.`);
     return matches[0];
   };
-  const customer = await contact(facts.customerName); const supplier = await contact(AVISO_NAME);
+  const customer = await contact(facts.customerName, options.customerContactId); const supplier = await contact(AVISO_NAME);
   const items = rows(await get(`/Items/${encodeURIComponent(facts.mapping.itemCode)}`), "Items").filter(i => i.Code === facts.mapping!.itemCode);
   if (items.length !== 1) throw new Error("Current exact native WAR item absent/ambiguous.");
   const item = items[0]; const codes = Array.from(new Set(["313", item.SalesDetails?.AccountCode].filter((c): c is string => typeof c === "string" && /^\d+$/.test(c))));

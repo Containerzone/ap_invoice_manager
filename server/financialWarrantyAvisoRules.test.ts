@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { warrantyFixture } from "./financialWarrantyAvisoFixtures";
 import { assertWarrantyReadback, buildWarrantyPlan } from "./financialWarrantyAvisoRules";
 describe("Warranty exact Draft append and Aviso rules", () => {
-  it("preserves all original lines, IDs, tracking, reference and dates and appends exactly one native WAR; PO is 313/INPUT/AUD/Exclusive", () => {
+  it("preserves all original lines, IDs, tracking, reference and dates and appends exactly one native WAR; Aviso PO is ID-prefixed/313/INPUT/AUD/Exclusive", () => {
     const { facts, evidence, config, plan } = warrantyFixture();
-    expect(plan.mainPayload.method).toBe("PUT"); expect(plan.mainPayload.endpoint).toBe("/Invoices/main-id");
+    expect(plan.mainPayload.method).toBe("POST"); expect(plan.mainPayload.endpoint).toBe("/Invoices/main-id");
     expect(plan.expectedMain.LineItems).toHaveLength(2); expect(plan.expectedMain.LineItems[0]).toEqual(evidence.main!.LineItems[0]);
-    expect(plan.expectedMain.Total).toBe(330); expect(plan.expectedMain.TotalTax).toBe(30);
+    expect(plan.expectedMain.Total).toBe(305.8); expect(plan.expectedMain.TotalTax).toBe(27.8);
     expect(plan.expectedMain.Reference).toBe(evidence.main!.Reference); expect(plan.expectedMain.DueDate).toBe("2026-10-15");
-    expect(plan.poPayload.body.PurchaseOrders[0]).toMatchObject({ Status: "DRAFT", PurchaseOrderNumber: "I77", CurrencyCode: "AUD", LineAmountTypes: "Exclusive", LineItems: [{ ItemCode: "WAR-TEST", Description: facts.mapping!.nativeDescription, AccountCode: "313", TaxType: "INPUT", UnitAmount: 100 }] });
+    expect(plan.poPayload.body.PurchaseOrders[0]).toMatchObject({ Status: "DRAFT", PurchaseOrderNumber: "ID77", CurrencyCode: "AUD", LineAmountTypes: "Exclusive", LineItems: [{ ItemCode: "WAR25K", Description: facts.mapping!.nativeDescription, AccountCode: "313", TaxType: "INPUT", UnitAmount: 78 }] });
     expect(buildWarrantyPlan(facts, evidence, config)).toEqual(plan);
   });
   it.each(["SUBMITTED", "AUTHORISED", "PAID", "VOIDED", "DELETED", "UNKNOWN"])("non-Draft %s holds requiring unimplemented explicit suffix policy", status => {
@@ -16,7 +16,7 @@ describe("Warranty exact Draft append and Aviso rules", () => {
     expect(() => buildWarrantyPlan(f.facts, f.evidence, f.config)).toThrow(/WARRANTY_AP_SUFFIX_V1/);
   });
   it.each(["DRAFT", "SUBMITTED", "AUTHORISED", "BILLED", "PAID", "VOIDED", "DELETED", "UNKNOWN"])("Aviso collision %s holds with no adoption/bypass", Status => {
-    const f = warrantyFixture(); f.evidence.poHistory = [{ PurchaseOrderID: "other-id", PurchaseOrderNumber: "I77", Status }];
+    const f = warrantyFixture(); f.evidence.poHistory = [{ PurchaseOrderID: "other-id", PurchaseOrderNumber: "ID77", Status }];
     expect(() => buildWarrantyPlan(f.facts, f.evidence, f.config)).toThrow(/collision/);
   });
   it.each(["customer", "supplier", "nativeDescription", "purchaseDescription", "salesPremium", "purchasePremium", "purchaseAccount", "salesTax", "purchaseTax", "accountStatus", "taxRate", "currency", "inclusive", "allocations", "existingWar", "mainDuplicate", "unknownLine", "lineTotal", "mainTotal", "duplicateLineId", "oldSuffix"])("holds on exact %s mismatch", scenario => {
@@ -48,6 +48,13 @@ describe("Warranty exact Draft append and Aviso rules", () => {
     const f = warrantyFixture(); f.evidence.mainHistory = []; expect(() => buildWarrantyPlan(f.facts, f.evidence, f.config)).toThrow(/missing\/ambiguous/);
     const g = warrantyFixture(); g.config.dateSemantics.issue = "source_iso_date"; g.config.fields.issueDate = { ...g.config.fields.dealNumber, type: { name: "date" } }; g.facts.issueDate = "2026-10-02";
     expect(() => buildWarrantyPlan(g.facts, g.evidence, g.config)).toThrow(/semantics/);
+  });
+  it("preserves an absent current main due date instead of inventing one", () => {
+    const f = warrantyFixture(); delete f.evidence.main!.DueDate;
+    const plan = buildWarrantyPlan(f.facts, f.evidence, f.config);
+    expect(plan.expectedMain).not.toHaveProperty("DueDate");
+    const readback = structuredClone(plan.expectedMain); readback.LineItems[1].LineItemID = "new-id";
+    expect(() => assertWarrantyReadback(readback, plan.expectedMain, "main", "main-id")).not.toThrow();
   });
   it("factual source hold cannot be bypassed by Warranty Confirmed", () => {
     const f = warrantyFixture(); f.facts.holdReason = "Current Added Services unsupported"; (f.facts as any).warrantyConfirmed = true;

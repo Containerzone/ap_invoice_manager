@@ -1,8 +1,8 @@
 # Operations → AP Warranty & Aviso alignment
 
-## Status: readiness only, no external effects
+## Status: implementation integrated; release held on source/Xero evidence
 
-**Default-off AP code/readiness checkpoint. Not a production cutover.** No Operations/VTiger/Make system was accessed or changed by this continuation. No external HTTP was performed, no source record or Xero document was read/created/amended, and no release policy, persistent flag, schedule, Heartbeat or publication was changed.
+**Warranty remains independently default-off and is not a production cutover.** The shared customer-contact gates are active for separately authorised customer-invoice families, but do not enable Warranty. No Warranty release policy/flag, Operations/VTiger/Make setting, schedule, Heartbeat or financial document was changed by this implementation.
 
 **Migration 0045 was generated, inspected and applied through the managed AP SQL tool.** `drizzle/0045_slow_archangel.sql` adds only the AP immutable warranty event table. A read-only query confirmed the newly applied ledger has 0 events and 0 execution-or-receipt rows. This local schema change did not access or modify Operations, VTiger, Make or Xero.
 
@@ -22,32 +22,34 @@ No acknowledgment or operational approval was recorded here.
 | Surface | Contract |
 | --- | --- |
 | Private POST | `/api/webhooks/vtiger/warranty-aviso` |
-| Authentication | `x-financial-webhook-secret`, existing `FINANCIAL_AP_WEBHOOK_SECRET` |
-| Event | Exact `warranty.aviso-requested` |
-| Identity | One exact Deal webservice ID via `deal_id`, `record_id` or `id`; aliases, if multiple, must all agree |
+| Authentication | Canonical VTiger JSON `secret` or existing header secret; no secret is logged or persisted |
+| Event | Not authoritative; ignored |
+| Identity | One exact Deal webservice ID via `deal_id`, `record_id` or `id`, or a legacy D-number resolved by one bounded exact lookup after the two family gates; aliases, if multiple, must all agree |
 | Release | Exact dedicated Warranty flag plus independently approved dedicated policy |
 | Scope | New Events only; existing exact main Draft amendment plus one Aviso Draft PO |
 
 Synthetic envelope (not a real record):
 
 ```json
-{ "event": "warranty.aviso-requested", "deal_id": "5x77" }
+{ "id": "5x77", "secret": "[canonical shared secret]" }
 ```
 
-A D-number, list of IDs, conflicting aliases or different event is rejected. Amount, customer, premium, item, tax, suffix and `Warranty Confirmed` from the webhook body cannot supply financial authority. The service re-reads exact current source/customer facts and Xero evidence; it never scans/browses a source ledger.
+A list of IDs, an ambiguous D-number or conflicting aliases is rejected. Amount, customer, premium, item, tax, suffix and `Warranty Confirmed` from the webhook body cannot supply financial authority. The service re-reads exact current source/customer facts and Xero evidence; it never scans/browses a source ledger.
 
 401 authentication precedes everything. An unset/nonliteral-true dedicated flag yields 503 before policy, body/service/source/Xero processing. An unavailable/invalid policy also yields 503 before processing. No generic family/global/Main/Storage release can enable the receiver.
 
-## Actual source metadata and financial configuration: unproven and held
+## Actual source metadata and financial configuration: verified conflict, held
 
-No fresh source describe/retrieve or Xero read was performed during this continuation. **There is no claim of verified production source config, item, price, account or tax values.** All test fixtures are explicitly synthetic.
+The current VTiger Potentials metadata was read safely on 13 October. `cf_potentials_extra` / **Added Services** is an exact multipicklist and `cf_potentials_pdssent` / Warranty Confirmed is a boolean. The active field values are `$25k, $30k, $40k, $50k, $60k, $70k, $75k, $80k, $90k, $100k, $150k, $200k, $250k`.
+
+This conflicts with the supplied required map of exactly `$10k, $15k, $25k, $35k, $50k, $75k, $100k, $150k, $200k, $300k`. The code carries the supplied map and holds on live metadata drift; it does not select or price the substituted current VTiger bands. A Xero GET audit was rate-limited before it could establish usable Contact/item/account/tax proof. **There is no claim of verified production Xero item, price, account or tax values.**
 
 | Required evidence | Current state |
 | --- | --- |
-| Actual Potentials ID prefix and exact Deal-number binding | Unproven for Warranty release |
-| Added Services unique API name/label/full picklist/type/mandatory metadata | Unproven; no guessed custom API alias |
-| Exactly one approved Added Services → native WAR item/description/GST-exclusive premium mapping | Unproven; `WAR-TEST` and premium 100 are tests only |
-| Current linked organisation/contact and customer-name/Modified Time metadata | Unproven for this release |
+| Actual Potentials ID prefix and exact Deal-number binding | Verified source prefix `5` and standard `potential_no`; release still needs post-cutover event evidence |
+| Added Services unique API name/label/full picklist/type/mandatory metadata | Verified `cf_potentials_extra` / Added Services / multipicklist; values conflict with supplied required mapping |
+| Exactly one approved Added Services → native WAR item/description/GST-exclusive premium mapping | Blocked until owner resolves the required-map vs live-field conflict; no price/code guessed |
+| Current linked organisation/contact and customer-name/Modified Time metadata | Source fields verified; every event is re-read and must pass the shared customer-contact resolver |
 | Source issue/due or preserve-main semantics; timestamp timezone and new-event delivery semantics | Unproven; ambiguous/local dates/times hold |
 | Exact active Aviso Broking Pty Ltd ContactID and tenant | Unproven; required name is not contact verification |
 | Actual native WAR sales/purchase descriptions, premiums, accounts and sold/purchased flags | Unproven |
@@ -60,8 +62,8 @@ No fresh source describe/retrieve or Xero read was performed during this continu
 
 - Require exactly one unpaid/unallocated **AUD Exclusive ACCREC DRAFT** `INV-<Deal digits>` with complete existing line identities, accounts/tax/arithmetic, tracking/discounts, retained supported header fields and dates.
 - Retain all existing full lines; append exactly one native approved WAR line. No remove/replace/adopt behavior and no whole-main creation when missing.
-- Existing WAR line, non-Draft main, suffix history, unreadable/ambiguous main history or any exact Aviso `I<Deal digits>` PO collision holds. No approved alternative suffix path exists in this implementation.
-- Create only the **AUD Exclusive DRAFT** Aviso `I<Deal digits>` PO with the exact native description/exclusive premium, account 313 and INPUT tax after verified main readback.
+- Existing WAR line, non-Draft main, suffix history, unreadable/ambiguous main history or any exact Aviso `ID<Deal digits>` PO collision holds. No approved alternative suffix path exists in this implementation.
+- Create only the **AUD Exclusive DRAFT** Aviso `ID<Deal digits>` PO with the exact native description/exclusive premium, account 313 and INPUT tax after verified main readback.
 - **Main receipt must have `readbackVerified === true` at both writer authorization and DB attempt consumption.** HTTP success/ID/receipt existence or a truthy `"true"`/1 is not sufficient. Full-document line/header/date/contact/tax/totals comparison must pass; current main is compared again before PO.
 - Every attempt is consumed before mocked transport; real transport is never automatically retried. Partial pair or uncertain readback keeps the immutable Deal claim and receipts and ends in `reconciliation_required`, not an invitation to replay.
 - No CRM post-success update, legacy adoption/import, claim reset, browser release or retry control.
@@ -75,7 +77,7 @@ The administrator page and all three tRPC procedures are queries, not mutation/r
 1. Test real uniqueness and ledger failure/concurrency handling safely before activation.
 2. Prove actual exact source/customer metadata, one mapping/premium, date/time semantics and genuine post-cutover warranty-event delivery; approve corresponding hashes.
 3. Prove exact live Aviso/item/accounts/tax/tenant evidence and safe non-production full-line Xero normalization/readback behavior.
-4. Coordinate the warranty-only VTiger branch, Operations/Make legacy writer handover and Main Invoice warranty path; an AP GET/PUT cannot provide an external atomic lock.
+4. Coordinate the warranty-only VTiger branch, Operations/Make legacy writer handover and Main Invoice warranty path; an AP GET/POST amendment cannot provide an external atomic lock.
 5. Obtain explicit isolated Draft-main amendment/New Events-only/no-CRM-mutation approval with exact rules/configuration hashes. Do not treat this document or test fixtures as that approval.
 6. Publication/activation or flag/policy changes remain separate explicitly authorized work. This checkpoint performs none of them.
 

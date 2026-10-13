@@ -35,11 +35,11 @@ export async function authorizeWarrantyWrite(payload: WarrantyPayload, context: 
     context.step === "po" && !hasVerifiedMainReceipt) throw new Error("Warranty immutable attempt consumed/partial/uncertain; no retry or PO-before-verified-main-readback bypass.");
   const facts = await readWarrantyFacts(reservation.dealId, policy.sourceConfig);
   if (facts.holdReason || financialSha256(facts) !== reservation.sourceSnapshotHash || facts.sourceMappingsHash !== policy.sourceMappingsHash || facts.addedServicesMappingHash !== policy.addedServicesMappingHash) throw new Error("Warranty current exact Deal/customer/Added Services/source metadata changed; hold.");
-  const current = await readWarrantyXeroEvidence(facts);
+  const current = await readWarrantyXeroEvidence(facts, { customerContactId: originalEvidence.customer.ContactID });
   assertWarrantyConfiguration(facts, current);
   if (current.configurationHash !== policy.xeroConfigurationHash || current.supplier.ContactID !== policy.avisoContactId) throw new Error("Warranty exact Aviso/item/account/tax configuration does not match approved policy.");
   if (context.step === "main") {
-    if (current.comparisonHash !== originalEvidence.comparisonHash || financialSha256(buildWarrantyPlan(facts, current, policy.sourceConfig!)) !== financialSha256(rebuilt)) throw new Error("Warranty current full main/line/collision preflight drift; no PUT.");
+    if (current.comparisonHash !== originalEvidence.comparisonHash || financialSha256(buildWarrantyPlan(facts, current, policy.sourceConfig!)) !== financialSha256(rebuilt)) throw new Error("Warranty current full main/line/collision preflight drift; no POST amendment.");
   } else {
     if (current.mainHistory.length !== 1 || current.mainHistory[0].InvoiceID !== rebuilt.expectedMain.InvoiceID ||
       financialSha256(current.otherInvoices) !== financialSha256(originalEvidence.otherInvoices) || financialSha256(current.customer) !== financialSha256(originalEvidence.customer)) throw new Error("Warranty post-main current candidate/customer history changed; PO held.");
@@ -57,7 +57,7 @@ export async function executeWarrantyOperation(payload: WarrantyPayload, context
   try {
     const response = await runXeroRequest<any>(auth, `warranty-aviso:${payload.operation}:${reservation.id}`, () => {
       const headers = { Authorization: `Bearer ${auth.token}`, "Xero-tenant-id": auth.tenantId, "Content-Type": "application/json", "Idempotency-Key": payload.idempotencyKey };
-      return payload.method === "PUT" ? axios.put(`${BASE}${payload.endpoint}`, payload.body, { headers, timeout: 20_000 }) : axios.post(`${BASE}${payload.endpoint}`, payload.body, { headers, timeout: 20_000 });
+      return axios.post(`${BASE}${payload.endpoint}`, payload.body, { headers, timeout: 20_000 });
     }, { retryTransientGatewayFailures: false });
     receipt = { ...receipt, httpStatus: response.status, response: response.data };
     const list = context.step === "main" ? response.data?.Invoices : response.data?.PurchaseOrders;
