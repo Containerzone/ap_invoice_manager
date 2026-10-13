@@ -34,7 +34,7 @@ The owner has approved the historical item-code and GST-exclusive-premium pairs 
 
 `Warranty $150k`, `$200k` and `$250k` remain unsupported. A separate approval must provide each of those values’ item code, exact native description and GST-exclusive premium before it can enter the mapping.
 
-One bounded Xero GET-only configuration audit was attempted after this selection and was rejected with HTTP 429 before returning item/contact/account/tax evidence. No more Xero requests will be made in this run. The three higher bands must remain unsupported; no premium, item code or description will be inferred.
+The initial bounded Xero GET-only configuration audit was rate-limited. After the Accounting quota recovered, a replacement bounded audit proved the expected tenant, one active Aviso contact, active account 313/INPUT and active 10% INPUT/OUTPUT tax records. It also found that all first-ten WAR items currently expose account 313/INPUT in SalesDetails, their sale/purchase descriptions differ, and WAR25 has a $195.50 purchase price. The three higher bands remain unsupported; no premium, item code or description will be inferred.
 
 ## Operations template and lifecycle facts to preserve
 

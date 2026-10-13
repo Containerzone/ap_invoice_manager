@@ -4,7 +4,7 @@
 
 **Warranty remains independently default-off and is not a production cutover.** The shared customer-contact gates are active for separately authorised customer-invoice families, but do not enable Warranty. No Warranty release policy/flag, Operations/VTiger/Make setting, schedule, Heartbeat or financial document was changed by this implementation.
 
-On 13 October 2026, the owner confirmed the Warranty & Aviso VTiger webhook is published to the AP route with the canonical `id` / `secret` JSON body and the Operations writer is switched off. The AP family remains held because the required current Xero evidence cannot be collected: a bounded read-only Xero tenant check returned HTTP 429. The dedicated Warranty runtime gate remains false and no release policy has been enabled.
+On 13 October 2026, the owner confirmed the Warranty & Aviso VTiger webhook is published to the AP route with the canonical `id` / `secret` JSON body and the Operations writer is switched off. The AP family remains held: after the Xero quota recovered, a bounded read-only configuration audit found unsafe WAR sales configuration. The dedicated Warranty runtime gate remains false and no release policy has been enabled.
 
 **Migration 0045 was generated, inspected and applied through the managed AP SQL tool.** `drizzle/0045_slow_archangel.sql` adds only the AP immutable warranty event table. A read-only query confirmed the newly applied ledger has 0 events and 0 execution-or-receipt rows. This local schema change did not access or modify Operations, VTiger, Make or Xero.
 
@@ -44,18 +44,18 @@ A list of IDs, an ambiguous D-number or conflicting aliases is rejected. Amount,
 
 The current VTiger Potentials metadata was read safely on 13 October. `cf_potentials_extra` / **Added Services** is an exact multipicklist and `cf_potentials_pdssent` / Warranty Confirmed is a boolean. The active field values are `$25k, $30k, $40k, $50k, $60k, $70k, $75k, $80k, $90k, $100k, $150k, $200k, $250k`.
 
-This conflicts with the supplied required map of exactly `$10k, $15k, $25k, $35k, $50k, $75k, $100k, $150k, $200k, $300k`. The code carries the supplied map and holds on live metadata drift; it does not select or price the substituted current VTiger bands. A Xero GET audit was rate-limited before it could establish usable Contact/item/account/tax proof. **There is no claim of verified production Xero item, price, account or tax values.**
+This conflicts with the supplied required map of exactly `$10k, $15k, $25k, $35k, $50k, $75k, $100k, $150k, $200k, $300k`. The current code uses the owner-approved Operations pairs for the first ten live bands and holds on $150k/$200k/$250k. A fresh bounded Xero audit proved the expected tenant, active Aviso contact, account 313/INPUT and active 10% INPUT/OUTPUT taxes. However, all WAR25–WAR100 items currently have `SalesDetails` account 313 and INPUT tax, sale/purchase descriptions do not match, and WAR25's purchase price is $195.50 rather than $192.50. **The live WAR items must not be used for a customer main invoice until their SalesDetails are configured to an active revenue account with OUTPUT GST and the exact native descriptions/prices are aligned.**
 
 | Required evidence | Current state |
 | --- | --- |
 | Actual Potentials ID prefix and exact Deal-number binding | Verified source prefix `5` and standard `potential_no`; release still needs post-cutover event evidence |
 | Added Services unique API name/label/full picklist/type/mandatory metadata | Verified `cf_potentials_extra` / Added Services / multipicklist; values conflict with supplied required mapping |
-| Exactly one approved Added Services → native WAR item/description/GST-exclusive premium mapping | Blocked until owner resolves the required-map vs live-field conflict; no price/code guessed |
+| Exactly one approved Added Services → native WAR item/description/GST-exclusive premium mapping | First ten live-band code/premium pairs approved; blocked on matching native descriptions, SalesDetails revenue/OUTPUT setup, WAR25 purchase-price correction and $150k/$200k/$250k mapping |
 | Current linked organisation/contact and customer-name/Modified Time metadata | Source fields verified; every event is re-read and must pass the shared customer-contact resolver |
 | Source issue/due or preserve-main semantics; timestamp timezone and new-event delivery semantics | Unproven; ambiguous/local dates/times hold |
-| Exact active Aviso Broking Pty Ltd ContactID and tenant | Unproven; required name is not contact verification |
-| Actual native WAR sales/purchase descriptions, premiums, accounts and sold/purchased flags | Unproven |
-| Active purchase account 313/INPUT and sales account/OUTPUT; actual active 10% tax rates | Unproven; code requirements are not live evidence |
+| Exact active Aviso Broking Pty Ltd ContactID and tenant | Verified through bounded current GET-only audit |
+| Actual native WAR sales/purchase descriptions, premiums, accounts and sold/purchased flags | Sold/purchased flags verified; descriptions differ; SalesDetails use unsafe account 313/INPUT; WAR25 purchase premium differs |
+| Active purchase account 313/INPUT and sales account/OUTPUT; actual active 10% tax rates | Account 313/INPUT and INPUT/OUTPUT tax rates verified; sales revenue/OUTPUT account is not configured/proven |
 | Full exact INV/I-reference history, original Draft lines/header/totals | Unproven; must be freshly revalidated for each separately authorized future event |
 
 `Warranty Confirmed` is ignored. Unsupported Added Services, mapping/type/metadata drift, missing customer, invalid offset-bearing timestamps, unapproved hashes or source before approved cutover hold instead of guessing.
