@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseCustomerSalePurchaseWebhookEnvelope, registerCustomerSalePurchaseWebhook } from "./financialCustomerSalePurchaseWebhook";
+const candidateLookup = vi.hoisted(() => ({ find: vi.fn() }));
+vi.mock("./vtigerFinancialCandidateService", () => ({ findExactFinancialCandidate: candidateLookup.find }));
+
+import { parseCustomerSalePurchaseWebhookEnvelope, registerCustomerSalePurchaseWebhook, resolveCustomerSalePurchaseRecordId } from "./financialCustomerSalePurchaseWebhook";
 
 afterEach(() => {
   delete process.env.FINANCIAL_AP_WEBHOOK_SECRET;
@@ -9,7 +12,20 @@ afterEach(() => {
 describe("Customer Sale purchase webhook contract", () => {
   it("accepts an exact VTiger record id only and ignores financial body fields", () => {
     expect(parseCustomerSalePurchaseWebhookEnvelope({ record_id: "24x901", event: "container-control.customer-sale-request", amount: 0 })).toEqual({ recordId: "24x901", event: "container-control.customer-sale-request" });
-    expect(() => parseCustomerSalePurchaseWebhookEnvelope({ id: "C1860" })).toThrow(/exact VTiger/i);
+    expect(parseCustomerSalePurchaseWebhookEnvelope({ id: "C1860" })).toEqual({ recordId: "C1860", event: null });
+    expect(() => parseCustomerSalePurchaseWebhookEnvelope({ id: "D702930" })).toThrow(/exact VTiger/i);
+  });
+
+  it("resolves the Customer Sale C-number through one exact read-only lookup", async () => {
+    candidateLookup.find.mockResolvedValueOnce({
+      outcome: "found",
+      sourceCategory: "container_control",
+      businessNumber: "C1879",
+      candidates: [{ recordId: "5x489279" }],
+      message: "Exact VTiger candidate found",
+    });
+    await expect(resolveCustomerSalePurchaseRecordId("C1879")).resolves.toBe("5x489279");
+    expect(candidateLookup.find).toHaveBeenCalledWith({ sourceCategory: "container_control", businessNumber: "C1879" });
   });
 
   it("mounts the protected route but holds before source reads or Xero writes while its release gate is off", async () => {

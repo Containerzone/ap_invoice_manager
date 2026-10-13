@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { CUSTOMER_SALE_PURCHASE_WEBHOOK_PATH, processAutomaticCustomerSalePurchase } from "./financialCustomerSalePurchaseService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
 import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
+import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
 
 export const CUSTOMER_SALE_PURCHASE_WEBHOOK_SECRET_HEADER = "x-financial-webhook-secret" as const;
 export const CUSTOMER_SALE_PURCHASE_WEBHOOK_EVENT = "container-control.customer-sale-request" as const;
@@ -13,9 +14,17 @@ export function parseCustomerSalePurchaseWebhookEnvelope(body: unknown): Custome
   const source = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
   const recordId = typeof source.record_id === "string" ? source.record_id.trim()
     : typeof source.id === "string" ? source.id.trim() : "";
-  if (!/^\d+x\d+$/i.test(recordId)) throw new Error("Customer Sale purchase webhook requires an exact VTiger Container Control id or record_id.");
+  if (!/^\d+x\d+$/i.test(recordId) && !/^C\d+$/i.test(recordId)) throw new Error("Customer Sale purchase webhook requires an exact VTiger Container Control id, record_id or C-number.");
   const event = typeof source.event === "string" && source.event.trim() ? source.event.trim() : null;
   return { recordId, event };
+}
+
+/** Resolves VTiger's id-to-C-number mapping with one exact, read-only lookup. */
+export async function resolveCustomerSalePurchaseRecordId(reference: string): Promise<string> {
+  if (/^\d+x\d+$/i.test(reference)) return reference;
+  const lookup = await findExactFinancialCandidate({ sourceCategory: "container_control", businessNumber: reference });
+  if (lookup.outcome !== "found" || lookup.candidates.length !== 1) throw new Error(lookup.message || "Customer Sale Container Control business reference is missing or ambiguous.");
+  return lookup.candidates[0].recordId;
 }
 
 export function hasCustomerSalePurchaseWebhookSecret(req: Pick<Request, "header" | "body">): boolean {
@@ -30,29 +39,38 @@ export function registerCustomerSalePurchaseWebhook(app: Express): void {
     try {
       envelope = parseCustomerSalePurchaseWebhookEnvelope(req.body);
     } catch (error) {
+      reportWorkflowFailureSafely({
+        workflowType: "customer_sale_purchase",
+        recordKey: "customer-sale-purchase:webhook-envelope",
+        title: "Customer Sale purchase webhook rejected",
+        errorMessage: error instanceof Error ? error.message : "Invalid Customer Sale purchase webhook envelope.",
+        details: { route: CUSTOMER_SALE_PURCHASE_WEBHOOK_PATH },
+        severity: "error",
+      });
       return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : "invalid-customer-sale-purchase-webhook" });
     }
     if (process.env.FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED !== "true") {
       return res.status(503).json({ ok: false, status: "held", error: "customer-sale-purchase-release-disabled", xeroWritesAttempted: 0 });
     }
     try {
-      const result = await processAutomaticCustomerSalePurchase(envelope.recordId);
+      const resolvedRecordId = await resolveCustomerSalePurchaseRecordId(envelope.recordId);
+      const result = await processAutomaticCustomerSalePurchase(resolvedRecordId);
       if (!result.ok) reportWorkflowFailureSafely({
         workflowType: "customer_sale_purchase",
-        recordKey: `customer-sale-purchase:${envelope.recordId}`,
+        recordKey: `customer-sale-purchase:${resolvedRecordId}`,
         title: "Customer Sale purchase PO held",
         errorMessage: ("warning" in result ? result.warning : null) ?? result.status,
-        details: { containerControlId: envelope.recordId, status: result.status },
+        details: { containerControlId: resolvedRecordId, webhookReference: envelope.recordId, status: result.status },
         severity: "error",
       });
       return res.status(result.ok ? 200 : 202).json(result);
-    } catch {
+    } catch (error) {
       reportWorkflowFailureSafely({
         workflowType: "customer_sale_purchase",
         recordKey: `customer-sale-purchase:${envelope.recordId}`,
         title: "Customer Sale purchase PO held",
-        errorMessage: "Customer Sale purchase source, release or Xero preflight could not be completed.",
-        details: { containerControlId: envelope.recordId },
+        errorMessage: error instanceof Error ? error.message : "Customer Sale purchase source, release or Xero preflight could not be completed.",
+        details: { containerControlReference: envelope.recordId },
         severity: "error",
       });
       return res.status(202).json({ ok: false, status: "held", warning: "Customer Sale purchase PO held; inspect the AP lifecycle ledger.", xeroWritesAttempted: 0 });
