@@ -32,9 +32,9 @@ The current owner-supplied required template specifies a different, exact ten-ba
 
 The owner has approved the historical item-code and GST-exclusive-premium pairs for the first ten current bands (`$25k` through `$100k` above). The native description remains deliberately dynamic: it is read from the exact current Xero item and must match both its sale and purchase description before a release policy can approve it; no description is hard-coded or guessed.
 
-`Warranty $150k`, `$200k` and `$250k` remain unsupported. A separate approval must provide each of those values’ item code, exact native description and GST-exclusive premium before it can enter the mapping.
+`Warranty $150k`, `$200k` and `$250k` remain unsupported and each such event must hold. They do not prevent a future separately approved **first-ten-only** release; a higher-band mapping must be separately approved before that specific band can ever proceed.
 
-The initial bounded Xero GET-only configuration audit was rate-limited. After the Accounting quota recovered, a replacement bounded audit proved the expected tenant, one active Aviso contact, active account 313/INPUT and active 10% INPUT/OUTPUT tax records. It also found that all first-ten WAR items currently expose account 313/INPUT in SalesDetails, their sale/purchase descriptions differ, and WAR25 has a $195.50 purchase price. The three higher bands remain unsupported; no premium, item code or description will be inferred.
+The initial bounded Xero GET-only configuration audit was rate-limited. After the Accounting quota recovered, a replacement bounded audit proved the expected tenant, one active Aviso contact, active account 313/INPUT and active 10% INPUT/OUTPUT tax records. It also found that all first-ten WAR items currently expose account 313/INPUT in SalesDetails, their sale/purchase descriptions differ, and WAR25 has a $195.50 purchase price. A second audit after the owner reported the corrections found the same values, so no corrected item configuration is yet visible in this Xero tenant. The three higher bands remain unsupported; no premium, item code or description will be inferred.
 
 ## Operations template and lifecycle facts to preserve
 
