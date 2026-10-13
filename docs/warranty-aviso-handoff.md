@@ -2,9 +2,9 @@
 
 ## Checkpoint and authority
 
-**Current state: AP implementation is integrated but the Warranty family remains release-blocked.** The family still requires its own valid policy and `FINANCIAL_WARRANTY_AUTOMATIC_ENABLED === "true"`; neither is being enabled by this work. The shared customer-contact gates are active for separately approved customer-invoice flows, but cannot substitute for the Warranty family gate or policy.
+**Current state: first-ten Warranty & Aviso is live for new events only.** Its dedicated immutable policy and `FINANCIAL_WARRANTY_AUTOMATIC_ENABLED === "true"` are independently required; no other financial family can substitute. The shared customer-contact gates remain a separate prerequisite only when a qualifying event has a missing Xero customer contact.
 
-**No external HTTP was performed by this continuation.** Tests and builds ran in disconnected Linux network namespaces. All new financial/CRM transport, authentication, source and database paths exercised by tests were mocks. There were no real Xero writes, source record reads/mutations, policy writes or database migration/application calls.
+**Activation verification:** the public protected receiver accepted the canonical `id` / `secret` envelope and returned a parser-safe **400** for one deliberately nonexistent D-number, proving that the deployed runtime flag and policy were loaded before source, ledger or Xero execution. The Warranty event ledger remains at **0**. No Xero document, contact, item or VTiger record was changed by activation.
 
 ## Delivered surfaces
 
@@ -27,9 +27,9 @@ The table now exists and a read-only verification returned **0 events / 0 execut
 
 ### 13 October 2026 handover status
 
-The owner confirmed the VTiger Warranty & Aviso branch is published to the AP receiver using the canonical `id` / `secret` JSON body, with no `dryRun` property, and that the Operations writer is switched off. This satisfies the stated webhook/handover intent but does **not** bypass the AP-local Warranty policy or runtime gate.
+The owner confirmed the VTiger Warranty & Aviso branch is published to the AP receiver using the canonical `id` / `secret` JSON body, with no `dryRun` property, and that the Operations writer is switched off. This satisfies the stated webhook/handover intent and is bounded by the independently enabled AP-local policy and runtime gate.
 
-After the owner requested activation, the Xero Accounting quota was restored and a bounded GET-only configuration audit completed. The Operations contract was then corrected in AP: the main customer Draft uses the exact Added Services label with account 200/OUTPUT, while the Aviso PO uses the Xero purchase description with account 313/INPUT; the mapped premium is authoritative rather than an Xero item default price. A second, sequential metadata/Xero audit verified all ten approved mappings and produced the dedicated New Events/Draft-only policy. `FINANCIAL_WARRANTY_AUTOMATIC_ENABLED` remains false until this code checkpoint is published and the dedicated runtime flag is enabled.
+After the owner requested activation, the Xero Accounting quota was restored and a bounded GET-only configuration audit completed. The Operations contract was then corrected in AP: the main customer Draft uses the exact Added Services label with account 200/OUTPUT, while the Aviso PO uses the Xero purchase description with account 313/INPUT; the mapped premium is authoritative rather than an Xero item default price. A second, sequential metadata/Xero audit verified all ten approved mappings and produced the dedicated New Events/Draft-only policy. The policy, runtime flag and published receiver were verified on 13 October 2026 with a zero-write public probe.
 
 The dedicated gate requires **both** `FINANCIAL_WARRANTY_AUTOMATIC_ENABLED === "true"` and the separately approved config row `financial-automation.warranty-aviso-release`, whose `releaseKey` must equal that exact dedicated key. Generic/global/Main/Storage authorization cannot substitute.
 
@@ -58,11 +58,11 @@ Authorization independently binds the dedicated family/step/reservation/release/
 
 Ledger lifecycle is insert-only: new preview/hold evidence → unique lifetime `warranty:<Deal number>` claim/reservation → unique main attempt/receipt → unique PO attempt/receipt → `drafts_created` or terminal `reconciliation_required`. Consumption precedes HTTP. Transient transport retry is explicitly disabled. Partial/uncertain pairs retain claims, attempted-operation receipts and terminal reconciliation rather than clearing authority or retrying. No reconciliation/retry/reset action is exposed.
 
-## Unproven actual configuration — held
+## Proven current configuration and held values
 
 **The live source metadata was read on 13 October 2026 and the owner selected a current-live-band replacement contract.** `cf_potentials_extra` is the exact Potentials **Added Services** multipicklist and `cf_potentials_pdssent` / Warranty Confirmed is a boolean, not an eligibility fallback. Current Warranty values are `$25k, $30k, $40k, $50k, $60k, $70k, $75k, $80k, $90k, $100k, $150k, $200k, $250k`.
 
-The approved code implements the owner-approved historical item-code and GST-exclusive-premium pairs for the first ten current bands (`$25k` through `$100k`) and fails closed on the remaining live `$150k/$200k/$250k` selections. Exact native descriptions are not hard-coded: the current Xero item must return the same non-empty sale and purchase description, and that description is bound into the policy/source hash before the one native line can be written.
+The approved code implements the owner-approved item-code and GST-exclusive-premium pairs for the first ten current bands (`$25k` through `$100k`) and fails closed on the remaining live `$150k/$200k/$250k` selections. The customer main Draft uses the exact VTiger Added Services label; the Aviso PO uses the selected Xero item's non-empty purchase description. Each selected item evidence set is bound into the policy before any native line can be written.
 
 The fresh sequential GET-only evidence verified the expected tenant, one active Aviso contact, account 200/OUTPUT, account 313/INPUT and active 10% INPUT/OUTPUT tax records. Each first-ten current WAR item has an exact active purchased item, non-empty purchase description and account 313/INPUT purchase template. AP deliberately does not use or require the item SalesDetails because the Operations customer-main template specifies account 200/OUTPUT and the exact Added Services label; it also uses the owner-approved mapping premium rather than an item default price. The current policy has one immutable Xero configuration hash per WAR item, preventing a WAR25 audit from authorising WAR30–WAR100. No Xero document, contact, item or VTiger record was changed.
 
@@ -72,19 +72,20 @@ Aviso contact, tenant, active purchase account 313, main revenue account 200, ac
 
 ## Validation
 
-Final local validation (all financial transport mocked; networking disabled):
+Final local validation (financial transport mocked except the dedicated opt-in, nonexistent-ID public probe):
 
 | Check | Result |
 | --- | --- |
 | `npx tsc --noEmit` | Passed, exit 0 |
-| Focused `financialWarrantyAviso*.test.ts` | **8 files / 257 tests passed** |
-| `pnpm vitest run --exclude server/microsoftGraphConfig.test.ts` | **112 files / 1,158 tests passed** |
+| Focused `financialWarrantyAviso*.test.ts` | **8 files / 255 tests passed** |
+| `pnpm test` | **124 files / 1,246 tests passed (12 skipped)** |
 | `pnpm build` | Passed, exit 0; client and bundled server generated locally |
 | `git diff --check` | Passed |
+| Public opt-in receiver smoke test | Passed; deliberately nonexistent D-number returned 400 with zero Xero writes and zero Warranty events |
 
 Six new mocked test files contribute **181 tests** (release 46, webhook 37, writer 50, service 17, database 18, router 13); existing rules/source tests add 77. Tests cover strict receipt transition, full-readback failure, partial terminal pair/no retry, generic/tampered/missing authority, factual configuration holds, pre-existing claims, pre-cutover holds and administrator query-only contracts.
 
-One initial full-suite run lost the existing process environment during privilege isolation: **106 files / 1,135 tests passed; 6 files / 23 tests failed**. Re-running with the existing environment preserved, without changing any settings, passed all **112 / 1,158**. The credential-dependent Microsoft Graph file was excluded as requested and not executed. Build warnings concern pre-existing analytics placeholders, CSS import ordering, large bundles and pnpm settings; they do not constitute publication or validation of production services.
+Build warnings concern pre-existing analytics placeholders, CSS import ordering, large bundles and pnpm settings; they do not constitute financial-document validation.
 
 ## Remaining limitations and future review, not authorization
 
@@ -92,7 +93,6 @@ One initial full-suite run lost the existing process environment during privileg
 - Full-line Xero POST response and server-normalization behavior has only mocked coverage; verify an explicitly authorized non-production fixture later.
 - No cross-system lock prevents a legacy writer/operator from racing the final GET and POST amendment. Separate warranty writer handover **and** Main Customer Invoice warranty-entry coordination are required.
 - A Deal modified timestamp alone does not prove a warranty business event occurred after cutover. Delivery/new-event semantics require separate sign-off.
-- Real UI/service previews are not proven usable until actual source configuration review is complete.
-- External verification, approval, cutover, activation or publication remains separate work and must be explicitly authorized.
+- The active release supports only the mapped `$25k`–`$100k` values; `$150k/$200k/$250k` will continue to hold until separately mapped and approved.
 
 See [Operations alignment](operations-warranty-aviso-alignment.md) and the factual checkpoint appended to `todo.md`.

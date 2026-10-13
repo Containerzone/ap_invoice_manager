@@ -1,8 +1,8 @@
 # Operations → AP Warranty & Aviso alignment
 
-## Status: first-ten implementation and policy prepared; runtime gate pending publication
+## Status: first-ten New Events/Draft-only release active
 
-On **13 October 2026**, the owner confirmed the Warranty & Aviso VTiger webhook uses the AP receiver with the canonical JSON `{ "id", "secret" }` body and that the Operations Warranty writer is switched off. The AP policy is **New Events only** and **Draft only**. It does not approve/send/pay/void/delete a Xero document or update VTiger after success.
+On **13 October 2026**, the owner confirmed the Warranty & Aviso VTiger webhook uses the AP receiver with the canonical JSON `{ "id", "secret" }` body and that the Operations Warranty writer is switched off. The dedicated policy and runtime gate are now published and active for the first ten approved bands. The AP policy is **New Events only** and **Draft only**. It does not approve/send/pay/void/delete a Xero document or update VTiger after success.
 
 The current AP code and policy support the first ten current Added Services bands only:
 
@@ -58,11 +58,8 @@ The Xero item SalesDetails/default price are not a source of truth for either li
 - Transport is never automatically retried. Any partial/uncertain result remains in `reconciliation_required`; claims are never cleared or adopted from legacy history.
 - No CRM post-success update, schedule or browser release/retry control exists.
 
-## Activation sequence
+## Activation verification
 
-1. Publish the checkpoint containing the Operations split template and per-item policy binding.
-2. Set `FINANCIAL_WARRANTY_AUTOMATIC_ENABLED=true`.
-3. Run an authenticated, nonexistent-ID public probe; it must reach the protected receiver and create no ledger work or Xero write.
-4. Allow only a new post-cutover qualifying event to proceed. Its own fresh source/Xero preflight controls the Draft-only pair.
+The implementation/policy checkpoint was published, `FINANCIAL_WARRANTY_AUTOMATIC_ENABLED=true` was deployed, and an authenticated public nonexistent-ID probe returned parser-safe **400**. It created no Warranty event and no Xero write. Only a new post-cutover qualifying event may proceed; its own fresh source/Xero preflight controls the Draft-only pair.
 
 Migration `0045_slow_archangel.sql` is applied and the Warranty event ledger remains empty. No Xero document, contact, item or VTiger record was changed while validating or preparing this release.
