@@ -1,6 +1,6 @@
 # Customer Sale Purchase PO — AP Migration Handover
 
-**Status:** Implemented and tested in AP Management; **not live**.  
+**Status:** **Approved and configured for new Customer Sale / Request events only** from 14 October 2026, 17:03:47 Australia/Sydney. A fresh project deployment is required before the public receiver can load the approved runtime gate.
 **Operations alignment:** [Operations Customer Sale alignment](operations-customer-sale-alignment.md)  
 **Scope:** One Xero **Draft Purchase Order** for a new, exact VTiger Container Control Customer Sale event. No invoice, approval, sending, payment, voiding, deletion, or historical adoption.
 
@@ -19,26 +19,25 @@
 | Idempotency | AP-only `financial_customer_sale_purchase_po_events` ledger: unique Container Control and unique PO reference, exclusive claim and exact payload hash. |
 | UI | Administrator sidebar → **Customer Sale POs**: current source/Xero preview, non-secret readiness and lifecycle receipts. No browser write button. |
 
-## Current lock state
+## Activation record
 
-- `FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED` is **not true**.
-- No Customer Sale release policy is recorded.
+- `FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED=true` has been configured for this family only.
+- The independent policy `CUSTOMER-SALE-PO-c13a57a96d8290bb` is enabled with `new_events_only` scope, the approved current rules hash, dedicated Customer Sale branch assertion and Operations Customer Sale handover assertion.
 - No Customer Sale Heartbeat exists (none is required).
-- AP Customer Sale event rows: **0**; read-back verified Xero Customer Sale Draft POs: **0**.
-- Unauthenticated local receiver response: `401` JSON. This confirms the receiver is mounted but does not reveal or exercise the secret.
+- The pre-cutover C1879 event remains held because its current source status is not `REQUEST`; it is not eligible for replay under the new-events-only release.
+- An authenticated local public-receiver probe using a deliberately nonexistent Container Control returned `202` held and `xeroWritesAttempted: 0`; no Xero or VTiger record was created or changed.
+- The public deployment must be republished/redeployed after this handover update. Until then, a public call can safely return `customer-sale-purchase-release-disabled` even though the configured policy is enabled.
 
-## Separate live-cutover prerequisites
+## Published-receiver verification
 
-Do **not** treat the implementation as live until all of these are explicitly confirmed in the then-current conversation:
+Do **not** treat public automation as live until the latest activation checkpoint has been deployed and all of these have been confirmed:
 
-1. Publish the checkpoint containing this receiver and UI; verify the public endpoint returns authenticated JSON rather than application HTML.
-2. In VTiger, create/enable a dedicated AP action only for `Acquisition = CUSTOMER SALE` and `Status = REQUEST`, posting the existing authenticated body to:
+1. Publish/redeploy the current checkpoint; verify the public endpoint returns authenticated JSON and does not return `customer-sale-purchase-release-disabled`.
+2. Confirm the dedicated VTiger action is only for `Acquisition = CUSTOMER SALE` and `Status = REQUEST`, posting the existing authenticated body to:
    ```text
    https://apinvmanager-dm3caxom.manus.space/api/webhooks/vtiger/container-control-customer-sale
    ```
-3. Pause the Operations **Customer Sale** writer for future events only. Do not change Asset or For Hire branches.
-4. Confirm the exact effective Sydney timestamp and `new_events_only` scope.
-5. Explicitly approve automatic **Draft-only** Customer Sale POs. AP must then record its own release policy and enable only `FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED=true`.
-6. Send one qualifying new event and inspect **Customer Sale POs**. Verify the exact `S…` number, supplier contact, selected `20' Sale`/`40' Sale` item, account `322`, GST-exclusive amount, date, placeholder-resolved line description and Xero `DRAFT` read-back.
+3. Retain the confirmed Operations **Customer Sale** writer pause for future events only. Do not change Asset or For Hire branches.
+4. Send one qualifying post-cutover event and inspect **Customer Sale POs**. Verify the exact `S…` number, supplier contact, selected `20' Sale`/`40' Sale` item, account `322`, GST-exclusive amount, date, placeholder-resolved line description and Xero `DRAFT` read-back.
 
 A failed preflight, a changed source, an existing Xero reference or an uncertain Xero response must remain held for reconciliation. It must not retry as a new document or adjust an existing record.
