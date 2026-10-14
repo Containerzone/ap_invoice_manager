@@ -1,5 +1,6 @@
 import { invokeLLM } from "./_core/llm";
 import { storageGetSignedUrl } from "./storage";
+import { PO_TOKEN_PATTERN, normalizePoNumber } from "./poNumberResolution";
 
 export interface ExtractedInvoiceData {
   invoiceNumber: string | null;
@@ -81,13 +82,13 @@ async function fetchPdfAsBase64(fileKey: string): Promise<string> {
  * Searches the poNumber field, all line item descriptions, and a combined text blob.
  */
 export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string): string | null {
-  // Pattern: 1-2 uppercase letters + 4-6 digits + optional numeric suffix, as a whole token
-  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
+  // Shared pattern: ContainerZone references and Xero default-format numbers (PO-0255)
+  const PO_PATTERN = new RegExp(PO_TOKEN_PATTERN.source, "g");
 
   // Priority 1: if LLM already found a poNumber, validate it matches pattern
   if (data.poNumber) {
-    const match = data.poNumber.match(/^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/);
-    if (match) return data.poNumber;
+    const normalized = normalizePoNumber(data.poNumber);
+    if (normalized) return normalized;
     // LLM found something but it doesn't match — still search below
   }
 
@@ -124,20 +125,18 @@ export function applyPoNumberRegex(data: ExtractedInvoiceData, rawText?: string)
  */
 export function extractAllPoNumbers(data: ExtractedInvoiceData | null | undefined, rawText?: string): string[] {
   if (!data) return [];
-  const PO_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
+  const PO_PATTERN = new RegExp(PO_TOKEN_PATTERN.source, "g");
   const found = new Set<string>();
 
   // From LLM-identified top-level poNumber
-  if (data.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(data.poNumber)) {
-    found.add(data.poNumber);
-  }
+  const topLevel = normalizePoNumber(data.poNumber);
+  if (topLevel) found.add(topLevel);
 
   // From all line items — check description, poNumber field, and custRef
   for (const li of (data.lineItems ?? [])) {
     // Per-line-item poNumber (structured field — most reliable)
-    if (li.poNumber && /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/.test(li.poNumber)) {
-      found.add(li.poNumber);
-    }
+    const linePo = normalizePoNumber(li.poNumber);
+    if (linePo) found.add(linePo);
     // Per-line-item custRef (may contain container + PO, e.g. "CBHU4279322 P702739")
     if (li.custRef) {
       const custRefMatches = li.custRef.match(PO_PATTERN);

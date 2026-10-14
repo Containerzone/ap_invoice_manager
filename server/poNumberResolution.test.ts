@@ -1,11 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
+  normalizePoNumber,
   resolveExtractedPoNumbers,
   resolveInvoicePoNumbers,
   resolvePoNumbersFromLine,
 } from "./poNumberResolution";
 
 describe("authoritative PO number resolution", () => {
+  it("accepts Xero default-format PO numbers such as PO-0255 (PNI-759707 case)", () => {
+    expect(normalizePoNumber("PO-0255")).toBe("PO-0255");
+    expect(normalizePoNumber("po-0255")).toBe("PO-0255");
+    expect(normalizePoNumber("PO 0255")).toBe("PO-0255");
+    expect(normalizePoNumber("PO-025")).toBeNull();
+    expect(resolveInvoicePoNumbers({
+      poNumbersManuallyEdited: true,
+      extractedPoNumbers: ["PO-0255"],
+      extractedPoNumber: "PO-0255",
+      lineItems: [
+        { poNumber: "PO-0255", poNumberEdited: true, custRef: "14962461" },
+        { poNumber: "PO-0255", poNumberEdited: true, custRef: "14962485" },
+      ],
+    })).toEqual(["PO-0255"]);
+    expect(resolvePoNumbersFromLine({ poNumber: null, custRef: "Ref PO-0255 / D702840" })).toEqual(["PO-0255", "D702840"]);
+  });
+
   it("uses a structured line PO without also treating the D job number in custRef as a PO", () => {
     expect(resolvePoNumbersFromLine({
       poNumber: "AD702840",

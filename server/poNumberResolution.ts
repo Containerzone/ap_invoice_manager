@@ -5,12 +5,17 @@ export type PoBearingLine = {
   description?: string | null;
 };
 
-export const PO_TOKEN_PATTERN = /\b([A-Z]{1,2}\d{4,6}(?:-\d+)?)\b/g;
-const EXACT_PO_TOKEN_PATTERN = /^[A-Z]{1,2}\d{4,6}(?:-\d+)?$/;
-const HASH_TAGGED_PO_PATTERN = /#([A-Z]{1,2}\d{4,6}(?:-\d+)?)/g;
+// Two accepted shapes:
+//  1. ContainerZone references: 1–2 letters + 4–6 digits, optional "-n" suffix (AD702840, HC1860-2)
+//  2. Xero default-format numbers: "PO-" + 4+ digits (PO-0255)
+const PO_TOKEN_SOURCE = "(?:PO-\\d{4,}|[A-Z]{1,2}\\d{4,6}(?:-\\d+)?)";
+export const PO_TOKEN_PATTERN = new RegExp(`\\b(${PO_TOKEN_SOURCE})\\b`, "g");
+const EXACT_PO_TOKEN_PATTERN = new RegExp(`^${PO_TOKEN_SOURCE}$`);
+const HASH_TAGGED_PO_PATTERN = new RegExp(`#(${PO_TOKEN_SOURCE})`, "g");
 
 export function normalizePoNumber(value: string | null | undefined): string | null {
-  const normalized = value?.trim().toUpperCase() ?? "";
+  // Tolerate "PO 0255" / "PO0255" variants of the Xero default format.
+  const normalized = (value?.trim().toUpperCase() ?? "").replace(/^PO[\s-]*(\d{4,})$/, "PO-$1");
   return EXACT_PO_TOKEN_PATTERN.test(normalized) ? normalized : null;
 }
 
