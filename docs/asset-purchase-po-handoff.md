@@ -13,11 +13,11 @@ The dedicated Asset flow follows the authorised Operations behavior while remain
 | Route | `POST /api/webhooks/vtiger/container-control-asset` with existing private AP webhook header |
 | Reference | `A<Container Control Number>` — e.g. `AC1860` |
 | Xero document | One new **Draft Purchase Order** only |
-| Item / account | `Container Asset` / account `322` |
+| Item / account | `20' Sale` for 20-foot containers or `40' Sale` for 40-foot containers / account `322` |
 | GST / currency | GST-exclusive line, AUD |
 | Source price | VTiger **Purchase Price INCL GST**, converted to GST-exclusive before Xero transport |
-| Line description | Container ID, VTiger record ID, Asset, container type, grade, collection depot and purchase date; never VTiger rich-text notes |
-| Preflight | Exact Xero PO reference, exact supplier contact and `Container Asset` item checked by GET before any write |
+| Line description | Xero native placeholders resolved as `{Container Type} {What Condition Would you Like}` using current container type and grade; never VTiger rich-text notes |
+| Preflight | Exact Xero PO reference, exact supplier contact and the selected `20' Sale`/`40' Sale` item checked by GET before any write |
 | Completion | Exact Xero Draft ID/number/status/contact/date/line/total re-read before AP marks it successful |
 
 ## Safeguards

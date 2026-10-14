@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export const ASSET_PURCHASE_ACCOUNT_CODE = "322" as const;
-export const ASSET_PURCHASE_ITEM_CODE = "Container Asset" as const;
-export const ASSET_PURCHASE_RULES_VERSION = "container-control-asset-v1-standing-release" as const;
+export const ASSET_PURCHASE_ITEM_CODES = { 20: "20' Sale", 40: "40' Sale" } as const;
+export const ASSET_PURCHASE_RULES_VERSION = "container-control-asset-v2-sale-items-placeholders" as const;
 export const ASSET_PURCHASE_RULES_HASH = createHash("sha256").update(ASSET_PURCHASE_RULES_VERSION).digest("hex");
 
 export type AssetPurchaseContainerControlFacts = {
@@ -52,24 +52,20 @@ function parseDate(value: string): Date | null {
   return Number.isNaN(result.getTime()) ? null : result;
 }
 
+function containerFeet(value: string): 20 | 40 | null {
+  const normalized = normal(value);
+  if (/^20\b/.test(normalized) || normalized.includes("20 FOOT")) return 20;
+  if (/^40\b/.test(normalized) || normalized.includes("40 FOOT")) return 40;
+  return null;
+}
+
 function operationalDescription(facts: AssetPurchaseContainerControlFacts): string {
-  // Keep rich-text VTiger Notes deliberately out of the Xero line. This mirrors
-  // the Operations implementation while making every displayed field auditable.
-  const segments = [
-    facts.containerNumber || "Container TBC",
-    `(${facts.recordId})`,
-    "Asset",
-    facts.containerType,
-    facts.grade,
-    facts.collectionDepot,
-    facts.purchaseDate ? `Purchase Date: ${facts.purchaseDate}` : "",
-  ].filter(Boolean);
-  return segments.join(" — ");
+  return [facts.containerType, facts.grade].filter(Boolean).join(" ");
 }
 
 function line(facts: AssetPurchaseContainerControlFacts, amountExGst: number): FinancialLineItem {
   return {
-    itemCode: ASSET_PURCHASE_ITEM_CODE,
+    itemCode: ASSET_PURCHASE_ITEM_CODES[containerFeet(facts.containerType)!],
     description: operationalDescription(facts),
     quantity: 1,
     unitAmount: amountExGst,
@@ -99,6 +95,10 @@ export function buildAssetPurchasePo(facts: AssetPurchaseContainerControlFacts):
   }
   if (!facts.containerNumber) {
     return { eligible: false, holdReason: "Container ID is required for the Asset PO description.", proposedPoNumber: null, document: null };
+  }
+  const feet = containerFeet(facts.containerType);
+  if (!feet) {
+    return { eligible: false, holdReason: "Container Type must identify a supported 20 or 40 foot container.", proposedPoNumber: null, document: null };
   }
   if (!facts.supplierVtigerId || !facts.supplierName) {
     return { eligible: false, holdReason: "Assigned Supplier Name reference is required.", proposedPoNumber: null, document: null };

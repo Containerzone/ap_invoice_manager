@@ -21,8 +21,8 @@ describe("Customer Sale Container Control purchase-order rules", () => {
       subtotal: 1000, taxAmount: 100, total: 1100, issueDate: new Date("2026-10-11T00:00:00.000Z"),
     });
     expect(result.document?.lineItems).toEqual([expect.objectContaining({
-      itemCode: "Container Asset", accountCode: "322", quantity: 1, unitAmount: 1000,
-      description: "TGHU1234567 — (24x901) — Customer Sale — 20 FOOT — A Grade — PORT BOTANY — Purchase Date: 2026-10-11",
+      itemCode: "20' Sale", accountCode: "322", quantity: 1, unitAmount: 1000,
+      description: "20 FOOT A Grade",
     })]);
   });
 

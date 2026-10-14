@@ -82,7 +82,8 @@ function preflightReason(document: AssetPurchasePoPreview["document"], preflight
   if (!document || !preflight) return "No valid Asset PO proposal is available for Xero preflight.";
   if (preflight.duplicateState !== "not_found") return `Exact Xero PO ${document.proposedDocumentNumber} is ${preflight.duplicateState}${preflight.status ? ` (${preflight.status})` : ""}; AP will not bypass or adopt it.`;
   if (!preflight.contactCheck.found || !preflight.contactCheck.contactId) return "Xero supplier contact is missing, ambiguous or not an exact match.";
-  if (!preflight.itemChecks.some((item) => item.itemCode === "Container Asset" && item.found)) return "Xero Container Asset purchase item is unavailable.";
+  const expectedItem = document.lineItems[0]?.itemCode;
+  if (!expectedItem || !preflight.itemChecks.some((item) => item.itemCode === expectedItem && item.found)) return `Xero ${expectedItem ?? "selected Sale"} purchase item is unavailable.`;
   return null;
 }
 
