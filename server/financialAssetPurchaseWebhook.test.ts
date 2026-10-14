@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 const candidateLookup = vi.hoisted(() => ({ find: vi.fn() }));
+const assetProcessor = vi.hoisted(() => ({ process: vi.fn() }));
 vi.mock("./vtigerFinancialCandidateService", () => ({ findExactFinancialCandidate: candidateLookup.find }));
+vi.mock("./financialAssetPurchaseService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./financialAssetPurchaseService")>();
+  return { ...actual, processAutomaticAssetPurchase: assetProcessor.process };
+});
+vi.mock("./workflowAlertService", () => ({ reportWorkflowFailureSafely: vi.fn() }));
 
 import { parseAssetPurchaseWebhookEnvelope, registerAssetPurchaseWebhook, resolveAssetPurchaseRecordId } from "./financialAssetPurchaseWebhook";
 
@@ -36,5 +42,21 @@ describe("Asset purchase webhook contract", () => {
     await handlers.get("/api/webhooks/vtiger/container-control-asset")({ header: () => "test-secret", body: { id: "24x901" } }, res);
     expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "asset-purchase-release-disabled", xeroWritesAttempted: 0 }));
+  });
+
+  it("explains a stale Asset release policy without exposing internal execution details", async () => {
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET = "test-secret";
+    process.env.FINANCIAL_ASSET_PURCHASE_AUTOMATIC_ENABLED = "true";
+    candidateLookup.find.mockResolvedValueOnce({ outcome: "found", candidates: [{ recordId: "79x489399" }], message: "Exact VTiger candidate found" });
+    assetProcessor.process.mockRejectedValueOnce(new Error("Automatic Asset purchase release is disabled or lacks an approved current policy."));
+    const handlers = new Map<string, any>();
+    registerAssetPurchaseWebhook({ post: (path: string, handler: any) => handlers.set(path, handler) } as any);
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() } as any;
+    await handlers.get("/api/webhooks/vtiger/container-control-asset")({ header: () => "test-secret", body: { id: "C1916" } }, res);
+    expect(res.status).toHaveBeenCalledWith(202);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      warning: "Asset PO release policy needs refresh after the approved item-mapping change; no Xero write was attempted.",
+      xeroWritesAttempted: 0,
+    }));
   });
 });

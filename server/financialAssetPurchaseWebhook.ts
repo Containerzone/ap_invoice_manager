@@ -35,6 +35,14 @@ export function hasAssetPurchaseWebhookSecret(req: Pick<Request, "header" | "bod
   return hasFinancialWebhookSecret(req);
 }
 
+function safeAssetPurchaseHoldWarning(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "Automatic Asset purchase release is disabled or lacks an approved current policy.") {
+    return "Asset PO release policy needs refresh after the approved item-mapping change; no Xero write was attempted.";
+  }
+  return "Asset purchase PO held; inspect the AP lifecycle ledger.";
+}
+
 /** Registered only for the dedicated Asset / REQUEST VTiger branch; default-off before source reads. */
 export function registerAssetPurchaseWebhook(app: Express): void {
   app.post(ASSET_PURCHASE_WEBHOOK_PATH, async (req: Request, res: Response) => {
@@ -77,7 +85,7 @@ export function registerAssetPurchaseWebhook(app: Express): void {
         details: { containerControlReference: envelope.recordId },
         severity: "error",
       });
-      return res.status(202).json({ ok: false, status: "held", warning: "Asset purchase PO held; inspect the AP lifecycle ledger.", xeroWritesAttempted: 0 });
+      return res.status(202).json({ ok: false, status: "held", warning: safeAssetPurchaseHoldWarning(error), xeroWritesAttempted: 0 });
     }
   });
 }
