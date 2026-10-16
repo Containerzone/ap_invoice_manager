@@ -37,7 +37,7 @@ beforeEach(() => {
       "5x77": { id: "5x77", potential_no: "D702877", cf_potentials_quotereference: "20x9", related_to: "4x2", cf_potentials_containersituationselectone: "SHIPPER OWN", cf_potentials_pickuplocation: "Origin", cf_potentials_deliverylocation: "Destination", modifiedtime: "2026-10-11T01:00:00Z" },
       "20x9": { id: "20x9", quote_no: "Q-702877", LineItems: { 1: { productid: "14x1", quantity: "2", listprice: "250" } }, modifiedtime: "2026-10-11T02:00:00Z" },
       "4x2": { id: "4x2", accountname: "Customer Pty Ltd" },
-      "14x1": { id: "14x1", servicename: "Rail delivery" },
+      "14x1": { id: "14x1", servicename: "Transport - Loaded Container" },
     };
     return records[id] ?? { id };
   });
@@ -55,7 +55,7 @@ describe("Main Customer Invoice current-source evidence", () => {
   it("re-reads Deal, Quote, organisation and each VTiger Service before forming a GET-only Xero-ready proposal", async () => {
     const facts = await readMainCustomerInvoiceFacts("5x77");
     expect(retrieve.mock.calls.map(([id]) => id)).toEqual(["5x77", "20x9", "4x2", "14x1"]);
-    expect(facts).toMatchObject({ dealNumber: "D702877", quoteNumber: "Q-702877", customerName: "Customer Pty Ltd", serviceLines: [{ serviceVtigerId: "14x1", description: "Rail delivery", quantity: 2, unitAmount: 250 }] });
+    expect(facts).toMatchObject({ dealNumber: "D702877", quoteNumber: "Q-702877", customerName: "Customer Pty Ltd", serviceLines: [{ serviceVtigerId: "14x1", description: "Transport - Loaded Container", quantity: 2, unitAmount: 250 }] });
     const result = await previewMainCustomerInvoice("5x77");
     expect(result).toMatchObject({ state: "previewed", noWrites: true });
     expect(result.preview.document).toMatchObject({ proposedDocumentNumber: "INV-702877", partySourceId: "xero-customer", total: 550, lineItems: [expect.objectContaining({ itemCode: "SER9", description: "Loaded Container from Origin to Destination" })] });

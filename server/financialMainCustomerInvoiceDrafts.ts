@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export const MAIN_CUSTOMER_INVOICE_ACCOUNT_CODE = "200" as const;
-export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v2-xero-transport-item-routes" as const;
+export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v3-selective-container-sale-and-transport-lines" as const;
 export const MAIN_CUSTOMER_INVOICE_RULES_HASH = createHash("sha256").update(MAIN_CUSTOMER_INVOICE_RULES_VERSION).digest("hex");
 
 export type MainCustomerInvoiceServiceLineFacts = {
@@ -38,6 +38,7 @@ export type MainCustomerInvoicePreview = {
 };
 
 export type MainCustomerInvoiceTransportItemCode = "SER9" | "SER60";
+export type MainCustomerInvoiceContainerSaleItemCode = "20' Sale" | "40' Sale";
 
 function money(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -60,6 +61,24 @@ export function mainCustomerInvoiceTransportItemCode(containerSituation: string)
   const situation = upper(containerSituation);
   if (situation === "SHIPPER OWN") return "SER9";
   if (situation === "PURCHASED" || situation === "HIRED") return "SER60";
+  return null;
+}
+
+/**
+ * Transport presentation applies only to an explicitly transport-named Quote
+ * service. A container-sale or other Quote line must never inherit the route
+ * wording just because the Deal also has a transport leg.
+ */
+export function isMainCustomerInvoiceTransportService(description: string): boolean {
+  return /^TRANSPORT(?:\s|[-–—]|$)/i.test(normal(description));
+}
+
+/** Select the current sales item only for an identifiable 20/40-foot container product. */
+export function mainCustomerInvoiceContainerSaleItemCode(description: string): MainCustomerInvoiceContainerSaleItemCode | null {
+  const value = upper(description);
+  if (!value.includes("CONTAINER")) return null;
+  if (/^20\b/.test(value) || value.includes("20 FOOT")) return "20' Sale";
+  if (/^40\b/.test(value) || value.includes("40 FOOT")) return "40' Sale";
   return null;
 }
 
@@ -93,12 +112,15 @@ export function renderMainCustomerInvoiceRouteDescription(input: {
   return rendered;
 }
 
-function toFinancialLine(line: MainCustomerInvoiceServiceLineFacts, itemCode: MainCustomerInvoiceTransportItemCode): FinancialLineItem {
+function toFinancialLine(line: MainCustomerInvoiceServiceLineFacts, transportItemCode: MainCustomerInvoiceTransportItemCode | null): FinancialLineItem {
+  const isTransport = isMainCustomerInvoiceTransportService(line.description);
+  const itemCode = isTransport ? transportItemCode : mainCustomerInvoiceContainerSaleItemCode(line.description);
   return {
-    // This temporary description is never write-eligible. The current native
-    // Xero item description is read and rendered before the second preflight.
-    itemCode,
-    description: `Pending current Xero ${itemCode} route description`,
+    // Only a transport description is temporary: it is rendered from the
+    // current native Xero route template before writing. Other lines retain the
+    // exact current Quote service name.
+    itemCode: itemCode ?? "",
+    description: isTransport ? `Pending current Xero ${transportItemCode} route description` : normal(line.description),
     quantity: line.quantity,
     unitAmount: money(line.unitAmount),
     lineAmount: money(line.quantity * line.unitAmount),
@@ -108,7 +130,7 @@ function toFinancialLine(line: MainCustomerInvoiceServiceLineFacts, itemCode: Ma
   };
 }
 
-/** Replaces all transport-line descriptions with the exact current Xero template. */
+/** Replaces only SER9/SER60 transport-line descriptions with the current Xero template. */
 export function applyMainCustomerInvoiceXeroTransportDescription(input: {
   document: ProposedFinancialDocument;
   nativeDescription: string;
@@ -118,9 +140,11 @@ export function applyMainCustomerInvoiceXeroTransportDescription(input: {
   if (input.document.documentType !== "main_customer_invoice") return null;
   const description = renderMainCustomerInvoiceRouteDescription(input);
   if (!description || !input.document.lineItems.length) return null;
+  const transportCodes = new Set(["SER9", "SER60"]);
+  if (!input.document.lineItems.some((line) => transportCodes.has(line.itemCode))) return input.document;
   return {
     ...input.document,
-    lineItems: input.document.lineItems.map((line) => ({ ...line, description })),
+    lineItems: input.document.lineItems.map((line) => transportCodes.has(line.itemCode) ? { ...line, description } : line),
   };
 }
 
@@ -139,18 +163,19 @@ export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, now = 
   if (!/^\d+x\d+$/i.test(facts.customerVtigerId) || !normal(facts.customerName)) {
     return { eligible: false, holdReason: "A current Deal or Quote customer organisation/contact is required.", proposedInvoiceNumber: null, document: null };
   }
-  const itemCode = mainCustomerInvoiceTransportItemCode(facts.containerSituation);
-  if (!itemCode) {
+  const hasTransportLine = facts.serviceLines.some((line) => isMainCustomerInvoiceTransportService(line.description));
+  const transportItemCode = hasTransportLine ? mainCustomerInvoiceTransportItemCode(facts.containerSituation) : null;
+  if (hasTransportLine && !transportItemCode) {
     return { eligible: false, holdReason: "Current Deal Container Situation must be exactly SHIPPER OWN, PURCHASED or HIRED for the Main Invoice transport item.", proposedInvoiceNumber: null, document: null };
   }
-  if (!normal(facts.originSuburb) || !normal(facts.destinationSuburb)) {
+  if (hasTransportLine && (!normal(facts.originSuburb) || !normal(facts.destinationSuburb))) {
     return { eligible: false, holdReason: "Current Deal Origin Suburb and Destination Suburb are required for the Main Invoice transport description.", proposedInvoiceNumber: null, document: null };
   }
   if (!facts.serviceLines.length || facts.serviceLines.some((line) => !validServiceLine(line))) {
     return { eligible: false, holdReason: "The linked VTiger Quote requires one or more current billable Service line items with quantity and list price.", proposedInvoiceNumber: null, document: null };
   }
   const issueDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const lineItems = facts.serviceLines.map((line) => toFinancialLine(line, itemCode));
+  const lineItems = facts.serviceLines.map((line) => toFinancialLine(line, transportItemCode));
   const subtotal = money(lineItems.reduce((total, line) => total + line.lineAmount, 0));
   const invoiceNumber = mainCustomerInvoiceNumber(facts.dealNumber);
   return {

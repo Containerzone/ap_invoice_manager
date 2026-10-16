@@ -119,23 +119,49 @@ function bindVerifiedMainTransportDescription(input: {
   document: NonNullable<MainCustomerInvoicePreview["document"]>;
   preflight: FinancialXeroPreflight | null;
 }): { document: NonNullable<MainCustomerInvoicePreview["document"]> | null; reason: string | null } {
-  const itemCodes = Array.from(new Set(input.document.lineItems.map((line) => line.itemCode.trim()).filter(Boolean)));
-  if (itemCodes.length !== 1 || !["SER9", "SER60"].includes(itemCodes[0]!)) {
-    return { document: null, reason: "Main Invoice transport item evidence is not an exact SER9 or SER60 selection." };
+  const transportCodes = Array.from(new Set(input.document.lineItems
+    .map((line) => line.itemCode.trim().toUpperCase())
+    .filter((itemCode) => itemCode === "SER9" || itemCode === "SER60")));
+  if (transportCodes.length > 1) {
+    return { document: null, reason: "Main Invoice contains conflicting current Xero transport item selections." };
   }
-  const item = input.preflight?.itemChecks.find((check) => check.itemCode.trim().toUpperCase() === itemCodes[0]!.toUpperCase());
-  if (!item?.found || item.isSold !== true || item.salesAccountCode !== "200" || item.salesTaxType !== "OUTPUT" || !item.nativeDescription) {
-    return { document: null, reason: `Current Xero sales item ${itemCodes[0]} must be active for sale with account 200, OUTPUT GST and its native route description.` };
-  }
-  const document = applyMainCustomerInvoiceXeroTransportDescription({
+  const saleCodes = Array.from(new Set(input.document.lineItems
+    .map((line) => line.itemCode.trim())
+    .filter((itemCode) => ["20' Sale", "40' Sale"].includes(itemCode))));
+  const checks = new Map((input.preflight?.itemChecks ?? []).map((check) => [check.itemCode.trim().toUpperCase(), check]));
+
+  let document = input.document;
+  if (transportCodes.length === 1) {
+    const itemCode = transportCodes[0]!;
+    const item = checks.get(itemCode);
+    if (!item?.found || item.isSold !== true || item.salesAccountCode !== "200" || item.salesTaxType !== "OUTPUT" || !item.nativeDescription) {
+      return { document: null, reason: `Current Xero sales item ${itemCode} must be active for sale with account 200, OUTPUT GST and its native route description.` };
+    }
+    const rendered = applyMainCustomerInvoiceXeroTransportDescription({
     document: input.document,
     nativeDescription: item.nativeDescription,
     originSuburb: input.facts.originSuburb,
     destinationSuburb: input.facts.destinationSuburb,
-  });
+    });
+    if (!rendered) return { document: null, reason: `Current Xero ${itemCode} description does not expose one safe from <> to <> route template.` };
+    document = rendered;
+  }
+
+  for (const itemCode of saleCodes) {
+    const item = checks.get(itemCode.toUpperCase());
+    if (!item?.found || item.isSold !== true || !item.salesAccountCode || item.salesTaxType !== "OUTPUT") {
+      return { document: null, reason: `Current Xero sales item ${itemCode} must be active for sale with an OUTPUT GST sales account.` };
+    }
+    // The exact current Quote service name remains the container-sale line
+    // description. Only its verified native sales account is taken from Xero.
+    document = {
+      ...document,
+      lineItems: document.lineItems.map((line) => line.itemCode === itemCode ? { ...line, accountCode: item.salesAccountCode! } : line),
+    };
+  }
   return document
     ? { document, reason: null }
-    : { document: null, reason: `Current Xero ${itemCodes[0]} description does not expose one safe from <> to <> route template.` };
+    : { document: null, reason: "Main Invoice item preflight did not produce a write-eligible proposal." };
 }
 async function savePreview(input: { facts: MainCustomerInvoiceFacts; preview: MainCustomerInvoicePreview; sourceHash: string; preflight: FinancialXeroPreflight | null; state: "previewed" | "held"; reason: string | null }) {
   return recordMainCustomerInvoicePreview({

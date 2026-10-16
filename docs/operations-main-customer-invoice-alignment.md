@@ -11,7 +11,7 @@
 | Number | `INV-<Deal digits>`. | Example: `D702877` → `INV-702877`. |
 | Document | One Xero customer invoice, initially `ACCREC` + `DRAFT`. | Create-only Draft POST; never authorise, send, pay, void, delete or replace. |
 | Customer priority | Organisation before contact. | Exact current Account is preferred; fallback exact Contact only when no organisation exists. |
-| Quote lines | Service name, quantity and list price. | Preserve each billable Quote quantity and list price; do not synthesize prices from the webhook. The approved AP transport classification then selects the current Xero customer-sales item and its native route description as documented below. |
+| Quote lines | Service name, quantity and list price. | Preserve each billable Quote quantity and list price; do not synthesize prices from the webhook. Only an explicitly transport-named Service receives the approved transport item and native route description. A 20/40-foot container product receives the matching current Sale item and retains its exact Quote Service name. Other Service lines retain their exact Quote Service name without a guessed Xero item. |
 | Collision/idempotency | Do not create `INV-…` where it already exists. | Exact Xero number collision is held (including non-Draft/deleted/voided history) and never adopted or suffix-bypassed. |
 | Warranty | A supported Added Services warranty may be appended by the main-invoice/warranty workflow and may create a matching Aviso PO. | Excluded from the first Main Invoice release: main invoice itself only; warranty remains its independently gated family. |
 
@@ -43,7 +43,7 @@ The current Xero items were independently read with GET-only evidence before imp
 | `PURCHASED` or `HIRED` | `SER60` | `Empty & Loaded Container from <> to <>` |
 | `IMPORT`, blank or any unrecognised value | none | **Hold** — AP never guesses or treats it as Purchased/Hired. |
 
-Both verified items are active for sale with account 200 and OUTPUT GST. Immediately before write AP must replace only the two placeholders using the freshly re-read Deal suburbs, then perform a new full invoice collision/contact/item preflight. This changes presentation/item classification only; the current Quote quantity and list-price calculation remains the financial source.
+Both verified transport items are active for sale with account 200 and OUTPUT GST. Immediately before write AP must replace only the two placeholders **on explicit transport lines** using the freshly re-read Deal suburbs, then perform a new full invoice collision/contact/item preflight. This changes transport presentation/item classification only; the current Quote quantity and list-price calculation remains the financial source. A container-product Quote line is never overwritten with this route description.
 
 ## Release boundary
 

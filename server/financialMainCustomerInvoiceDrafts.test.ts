@@ -23,8 +23,8 @@ describe("Main Customer Invoice rules", () => {
     expect(result).toMatchObject({ eligible: true, proposedInvoiceNumber: "INV-702877" });
     expect(result.document).toMatchObject({ documentFamily: "customer_invoice", documentType: "main_customer_invoice", proposedDocumentNumber: "INV-702877", reference: "Q-702877", partyName: "ContainerZone Customer", accountCode: "200", subtotal: 600, taxAmount: 60, total: 660 });
     expect(result.document?.lineItems).toEqual([
-      expect.objectContaining({ itemCode: "SER9", description: "Pending current Xero SER9 route description", quantity: 2, unitAmount: 250, accountCode: "200", gstTreatment: "GST_EXCLUSIVE" }),
-      expect.objectContaining({ itemCode: "SER9", description: "Pending current Xero SER9 route description", quantity: 1, unitAmount: 100, accountCode: "200", gstTreatment: "GST_EXCLUSIVE" }),
+      expect.objectContaining({ itemCode: "", description: "Rail delivery", quantity: 2, unitAmount: 250, accountCode: "200", gstTreatment: "GST_EXCLUSIVE" }),
+      expect.objectContaining({ itemCode: "", description: "Container handling", quantity: 1, unitAmount: 100, accountCode: "200", gstTreatment: "GST_EXCLUSIVE" }),
     ]);
   });
 
@@ -33,17 +33,27 @@ describe("Main Customer Invoice rules", () => {
     expect(mainCustomerInvoiceTransportItemCode("PURCHASED")).toBe("SER60");
     expect(mainCustomerInvoiceTransportItemCode("HIRED")).toBe("SER60");
     expect(mainCustomerInvoiceTransportItemCode("IMPORT")).toBeNull();
-    const proposal = buildMainCustomerInvoice(facts({ containerSituation: "PURCHASED" })).document!;
+    const proposal = buildMainCustomerInvoice(facts({
+      containerSituation: "PURCHASED",
+      serviceLines: [
+        { serviceVtigerId: "14x10", description: "20 Foot Standard Height Container - Cargoworthy Grade", quantity: 1, unitAmount: 2250 },
+        { serviceVtigerId: "14x11", description: "Transport - Empty & Loaded Container", quantity: 1, unitAmount: 6877.16 },
+      ],
+    })).document!;
     expect(applyMainCustomerInvoiceXeroTransportDescription({ document: proposal, nativeDescription: "Empty & Loaded Container from <> to <>", originSuburb: "Port", destinationSuburb: "Depot" })?.lineItems)
-      .toEqual(expect.arrayContaining([expect.objectContaining({ itemCode: "SER60", description: "Empty & Loaded Container from Port to Depot" })]));
+      .toEqual([
+        expect.objectContaining({ itemCode: "20' Sale", description: "20 Foot Standard Height Container - Cargoworthy Grade", quantity: 1, unitAmount: 2250 }),
+        expect.objectContaining({ itemCode: "SER60", description: "Empty & Loaded Container from Port to Depot", quantity: 1, unitAmount: 6877.16 }),
+      ]);
     expect(applyMainCustomerInvoiceXeroTransportDescription({ document: proposal, nativeDescription: "Wrong template", originSuburb: "Port", destinationSuburb: "Depot" })).toBeNull();
   });
 
   it("holds rather than inferring customer, Quote or malformed service evidence", () => {
     expect(buildMainCustomerInvoice(facts({ quoteId: "" }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Quote") });
     expect(buildMainCustomerInvoice(facts({ customerName: "" }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("customer") });
-    expect(buildMainCustomerInvoice(facts({ containerSituation: "IMPORT" }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Container Situation") });
-    expect(buildMainCustomerInvoice(facts({ originSuburb: "" }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Origin Suburb") });
+    const transportLine = [{ serviceVtigerId: "14x10", description: "Transport - Loaded Container", quantity: 1, unitAmount: 250 }];
+    expect(buildMainCustomerInvoice(facts({ containerSituation: "IMPORT", serviceLines: transportLine }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Container Situation") });
+    expect(buildMainCustomerInvoice(facts({ originSuburb: "", serviceLines: transportLine }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Origin Suburb") });
     expect(buildMainCustomerInvoice(facts({ serviceLines: [{ serviceVtigerId: "", description: "", quantity: 0, unitAmount: 0 }] }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("billable Service") });
   });
 });
