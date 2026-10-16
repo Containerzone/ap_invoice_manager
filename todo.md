@@ -21,7 +21,7 @@
 - [x] Added per-item Xero configuration hashes to the policy and writer revalidation. A WAR item’s evidence cannot authorise any other item. Full validation passed: TypeScript, 8 Warranty files / 255 tests, 124 project files / 1,246 tests (12 skipped), production build and `git diff --check`.
 - [x] Fresh sequential GET-only source/Xero evidence verified the Potentials source schema, first ten WAR items, one active Aviso contact, account 200/OUTPUT, account 313/INPUT and 10% INPUT/OUTPUT taxes. An immutable first-ten-only New Events/Draft-only Warranty policy has been saved with the current source and per-item evidence hashes. No Xero document, contact, item or VTiger record was changed.
 - [x] Published the per-item-policy checkpoint, enabled only `FINANCIAL_WARRANTY_AUTOMATIC_ENABLED=true`, and verified the public authenticated nonexistent-ID receiver probe. It returned parser-safe 400 and created no Xero write or Warranty ledger work. `$150k/$200k/$250k` remain held.
-- [ ] Obtain owner-approved item code, native PO description and GST-exclusive premium mappings for `$150k/$200k/$250k` before extending the Warranty policy. Until then, those values must continue to hold without fallback.
+- [x] Owner decision recorded: keep `$150k/$200k/$250k` held. No item code, native PO description or GST-exclusive premium mapping is approved for these bands, so the Warranty policy will not be extended and no fallback invoice or PO may be created.
 
 ## 2026-10-16 — Main Customer Invoice selective-line correction
 
