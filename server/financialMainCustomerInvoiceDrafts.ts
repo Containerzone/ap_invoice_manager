@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export const MAIN_CUSTOMER_INVOICE_ACCOUNT_CODE = "200" as const;
-export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v3-selective-container-sale-and-transport-lines" as const;
+export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v4-nontransport-quote-lines-preserved" as const;
 export const MAIN_CUSTOMER_INVOICE_RULES_HASH = createHash("sha256").update(MAIN_CUSTOMER_INVOICE_RULES_VERSION).digest("hex");
 
 export type MainCustomerInvoiceServiceLineFacts = {
@@ -73,10 +73,14 @@ export function isMainCustomerInvoiceTransportService(description: string): bool
   return /^TRANSPORT(?:\s|[-–—]|$)/i.test(normal(description));
 }
 
-/** Select the current sales item only for an identifiable 20/40-foot container product. */
+/**
+ * Select a Sale item only for an identifiable container product. A hire service
+ * is a Quote-controlled customer line: it retains its Quote description and
+ * does not inherit a Sale item or a transport item by inference.
+ */
 export function mainCustomerInvoiceContainerSaleItemCode(description: string): MainCustomerInvoiceContainerSaleItemCode | null {
   const value = upper(description);
-  if (!value.includes("CONTAINER")) return null;
+  if (!value.includes("CONTAINER") || /\bHIRE(?:D)?\b/.test(value)) return null;
   if (/^20\b/.test(value) || value.includes("20 FOOT")) return "20' Sale";
   if (/^40\b/.test(value) || value.includes("40 FOOT")) return "40' Sale";
   return null;
