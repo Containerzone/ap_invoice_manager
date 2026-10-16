@@ -1,6 +1,6 @@
 # Container Control Asset Purchase Orders — AP Migration Handoff
 
-**Status:** **live for new Asset / Request events only** from 11 October 2026, 21:06:52 Sydney. The deployment gate and the AP-local release policy are active. The current policy was refreshed on 16 October after the owner-approved `20' Sale` / `40' Sale` item-mapping change.
+**Status:** **live for new Asset / Request events only** from 11 October 2026, 21:06:52 Sydney. The deployment gate and the AP-local release policy are active. The current policy was refreshed on 16 October after the owner-approved `20' Sale` / `40' Sale` item mapping and blank-Xero-Reference rule were published.
 
 ## Implemented AP behavior
 
@@ -44,12 +44,12 @@ Administrators now have **Container Asset POs** in the sidebar. It provides:
 |---|---|
 | Public receiver | Published and protected at `/api/webhooks/vtiger/container-control-asset` |
 | Effective time | `2026-10-11T10:06:52.122Z` / 21:06:52 Australia/Sydney |
-| AP policy | `ASSET-PO-d1321b3f745eceff`, enabled, current Sale-item rules hash |
+| AP policy | `ASSET-PO-a9541c931abcea27`, enabled, current Sale-item and blank-reference rules hash |
 | Scope | `new_events_only` |
 | VTiger branch / Operations handover | Confirmed Asset + Request only; Operations Asset writer paused for new events |
 | Deployment gate | `FINANCIAL_ASSET_PURCHASE_AUTOMATIC_ENABLED=true` |
 | Recurring schedule | None — this is event-driven Asset PO creation only |
-| Verified recovery | C1916 advanced from `REQUEST` to `ON HIRE` while its original event was held by the superseded policy. After owner approval, AP completed the exact one-time recovery: Draft PO `AC1916`, execution `720001`, Xero PO ID `124e647f-1c7c-4a42-92ae-bf5c1e02b84b`. The current source, exact Xero contact/item, duplicate absence and Xero Draft read-back were verified; no VTiger change was made. |
+| Verified recovery | C1916 advanced from `REQUEST` to `ON HIRE` while its original event was held by the superseded policy. After owner approval, AP completed the exact one-time recovery: Draft PO `AC1916`, execution `720001`, Xero PO ID `124e647f-1c7c-4a42-92ae-bf5c1e02b84b`. Its historical Xero Reference value is unchanged; the blank-reference rule applies only to future POs. The current source, exact Xero contact/item, duplicate absence and Xero Draft read-back were verified; no VTiger change was made. |
 
 The authenticated public receiver was tested with an invalid record identifier and returned `400` before any source or Xero action. It now processes only a valid future Asset webhook.
 

@@ -1,6 +1,6 @@
 # Customer Sale Purchase PO — AP Migration Handover
 
-**Status:** **Approved and configured for new Customer Sale / Request events only** from 14 October 2026, 17:03:47 Australia/Sydney. A fresh project deployment is required before the public receiver can load the approved runtime gate.
+**Status:** **Live for new Customer Sale / Request events only** from 14 October 2026, 17:03:47 Australia/Sydney. The runtime gate, published receiver and current AP-local policy are active.
 **Operations alignment:** [Operations Customer Sale alignment](operations-customer-sale-alignment.md)  
 **Scope:** One Xero **Draft Purchase Order** for a new, exact VTiger Container Control Customer Sale event. No invoice, approval, sending, payment, voiding, deletion, or historical adoption.
 
@@ -21,18 +21,18 @@
 
 ## Activation record
 
-- `FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED=true` has been configured for this family only.
-- The independent policy `CUSTOMER-SALE-PO-c13a57a96d8290bb` is enabled with `new_events_only` scope, the approved current rules hash, dedicated Customer Sale branch assertion and Operations Customer Sale handover assertion.
+- `FINANCIAL_CUSTOMER_SALE_PURCHASE_AUTOMATIC_ENABLED=true` is configured for this family only.
+- The independent policy `CUSTOMER-SALE-PO-315e9577f00f5921` is enabled with `new_events_only` scope, the approved current Sale-item and blank-reference rules hash, dedicated Customer Sale branch assertion and Operations Customer Sale handover assertion.
 - No Customer Sale Heartbeat exists (none is required).
 - The pre-cutover C1879 event remains held because its current source status is not `REQUEST`; it is not eligible for replay under the new-events-only release.
 - An authenticated local public-receiver probe using a deliberately nonexistent Container Control returned `202` held and `xeroWritesAttempted: 0`; no Xero or VTiger record was created or changed.
-- The public deployment must be republished/redeployed after this handover update. Until then, a public call can safely return `customer-sale-purchase-release-disabled` even though the configured policy is enabled.
+- The reference-free PO rule is published. An authenticated public probe using a deliberately nonexistent Container Control returned `202` held with `xeroWritesAttempted: 0`, proving the public receiver loaded the current release gate without creating a source, Xero or VTiger write.
 
 ## Published-receiver verification
 
 Do **not** treat public automation as live until the latest activation checkpoint has been deployed and all of these have been confirmed:
 
-1. Publish/redeploy the current checkpoint; verify the public endpoint returns authenticated JSON and does not return `customer-sale-purchase-release-disabled`.
+1. Verify the public endpoint returns authenticated JSON and does not return `customer-sale-purchase-release-disabled`.
 2. Confirm the dedicated VTiger action is only for `Acquisition = CUSTOMER SALE` and `Status = REQUEST`, posting the existing authenticated body to:
    ```text
    https://apinvmanager-dm3caxom.manus.space/api/webhooks/vtiger/container-control-customer-sale
