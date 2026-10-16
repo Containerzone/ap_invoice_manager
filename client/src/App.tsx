@@ -8,6 +8,7 @@ import DashboardLayout from "./components/DashboardLayout";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
 import { Loader2 } from "lucide-react";
+import { BusinessReferenceProvider } from "./components/BusinessReferenceDisplay";
 
 // Pages
 import Dashboard from "./pages/Dashboard";
@@ -44,7 +45,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  return <>{children}</>;
+  return <BusinessReferenceProvider>{children}</BusinessReferenceProvider>;
 }
 
 function AdminGuard({ children }: { children: React.ReactNode }) {

@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { RefreshCw, Warehouse } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -36,9 +37,9 @@ export function FinancialStorageDrafts() {
           const receipts = Array.isArray(event.documentResults) ? event.documentResults as StorageReceipt[] : [];
           const finalReceipts = Array.isArray(event.finalisationResults) ? event.finalisationResults as StorageReceipt[] : [];
           const receipt = (kind: string) => receipts.find((item) => item.documentType === kind);
-          return <tr key={event.id} className="border-b align-top last:border-0"><td className="p-3"><span className="font-mono font-medium">{event.dealNumber}</span><br /><span className="capitalize text-muted-foreground">{event.location}</span></td>
-            <td className="whitespace-nowrap p-3 font-mono text-xs"><span className="font-sans capitalize">{event.eventKind}</span><br />{event.periodStart}<br />to {event.finalDate ?? event.periodEnd}{event.nextBillingDate && <p className="mt-1 text-muted-foreground">Next: {event.nextBillingDate}</p>}</td><td className="p-3"><Badge className={statusStyle(event.status)}>{event.finalisedAt ? "finalised" : event.status.replaceAll("_", " ")}</Badge>{finalReceipts.length > 0 && <p className="mt-1 text-xs">{finalReceipts.length} final Draft receipts</p>}{event.errorMessage && <p className="mt-1 max-w-64 text-xs text-muted-foreground">{event.errorMessage}</p>}</td>
-            {(["customer_invoice", "jd_transport", "gd_storage"] as const).map((kind) => <td key={kind} className="p-3"><span className="font-mono text-xs">{receipt(kind)?.number ?? "—"}</span><br /><span className="text-xs text-muted-foreground">{receipt(kind)?.status ?? "Not verified"}</span></td>)}
+          return <tr key={event.id} className="border-b align-top last:border-0"><td className="p-3"><span className="font-mono font-medium"><BusinessText value={event.dealNumber} /></span><br /><span className="capitalize text-muted-foreground"><BusinessText value={event.location} /></span></td>
+            <td className="whitespace-nowrap p-3 font-mono text-xs"><span className="font-sans capitalize"><BusinessText value={event.eventKind} /></span><br /><BusinessText value={event.periodStart} /><br />to <BusinessText value={event.finalDate ?? event.periodEnd} />{event.nextBillingDate && <p className="mt-1 text-muted-foreground">Next: <BusinessText value={event.nextBillingDate} /></p>}</td><td className="p-3"><Badge className={statusStyle(event.status)}><BusinessText value={event.finalisedAt ? "finalised" : event.status.replaceAll("_", " ")} /></Badge>{finalReceipts.length > 0 && <p className="mt-1 text-xs"><BusinessText value={finalReceipts.length} /> final Draft receipts</p>}{event.errorMessage && <p className="mt-1 max-w-64 text-xs text-muted-foreground"><BusinessText value={event.errorMessage} /></p>}</td>
+            {(["customer_invoice", "jd_transport", "gd_storage"] as const).map((kind) => <td key={kind} className="p-3"><span className="font-mono text-xs"><BusinessText value={receipt(kind)?.number ?? "—"} /></span><br /><span className="text-xs text-muted-foreground"><BusinessText value={receipt(kind)?.status ?? "Not verified"} /></span></td>)}
           </tr>;
         })}</tbody></table></div>}</CardContent>
     </Card>
@@ -47,7 +48,7 @@ export function FinancialStorageDrafts() {
         <p className="text-sm text-muted-foreground">Separately approved Xero Drafts. These are not VTiger stage webhook events or three-document completions.</p>
       </CardHeader>
       <CardContent><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">Invoice</th><th className="p-3">Xero status</th><th className="p-3">Verified Xero ID</th><th className="p-3">AP execution</th></tr></thead>
-        <tbody>{invoiceOnlyTests.map((row) => <tr key={row.id} className="border-b last:border-0"><td className="p-3 font-mono">{row.proposedDocumentNumber}</td><td className="p-3"><Badge className={statusStyle(row.status === "succeeded" ? "drafts_created" : row.status)}>{row.status === "succeeded" ? row.xeroDocumentStatus ?? "Verified" : row.status.replaceAll("_", " ")}</Badge></td><td className="p-3 font-mono text-xs">{row.xeroDocumentId ?? "—"}</td><td className="p-3 text-muted-foreground">#{row.id}</td></tr>)}</tbody>
+        <tbody>{invoiceOnlyTests.map((row) => <tr key={row.id} className="border-b last:border-0"><td className="p-3 font-mono"><BusinessText value={row.proposedDocumentNumber} /></td><td className="p-3"><Badge className={statusStyle(row.status === "succeeded" ? "drafts_created" : row.status)}><BusinessText value={row.status === "succeeded" ? row.xeroDocumentStatus ?? "Verified" : row.status.replaceAll("_", " ")} /></Badge></td><td className="p-3 font-mono text-xs"><BusinessText value={row.xeroDocumentId ?? "—"} /></td><td className="p-3 text-muted-foreground">#<BusinessText value={row.id} /></td></tr>)}</tbody>
       </table></div></CardContent>
     </Card>}
     <p className="text-xs text-muted-foreground">This page is read-only. It cannot start a webhook, change a VTiger Deal, or create/authorise Xero documents.</p>

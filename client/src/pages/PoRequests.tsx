@@ -1,3 +1,4 @@
+import { BusinessText, useBusinessReferenceText } from "@/components/BusinessReferenceDisplay";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "sonner";
+import { toast } from "@/lib/businessToast";
 import {
   RefreshCw,
   CheckCircle2,
@@ -60,7 +61,7 @@ function statusBadge(status: string) {
     case "pending":
       return <Badge className="bg-slate-100 text-slate-700 border-slate-200">Pending</Badge>;
     default:
-      return <Badge variant="outline">{status}</Badge>;
+      return <Badge variant="outline"><BusinessText value={status} /></Badge>;
   }
 }
 
@@ -107,6 +108,7 @@ function PoRequestDetail({
     { enabled: open && requestId != null }
   );
 
+  const businessText = useBusinessReferenceText(data);
   const retryMutation = trpc.poRequests.retry.useMutation({
     onSuccess: () => {
       toast.success("Retrying PO creation — check back in a few seconds");
@@ -132,8 +134,8 @@ function PoRequestDetail({
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
-            <span>PO Request — {data?.vtigerDealNumber ?? `#${requestId}`}</span>
-            {data && statusBadge(data.status)}
+            <span>PO Request — <BusinessText value={data?.vtigerDealNumber ?? `#${requestId}`} /></span>
+            <BusinessText value={data && statusBadge(data.status)} />
           </DialogTitle>
         </DialogHeader>
 
@@ -147,9 +149,9 @@ function PoRequestDetail({
           <div className="space-y-5">
             {/* Summary row */}
             <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-              <span>Received: <strong className="text-foreground">{new Date(data.createdAt!).toLocaleString()}</strong></span>
+              <span>Received: <strong className="text-foreground"><BusinessText value={new Date(data.createdAt!).toLocaleString()} /></strong></span>
               {data.processedAt && (
-                <span>Processed: <strong className="text-foreground">{new Date(data.processedAt).toLocaleString()}</strong></span>
+                <span>Processed: <strong className="text-foreground"><BusinessText value={new Date(data.processedAt).toLocaleString()} /></strong></span>
               )}
             </div>
 
@@ -157,19 +159,19 @@ function PoRequestDetail({
             {poResults.length > 0 && (
               <div className="grid grid-cols-4 gap-3">
                 <div className="rounded-lg border bg-emerald-50 p-3 text-center">
-                  <div className="text-2xl font-bold text-emerald-700">{createdCount}</div>
+                  <div className="text-2xl font-bold text-emerald-700"><BusinessText value={createdCount} /></div>
                   <div className="text-xs text-emerald-600 mt-0.5">Created</div>
                 </div>
                 <div className="rounded-lg border bg-amber-50 p-3 text-center">
-                  <div className="text-2xl font-bold text-amber-700">{dupCount}</div>
+                  <div className="text-2xl font-bold text-amber-700"><BusinessText value={dupCount} /></div>
                   <div className="text-xs text-amber-600 mt-0.5">Already existed</div>
                 </div>
                 <div className="rounded-lg border bg-slate-50 p-3 text-center">
-                  <div className="text-2xl font-bold text-slate-600">{skippedCount}</div>
+                  <div className="text-2xl font-bold text-slate-600"><BusinessText value={skippedCount} /></div>
                   <div className="text-xs text-slate-500 mt-0.5">Skipped (zero)</div>
                 </div>
                 <div className="rounded-lg border bg-red-50 p-3 text-center">
-                  <div className="text-2xl font-bold text-red-700">{errorCount}</div>
+                  <div className="text-2xl font-bold text-red-700"><BusinessText value={errorCount} /></div>
                   <div className="text-xs text-red-600 mt-0.5">Errors</div>
                 </div>
               </div>
@@ -178,7 +180,7 @@ function PoRequestDetail({
             {/* Error message */}
             {data.errorMessage && (
               <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                <strong>Error:</strong> {data.errorMessage}
+                <strong>Error:</strong> <BusinessText value={data.errorMessage} />
               </div>
             )}
 
@@ -201,23 +203,23 @@ function PoRequestDetail({
                     <TableBody>
                       {poResults.map((r) => (
                         <TableRow key={r.poNumber} className={r.status === "error" ? "bg-red-50/50" : ""}>
-                          <TableCell>{poResultIcon(r.status)}</TableCell>
+                          <TableCell><BusinessText value={poResultIcon(r.status)} /></TableCell>
                           <TableCell className="font-mono font-medium text-sm">
-                            {r.xeroPoNumber ?? r.poNumber}
+                            <BusinessText value={r.xeroPoNumber ?? r.poNumber} />
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{r.description}</TableCell>
-                          <TableCell className="text-sm">{r.supplier}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground"><BusinessText value={r.description} /></TableCell>
+                          <TableCell className="text-sm"><BusinessText value={r.supplier} /></TableCell>
                           <TableCell className="text-right font-medium">
-                            {r.amountExclGst > 0
+                            <BusinessText value={r.amountExclGst > 0
                               ? `$${r.amountExclGst.toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                              : "—"}
+                              : "—"} />
                           </TableCell>
                           <TableCell>
                             <div className="space-y-1">
-                              {poResultBadge(r.status)}
+                              <BusinessText value={poResultBadge(r.status)} />
                               {r.error && (
-                                <p className="text-xs text-red-600 max-w-[200px] truncate" title={r.error}>
-                                  {r.error}
+                                <p className="text-xs text-red-600 max-w-[200px] truncate" title={businessText(r.error)}>
+                                  <BusinessText value={r.error} />
                                 </p>
                               )}
                             </div>
@@ -337,30 +339,30 @@ export default function PoRequests() {
                     >
                       <TableCell>
                         <div className="font-mono font-semibold text-sm">
-                          {row.vtigerDealNumber ?? row.vtigerDealId ?? `#${row.id}`}
+                          <BusinessText value={row.vtigerDealNumber ?? row.vtigerDealId ?? `#${row.id}`} />
                         </div>
                         {row.vtigerDealName && (
                           <div className="text-xs text-muted-foreground truncate max-w-[200px]">
-                            {row.vtigerDealName}
+                            <BusinessText value={row.vtigerDealName} />
                           </div>
                         )}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {new Date(row.createdAt!).toLocaleString()}
+                        <BusinessText value={new Date(row.createdAt!).toLocaleString()} />
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {row.processedAt
+                        <BusinessText value={row.processedAt
                           ? new Date(row.processedAt).toLocaleString()
-                          : "—"}
+                          : "—"} />
                       </TableCell>
                       <TableCell>
                         {results.length > 0 ? (
                           <div className="flex items-center gap-2 text-sm">
                             {createdCount > 0 && (
-                              <span className="text-emerald-700 font-medium">{createdCount} created</span>
+                              <span className="text-emerald-700 font-medium"><BusinessText value={createdCount} /> created</span>
                             )}
                             {errorCount > 0 && (
-                              <span className="text-red-600 font-medium">{errorCount} failed</span>
+                              <span className="text-red-600 font-medium"><BusinessText value={errorCount} /> failed</span>
                             )}
                             {createdCount === 0 && errorCount === 0 && (
                               <span className="text-muted-foreground">—</span>
@@ -370,7 +372,7 @@ export default function PoRequests() {
                           <span className="text-muted-foreground text-sm">—</span>
                         )}
                       </TableCell>
-                      <TableCell>{statusBadge(row.status)}</TableCell>
+                      <TableCell><BusinessText value={statusBadge(row.status)} /></TableCell>
                       <TableCell>
                         <ChevronRight className="h-4 w-4 text-muted-foreground" />
                       </TableCell>

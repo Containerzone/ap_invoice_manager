@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useState } from "react";
 import { FileSearch, FileText, LockKeyhole } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -42,9 +43,9 @@ export default function ExtraHireInvoices() {
           </p>
         </div>
         <Badge variant="outline">
-          {readiness.data?.writerEnabled
+          <BusinessText value={readiness.data?.writerEnabled
             ? "Independent receiver released"
-            : "Default off — no Draft writes"}
+            : "Default off — no Draft writes"} />
         </Badge>
       </header>
       <Card>
@@ -55,13 +56,13 @@ export default function ExtraHireInvoices() {
             control.
           </p>
           <p>
-            AUD · ACCREC · DRAFT · GST exclusive · 4.286 weeks · exact current{" "}
+            AUD · ACCREC · DRAFT · GST exclusive · 4.286 weeks · exact current<BusinessText value={" "} />
             <code>20' Hire</code> / <code>40' Hire</code> sales item evidence.
             Baseline rates 45 / 70 and account 210 are never substituted for
             missing exact evidence.
           </p>
           <p>
-            <code>INV-&lt;Deal digits&gt;-EH&lt;exact AP ordinal&gt;</code>{" "}
+            <code>INV-&lt;Deal digits&gt;-EH&lt;exact AP ordinal&gt;</code><BusinessText value={" "} />
             requires independent suffix approval. Deposit owns <code>-D</code>.
             Any exact historical collision, including deleted/voided, holds
             without adoption or suffix skipping.
@@ -81,8 +82,8 @@ export default function ExtraHireInvoices() {
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           <code className="break-all">
-            {readiness.data?.webhookPath ??
-              "/api/webhooks/vtiger/extra-hire-invoice"}
+            <BusinessText value={readiness.data?.webhookPath ??
+              "/api/webhooks/vtiger/extra-hire-invoice"} />
           </code>
           <p>
             Receiver requires its dedicated flag and approved new-events-only
@@ -91,7 +92,7 @@ export default function ExtraHireInvoices() {
             Hire End Date acknowledgment.
           </p>
           {readiness.data?.releaseHoldReason && (
-            <p className="text-amber-900">{readiness.data.releaseHoldReason}</p>
+            <p className="text-amber-900"><BusinessText value={readiness.data.releaseHoldReason} /></p>
           )}
           {readiness.error && (
             <p role="alert" className="text-red-700">
@@ -101,7 +102,7 @@ export default function ExtraHireInvoices() {
           <details>
             <summary>Current policy and separate postcondition</summary>
             <pre className="mt-2 overflow-auto rounded-md bg-muted p-3 text-xs">
-              {JSON.stringify(readiness.data, null, 2)}
+              <BusinessText value={JSON.stringify(readiness.data, null, 2)} />
             </pre>
           </details>
         </CardContent>
@@ -129,7 +130,7 @@ export default function ExtraHireInvoices() {
                 setDeal(e.target.value);
                 setSelected("");
               }}
-              placeholder="D702877 or 5x12345"
+              placeholder="D702877"
             />
             <Button
               disabled={
@@ -142,52 +143,52 @@ export default function ExtraHireInvoices() {
                 else setSelected(v);
               }}
             >
-              {preview.isFetching ? "Reading evidence…" : "Preview evidence"}
+              <BusinessText value={preview.isFetching ? "Reading evidence…" : "Preview evidence"} />
             </Button>
           </div>
           {selected && preview.error && (
             <p role="alert" className="text-sm text-red-700">
-              {preview.error.message}
+              <BusinessText value={preview.error.message} />
             </p>
           )}
           {selected && result && (
             <div className="space-y-3 rounded-lg border p-4 text-sm">
               <div className="flex justify-between gap-2">
                 <strong>
-                  {result.facts.dealNumber} ·{" "}
-                  {result.facts.customerName || "Customer unresolved"}
+                  <BusinessText value={result.facts.dealNumber} /> ·<BusinessText value={" "} />
+                  <BusinessText value={result.facts.customerName || "Customer unresolved"} />
                 </strong>
                 <Badge
                   variant={result.state === "held" ? "destructive" : "outline"}
                 >
-                  {result.state === "held"
+                  <BusinessText value={result.state === "held"
                     ? "Held — no write"
-                    : "Evidence only"}
+                    : "Evidence only"} />
                 </Badge>
               </div>
               {result.holdReason && (
                 <p className="rounded-md bg-amber-50 p-3 text-amber-900">
-                  {result.holdReason}
+                  <BusinessText value={result.holdReason} />
                 </p>
               )}
               <p>
-                {result.facts.containerNumber || "No container"} ·{" "}
-                {result.facts.containerType || "Type unresolved"} · duration{" "}
-                {result.facts.hireDuration ?? "unresolved"} days · current end{" "}
-                {result.facts.hireEndDate ?? "unresolved"}
+                <BusinessText value={result.facts.containerNumber || "No container"} /> ·<BusinessText value={" "} />
+                <BusinessText value={result.facts.containerType || "Type unresolved"} /> · duration<BusinessText value={" "} />
+                <BusinessText value={result.facts.hireDuration ?? "unresolved"} /> days · current end<BusinessText value={" "} />
+                <BusinessText value={result.facts.hireEndDate ?? "unresolved"} />
               </p>
               {document && (
                 <div className="rounded-md bg-muted p-3">
                   <strong className="font-mono">
-                    {document.proposedDocumentNumber}
+                    <BusinessText value={document.proposedDocumentNumber} />
                   </strong>
                   <p>
-                    {money(document.subtotal)} net + {money(document.taxAmount)}{" "}
-                    GST = {money(document.total)} · account{" "}
-                    {document.accountCode} · 4.286 ×{" "}
-                    {money(document.lineItems[0]?.unitAmount)}
+                    <BusinessText value={money(document.subtotal)} /> net + <BusinessText value={money(document.taxAmount)} /><BusinessText value={" "} />
+                    GST = <BusinessText value={money(document.total)} /> · account<BusinessText value={" "} />
+                    <BusinessText value={document.accountCode} /> · 4.286 ×<BusinessText value={" "} />
+                    <BusinessText value={money(document.lineItems[0]?.unitAmount)} />
                   </p>
-                  <p>{document.lineItems[0]?.description}</p>
+                  <p><BusinessText value={document.lineItems[0]?.description} /></p>
                 </div>
               )}
               <details>
@@ -195,7 +196,7 @@ export default function ExtraHireInvoices() {
                   Exact current mapping / source / preflight evidence
                 </summary>
                 <pre className="mt-2 overflow-auto rounded-md bg-muted p-3 text-xs">
-                  {JSON.stringify(result, null, 2)}
+                  <BusinessText value={JSON.stringify(result, null, 2)} />
                 </pre>
               </details>
             </div>
@@ -230,31 +231,31 @@ export default function ExtraHireInvoices() {
                 <div key={row.id} className="rounded-md border p-4 text-sm">
                   <div className="flex flex-wrap justify-between gap-2">
                     <strong>
-                      {row.dealNumber} ·{" "}
-                      {row.customerName || "unresolved customer"}
+                      <BusinessText value={row.dealNumber} /> ·<BusinessText value={" "} />
+                      <BusinessText value={row.customerName || "unresolved customer"} />
                     </strong>
                     <Badge variant="outline">
-                      {row.status.replaceAll("_", " ")}
+                      <BusinessText value={row.status.replaceAll("_", " ")} />
                     </Badge>
                   </div>
                   <p className="mt-2 font-mono">
-                    {row.proposedInvoiceNumber || "Suffix held"} · ordinal{" "}
-                    {row.ordinal ?? "unresolved"} · source end{" "}
-                    {row.sourceHireEndDate || "unresolved"}
+                    <BusinessText value={row.proposedInvoiceNumber || "Suffix held"} /> · ordinal<BusinessText value={" "} />
+                    <BusinessText value={row.ordinal ?? "unresolved"} /> · source end<BusinessText value={" "} />
+                    <BusinessText value={row.sourceHireEndDate || "unresolved"} />
                   </p>
                   {row.holdReason && (
-                    <p className="mt-2 text-amber-900">{row.holdReason}</p>
+                    <p className="mt-2 text-amber-900"><BusinessText value={row.holdReason} /></p>
                   )}
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Event #{row.id} · execution {row.executionId ?? "none"} ·
-                    Xero exact Draft {row.xeroInvoiceId ?? "not verified"} ·
-                    source {row.sourceSnapshotHash.slice(0, 12)}… ·{" "}
-                    {row.authorisedPayload
+                    Event #<BusinessText value={row.id} /> · execution <BusinessText value={row.executionId ?? "none"} /> ·
+                    Xero exact Draft <BusinessText value={row.xeroInvoiceId ?? "not verified"} /> ·
+                    source <BusinessText value={row.sourceSnapshotHash.slice(0, 12)} />… ·<BusinessText value={" "} />
+                    <BusinessText value={row.authorisedPayload
                       ? "Immutable payload bound"
-                      : "No write payload"}
+                      : "No write payload"} />
                   </p>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {row.postconditionHold}
+                    <BusinessText value={row.postconditionHold} />
                   </p>
                 </div>
               ))}

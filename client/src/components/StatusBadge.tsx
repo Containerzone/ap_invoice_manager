@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { cn } from "@/lib/utils";
 import { STATUS_CONFIG, type InvoiceStatus } from "@/lib/invoiceUtils";
 import {
@@ -37,7 +38,7 @@ export function StatusBadge({ status, size = "md", className }: StatusBadgeProps
       )}
     >
       <Icon className={cn(size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5", status === "extracting" && "animate-spin")} />
-      {config.label}
+      <BusinessText value={config.label} />
     </span>
   );
 }

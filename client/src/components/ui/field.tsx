@@ -4,6 +4,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 
 function FieldSet({ className, ...props }: React.ComponentProps<"fieldset">) {
   return (
@@ -206,7 +207,7 @@ function FieldError({
       <ul className="ml-4 flex list-disc flex-col gap-1">
         {errors.map(
           (error, index) =>
-            error?.message && <li key={index}>{error.message}</li>
+            error?.message && <li key={index}><BusinessText value={error.message} /></li>
         )}
       </ul>
     );
@@ -223,7 +224,7 @@ function FieldError({
       className={cn("text-destructive text-sm font-normal", className)}
       {...props}
     >
-      {content}
+      <BusinessText value={content} />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
@@ -72,7 +73,7 @@ export default function XeroCallback() {
             </div>
             <div>
               <p className="text-base font-semibold text-foreground">Connected and verified</p>
-              <p className="text-sm text-muted-foreground mt-1">{message}</p>
+              <p className="text-sm text-muted-foreground mt-1"><BusinessText value={message} /></p>
               <p className="text-xs text-muted-foreground mt-1">Redirecting to settings...</p>
             </div>
           </>
@@ -84,7 +85,7 @@ export default function XeroCallback() {
             </div>
             <div>
               <p className="text-base font-semibold text-foreground">Connection needs review</p>
-              <p className="text-sm text-muted-foreground mt-1">{message}</p>
+              <p className="text-sm text-muted-foreground mt-1"><BusinessText value={message} /></p>
             </div>
             <Button variant="outline" onClick={() => setLocation("/settings")}>Return to Settings</Button>
           </>
@@ -96,7 +97,7 @@ export default function XeroCallback() {
             </div>
             <div>
               <p className="text-base font-semibold text-foreground">Connection Failed</p>
-              <p className="text-sm text-muted-foreground mt-1">{message}</p>
+              <p className="text-sm text-muted-foreground mt-1"><BusinessText value={message} /></p>
             </div>
             <Button variant="outline" onClick={() => setLocation("/settings")}>Back to Settings</Button>
           </>

@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { formatCurrency } from "@/lib/invoiceUtils";
@@ -79,11 +80,11 @@ function DiffBadge({ diff }: { diff: number }) {
   }
   if (diff > 0) {
     return <Badge className="gap-1 text-xs bg-red-100 text-red-800 border-red-200 hover:bg-red-100">
-      <TrendingUp className="h-3 w-3" /> +{formatCurrency(diff)} over
+      <TrendingUp className="h-3 w-3" /> +<BusinessText value={formatCurrency(diff)} /> over
     </Badge>;
   }
   return <Badge className="gap-1 text-xs bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-100">
-    <TrendingDown className="h-3 w-3" /> {formatCurrency(Math.abs(diff))} under
+    <TrendingDown className="h-3 w-3" /> <BusinessText value={formatCurrency(Math.abs(diff))} /> under
   </Badge>;
 }
 
@@ -182,15 +183,15 @@ export default function Reports() {
     switch (columnId) {
       case "invoice":
         return <span className="text-sm font-medium truncate">
-          {row.invoiceNumber ?? `#${row.invoiceId}`}
-          {row.invoiceDate && <span className="text-xs text-muted-foreground ml-1.5">{displayInvoiceDate(row.invoiceDate)}</span>}
+          <BusinessText value={row.invoiceNumber ?? `#${row.invoiceId}`} />
+          {row.invoiceDate && <span className="text-xs text-muted-foreground ml-1.5"><BusinessText value={displayInvoiceDate(row.invoiceDate)} /></span>}
         </span>;
       case "supplier":
-        return <span className="text-sm text-muted-foreground truncate">{row.supplierName ?? "—"}</span>;
+        return <span className="text-sm text-muted-foreground truncate"><BusinessText value={row.supplierName ?? "—"} /></span>;
       case "invoiceAmount":
-        return <span className="text-sm text-right tabular-nums">{formatCurrency(row.extractedTotal)}</span>;
+        return <span className="text-sm text-right tabular-nums"><BusinessText value={formatCurrency(row.extractedTotal)} /></span>;
       case "poTotal":
-        return <span className="text-sm text-right tabular-nums text-muted-foreground">{formatCurrency(row.xeroTotal)}</span>;
+        return <span className="text-sm text-right tabular-nums text-muted-foreground"><BusinessText value={formatCurrency(row.xeroTotal)} /></span>;
       case "variance":
         return <span className="text-right"><DiffBadge diff={row.totalNetDiff} /></span>;
       case "approval":
@@ -233,8 +234,8 @@ export default function Reports() {
               <div className="space-y-1.5">
                 <Label htmlFor="report-supplier" className="text-xs">Supplier</Label>
                 <select id="report-supplier" value={filters.supplier} onChange={(event) => updateFilter("supplier", event.target.value)} className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-                  <option value="">All suppliers ({suppliers.length})</option>
-                  {suppliers.map((supplier) => <option key={supplier} value={supplier}>{supplier}</option>)}
+                  <option value="">All suppliers (<BusinessText value={suppliers.length} />)</option>
+                  {suppliers.map((supplier) => <option key={supplier} value={supplier}><BusinessText value={supplier} /></option>)}
                 </select>
               </div>
             </div>
@@ -256,12 +257,12 @@ export default function Reports() {
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">{hasActiveFilters ? "Matching Invoices" : "Approved Invoices"}</p><p className="text-2xl font-bold mt-1">{totalInvoices}</p></CardContent></Card>
-          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Total Invoice Value</p><p className="text-xl font-bold mt-1">{formatCurrency(totalInvoiceValue)}</p></CardContent></Card>
-          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Current PO Value</p><p className="text-xl font-bold mt-1">{formatCurrency(totalPOValue)}</p></CardContent></Card>
-          <Card className={cn(netVariance > 0.01 ? "border-red-200 bg-red-50" : netVariance < -0.01 ? "border-emerald-200 bg-emerald-50" : "")}><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Net Variance</p><p className={cn("text-xl font-bold mt-1", netVariance > 0.01 ? "text-red-700" : netVariance < -0.01 ? "text-emerald-700" : "")}>{netVariance > 0.01 ? "+" : ""}{formatCurrency(netVariance)}</p><p className="text-xs text-muted-foreground mt-0.5">{netVariance > 0.01 ? "net over-billed" : netVariance < -0.01 ? "net under-billed" : "balanced"}</p></CardContent></Card>
-          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Over-billed</p><p className="text-2xl font-bold mt-1 text-red-700">{overBilledCount}</p><p className="text-xs text-muted-foreground">invoices</p></CardContent></Card>
-          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Under-billed</p><p className="text-2xl font-bold mt-1 text-emerald-700">{underBilledCount}</p><p className="text-xs text-muted-foreground">{exactMatchCount} exact match{exactMatchCount !== 1 ? "es" : ""}</p></CardContent></Card>
+          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground"><BusinessText value={hasActiveFilters ? "Matching Invoices" : "Approved Invoices"} /></p><p className="text-2xl font-bold mt-1"><BusinessText value={totalInvoices} /></p></CardContent></Card>
+          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Total Invoice Value</p><p className="text-xl font-bold mt-1"><BusinessText value={formatCurrency(totalInvoiceValue)} /></p></CardContent></Card>
+          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Current PO Value</p><p className="text-xl font-bold mt-1"><BusinessText value={formatCurrency(totalPOValue)} /></p></CardContent></Card>
+          <Card className={cn(netVariance > 0.01 ? "border-red-200 bg-red-50" : netVariance < -0.01 ? "border-emerald-200 bg-emerald-50" : "")}><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Net Variance</p><p className={cn("text-xl font-bold mt-1", netVariance > 0.01 ? "text-red-700" : netVariance < -0.01 ? "text-emerald-700" : "")}><BusinessText value={netVariance > 0.01 ? "+" : ""} /><BusinessText value={formatCurrency(netVariance)} /></p><p className="text-xs text-muted-foreground mt-0.5"><BusinessText value={netVariance > 0.01 ? "net over-billed" : netVariance < -0.01 ? "net under-billed" : "balanced"} /></p></CardContent></Card>
+          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Over-billed</p><p className="text-2xl font-bold mt-1 text-red-700"><BusinessText value={overBilledCount} /></p><p className="text-xs text-muted-foreground">invoices</p></CardContent></Card>
+          <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Under-billed</p><p className="text-2xl font-bold mt-1 text-emerald-700"><BusinessText value={underBilledCount} /></p><p className="text-xs text-muted-foreground"><BusinessText value={exactMatchCount} /> exact match<BusinessText value={exactMatchCount !== 1 ? "es" : ""} /></p></CardContent></Card>
         </div>
       )}
 
@@ -269,7 +270,7 @@ export default function Reports() {
         <CardHeader className="pb-3 flex flex-row items-center justify-between gap-4 space-y-0">
           <div>
             <CardTitle className="text-base">Invoice Variance Detail</CardTitle>
-            {!isLoading && <p className="text-xs text-muted-foreground mt-1">Showing {filteredRows.length} of {rows.length} approved or resolved invoice{rows.length === 1 ? "" : "s"}</p>}
+            {!isLoading && <p className="text-xs text-muted-foreground mt-1">Showing <BusinessText value={filteredRows.length} /> of <BusinessText value={rows.length} /> approved or resolved invoice<BusinessText value={rows.length === 1 ? "" : "s"} /></p>}
           </div>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setIsColumnPanelOpen((open) => !open)} aria-expanded={isColumnPanelOpen}>
             <SlidersHorizontal className="h-3.5 w-3.5" /> Columns
@@ -287,7 +288,7 @@ export default function Reports() {
                 const checked = visibleColumns.has(id);
                 return <div key={id} className="flex items-center gap-1 rounded-md border bg-background px-2 py-1.5">
                   <input id={`report-column-${id}`} type="checkbox" checked={checked} onChange={() => toggleColumn(id)} disabled={checked && visibleColumns.size === 1} className="h-3.5 w-3.5 accent-primary" />
-                  <Label htmlFor={`report-column-${id}`} className="flex-1 cursor-pointer text-xs font-normal">{column.label}</Label>
+                  <Label htmlFor={`report-column-${id}`} className="flex-1 cursor-pointer text-xs font-normal"><BusinessText value={column.label} /></Label>
                   <Button variant="ghost" size="icon" className="h-6 w-6" disabled={index === 0} onClick={() => moveColumnByDirection(id, -1)} aria-label={`Move ${column.label} left`}><ArrowUp className="h-3 w-3 -rotate-90" /></Button>
                   <Button variant="ghost" size="icon" className="h-6 w-6" disabled={index === columnOrder.length - 1} onClick={() => moveColumnByDirection(id, 1)} aria-label={`Move ${column.label} right`}><ArrowDown className="h-3 w-3 -rotate-90" /></Button>
                 </div>;
@@ -301,7 +302,7 @@ export default function Reports() {
           ) : error ? (
             <div className="p-6 text-center text-sm text-muted-foreground"><AlertTriangle className="h-8 w-8 mx-auto mb-2 text-amber-400" />Failed to load report data.</div>
           ) : filteredRows.length === 0 ? (
-            <div className="p-12 text-center text-sm text-muted-foreground"><FileText className="h-10 w-10 mx-auto mb-3 opacity-30" /><p className="font-medium">{rows.length === 0 ? "No approved invoices yet" : "No invoices match these filters"}</p><p className="mt-1">{rows.length === 0 ? "Approved and resolved invoices will appear here with their PO variance data." : "Try changing the invoice-date range or supplier."}</p></div>
+            <div className="p-12 text-center text-sm text-muted-foreground"><FileText className="h-10 w-10 mx-auto mb-3 opacity-30" /><p className="font-medium"><BusinessText value={rows.length === 0 ? "No approved invoices yet" : "No invoices match these filters"} /></p><p className="mt-1"><BusinessText value={rows.length === 0 ? "Approved and resolved invoices will appear here with their PO variance data." : "Try changing the invoice-date range or supplier."} /></p></div>
           ) : (
             <div className="overflow-x-auto">
               <div className="min-w-[48rem] divide-y">
@@ -309,7 +310,7 @@ export default function Reports() {
                   <span />
                   {activeColumns.map((id) => {
                     const column = columnById.get(id)!;
-                    return <button key={id} type="button" draggable onDragStart={() => setDraggedColumn(id)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedColumn) setColumnOrder((order) => moveReportColumn(order, draggedColumn, id)); setDraggedColumn(null); }} onDragEnd={() => setDraggedColumn(null)} className={cn("flex min-w-0 items-center gap-1 text-left hover:text-foreground cursor-grab active:cursor-grabbing", column.align === "right" && "justify-end text-right")} title={`Drag to move ${column.label}`}><GripVertical className="h-3 w-3 shrink-0 opacity-50" />{column.label}</button>;
+                    return <button key={id} type="button" draggable onDragStart={() => setDraggedColumn(id)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedColumn) setColumnOrder((order) => moveReportColumn(order, draggedColumn, id)); setDraggedColumn(null); }} onDragEnd={() => setDraggedColumn(null)} className={cn("flex min-w-0 items-center gap-1 text-left hover:text-foreground cursor-grab active:cursor-grabbing", column.align === "right" && "justify-end text-right")} title={`Drag to move ${column.label}`}><GripVertical className="h-3 w-3 shrink-0 opacity-50" /><BusinessText value={column.label} /></button>;
                   })}
                   <span />
                 </div>
@@ -318,10 +319,10 @@ export default function Reports() {
                   return <div key={row.invoiceId}>
                     <div className="grid gap-3 px-4 py-3 items-center hover:bg-muted/30 cursor-pointer transition-colors" style={{ gridTemplateColumns }} onClick={() => row.poBreakdown.length > 0 && toggleRow(row.invoiceId)}>
                       <span className="text-muted-foreground">{row.poBreakdown.length > 0 ? expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" /> : null}</span>
-                      {activeColumns.map((id) => <div key={id} className="min-w-0">{renderCell(id, row)}</div>)}
+                      {activeColumns.map((id) => <div key={id} className="min-w-0"><BusinessText value={renderCell(id, row)} /></div>)}
                       <span><Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={(event) => { event.stopPropagation(); setLocation(`/invoices/${row.invoiceId}`); }}><ExternalLink className="h-3 w-3" /> View</Button></span>
                     </div>
-                    {expanded && row.poBreakdown.length > 0 && <div className="bg-muted/20 border-t px-8 py-3 space-y-1.5"><p className="text-xs font-semibold text-muted-foreground mb-2">Per-PO breakdown</p>{row.poBreakdown.map((po) => <div key={po.poNumber} className="grid grid-cols-[8rem_7rem_7rem_1fr] gap-3 text-xs items-center"><span className="font-mono font-medium">{po.poNumber}</span><span className="text-right tabular-nums text-muted-foreground">Inv: {formatCurrency(po.invoiceLineItemTotal)}</span><span className="text-right tabular-nums text-muted-foreground">PO: {formatCurrency(po.poTotal)}</span><span>{Math.abs(po.rawDiff) < 0.01 ? <span className="text-muted-foreground flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> Match</span> : po.overBilled ? <span className="text-red-700 font-medium">+{formatCurrency(po.rawDiff)} over</span> : <span className="text-emerald-700 font-medium">{formatCurrency(Math.abs(po.rawDiff))} under</span>}</span></div>)}</div>}
+                    {expanded && row.poBreakdown.length > 0 && <div className="bg-muted/20 border-t px-8 py-3 space-y-1.5"><p className="text-xs font-semibold text-muted-foreground mb-2">Per-PO breakdown</p>{row.poBreakdown.map((po) => <div key={po.poNumber} className="grid grid-cols-[8rem_7rem_7rem_1fr] gap-3 text-xs items-center"><span className="font-mono font-medium"><BusinessText value={po.poNumber} /></span><span className="text-right tabular-nums text-muted-foreground">Inv: <BusinessText value={formatCurrency(po.invoiceLineItemTotal)} /></span><span className="text-right tabular-nums text-muted-foreground">PO: <BusinessText value={formatCurrency(po.poTotal)} /></span><span>{Math.abs(po.rawDiff) < 0.01 ? <span className="text-muted-foreground flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> Match</span> : po.overBilled ? <span className="text-red-700 font-medium">+<BusinessText value={formatCurrency(po.rawDiff)} /> over</span> : <span className="text-emerald-700 font-medium"><BusinessText value={formatCurrency(Math.abs(po.rawDiff))} /> under</span>}</span></div>)}</div>}
                   </div>;
                 })}
               </div>

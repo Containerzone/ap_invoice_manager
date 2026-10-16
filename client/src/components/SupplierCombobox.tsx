@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useState, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Input } from "@/components/ui/input";
@@ -7,7 +8,7 @@ import { Building2, Plus, Check, ChevronDown, Loader2, Lock } from "lucide-react
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { toast } from "sonner";
+import { toast } from "@/lib/businessToast";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/_core/hooks/useAuth";
 
@@ -129,7 +130,7 @@ export function SupplierCombobox({ value, onChange, disabled, placeholder }: Sup
             {filtered.length === 0 && !inputValue ? (
               <p className="text-xs text-muted-foreground px-3 py-2.5">Start typing to search suppliers...</p>
             ) : filtered.length === 0 ? (
-              <p className="text-xs text-muted-foreground px-3 py-2.5">No suppliers match "{inputValue}"</p>
+              <p className="text-xs text-muted-foreground px-3 py-2.5">No suppliers match "<BusinessText value={inputValue} />"</p>
             ) : (
               filtered.map((s) => (
                 <button
@@ -139,7 +140,7 @@ export function SupplierCombobox({ value, onChange, disabled, placeholder }: Sup
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-accent text-left transition-colors"
                 >
                   <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="flex-1 truncate">{s.name}</span>
+                  <span className="flex-1 truncate"><BusinessText value={s.name} /></span>
                   {s.name?.toLowerCase() === inputValue.toLowerCase() && (
                     <Check className="h-3.5 w-3.5 text-primary shrink-0" />
                   )}
@@ -158,7 +159,7 @@ export function SupplierCombobox({ value, onChange, disabled, placeholder }: Sup
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm hover:bg-accent text-left transition-colors text-primary"
                 >
                   <Plus className="h-3.5 w-3.5 shrink-0" />
-                  <span>Create new supplier <span className="font-semibold">"{inputValue}"</span></span>
+                  <span>Create new supplier <span className="font-semibold">"<BusinessText value={inputValue} />"</span></span>
                 </button>
               ) : (
                 <div className="flex items-center gap-2.5 px-3 py-2.5 text-xs text-muted-foreground">
@@ -187,7 +188,7 @@ export function SupplierCombobox({ value, onChange, disabled, placeholder }: Sup
                 { key: "address", label: "Address", placeholder: "123 Main St, Sydney NSW 2000" },
               ].map(({ key, label, placeholder }) => (
                 <div key={key} className="space-y-1.5">
-                  <Label className="text-xs">{label}</Label>
+                  <Label className="text-xs"><BusinessText value={label} /></Label>
                   <Input
                     placeholder={placeholder}
                     value={newForm[key as keyof NewSupplierForm]}

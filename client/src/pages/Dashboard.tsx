@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -86,13 +87,13 @@ export default function Dashboard() {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    {card.title}
+                    <BusinessText value={card.title} />
                   </p>
                   {metricsLoading ? (
                     <Skeleton className="h-8 w-16 mt-2" />
                   ) : (
                     <p className="text-3xl font-bold text-foreground mt-1.5 tabular-nums">
-                      {card.value}
+                      <BusinessText value={card.value} />
                     </p>
                   )}
                 </div>
@@ -155,16 +156,16 @@ export default function Dashboard() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-foreground truncate">
-                            {invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `Invoice #${invoice.id}`}
+                            <BusinessText value={invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `Invoice #${invoice.id}`} />
                           </p>
                           <p className="text-xs text-muted-foreground truncate">
-                            {invoice.extractedSupplierName ?? "Unknown supplier"} · {formatRelativeTime(invoice.createdAt)}
+                            <BusinessText value={invoice.extractedSupplierName ?? "Unknown supplier"} /> · <BusinessText value={formatRelativeTime(invoice.createdAt)} />
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0 ml-3">
                         <span className="text-sm font-medium text-foreground tabular-nums">
-                          {formatCurrency(invoice.extractedTotal)}
+                          <BusinessText value={formatCurrency(invoice.extractedTotal)} />
                         </span>
                         <StatusBadge status={invoice.status} size="sm" />
                       </div>
@@ -211,15 +212,15 @@ export default function Dashboard() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-foreground truncate">
-                            {invoice.extractedInvoiceNumber ?? `#${invoice.id}`}
+                            <BusinessText value={invoice.extractedInvoiceNumber ?? `#${invoice.id}`} />
                           </p>
                           <p className="text-xs text-muted-foreground truncate mt-0.5">
-                            {invoice.extractedSupplierName ?? "Unknown"}
+                            <BusinessText value={invoice.extractedSupplierName ?? "Unknown"} />
                           </p>
                         </div>
                         {invoice.discrepancyAmount && (
                           <span className="text-xs font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full shrink-0">
-                            Δ {formatCurrency(invoice.discrepancyAmount)}
+                            Δ <BusinessText value={formatCurrency(invoice.discrepancyAmount)} />
                           </span>
                         )}
                       </div>

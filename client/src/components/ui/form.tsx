@@ -15,6 +15,7 @@ import {
 
 import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 
 const Form = FormProvider;
 
@@ -151,7 +152,7 @@ function FormMessage({ className, ...props }: React.ComponentProps<"p">) {
       className={cn("text-destructive text-sm", className)}
       {...props}
     >
-      {body}
+      <BusinessText value={body} />
     </p>
   );
 }

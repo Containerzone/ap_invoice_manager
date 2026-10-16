@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
@@ -115,7 +116,7 @@ function StatusMultiSelect({
       >
         <span className="flex items-center gap-1.5 text-muted-foreground">
           <Filter className="h-3.5 w-3.5" />
-          <span className={selected.size > 0 ? "text-foreground font-medium" : ""}>{label}</span>
+          <span className={selected.size > 0 ? "text-foreground font-medium" : ""}><BusinessText value={label} /></span>
         </span>
         <span className="flex items-center gap-1">
           {selected.size > 0 && (
@@ -145,7 +146,7 @@ function StatusMultiSelect({
                 onCheckedChange={() => toggle(opt.value)}
                 className="h-3.5 w-3.5"
               />
-              {opt.label}
+              <BusinessText value={opt.label} />
             </label>
           ))}
         </div>
@@ -227,7 +228,7 @@ export default function InvoiceList() {
       onClick={() => handleSort(col)}
       className={`flex items-center gap-0.5 uppercase tracking-wider text-xs font-medium text-muted-foreground hover:text-foreground transition-colors group ${className ?? ""}`}
     >
-      {label}
+      <BusinessText value={label} />
       <SortIcon active={sortKey === col} dir={sortDir} />
     </button>
   );
@@ -239,7 +240,7 @@ export default function InvoiceList() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground tracking-tight">Invoices</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {displayedInvoices.length} invoice{displayedInvoices.length !== 1 ? "s" : ""} total
+            <BusinessText value={displayedInvoices.length} /> invoice<BusinessText value={displayedInvoices.length !== 1 ? "s" : ""} /> total
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -293,9 +294,9 @@ export default function InvoiceList() {
             <FileText className="h-12 w-12 text-muted-foreground/25 mb-4" />
             <p className="text-base font-medium text-foreground">No invoices found</p>
             <p className="text-sm text-muted-foreground mt-1 mb-4">
-              {search || selectedStatuses.size > 0
+              <BusinessText value={search || selectedStatuses.size > 0
                 ? "Try adjusting your filters"
-                : "Upload your first invoice to get started"}
+                : "Upload your first invoice to get started"} />
             </p>
             {!search && selectedStatuses.size === 0 && (
               <Button
@@ -348,42 +349,42 @@ export default function InvoiceList() {
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">
-                          {invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `#${invoice.id}`}
+                          <BusinessText value={invoice.extractedInvoiceNumber ?? invoice.originalFileName ?? `#${invoice.id}`} />
                         </p>
                         <p className="text-xs text-muted-foreground truncate xl:hidden">
-                          {invoice.extractedPoNumber ?? "No PO"}
+                          <BusinessText value={invoice.extractedPoNumber ?? "No PO"} />
                         </p>
                       </div>
                     </div>
 
                     {/* Col 2: PO Number (desktop only) */}
                     <span className="text-sm text-foreground truncate hidden xl:block">
-                      {invoice.extractedPoNumber ?? "—"}
+                      <BusinessText value={invoice.extractedPoNumber ?? "—"} />
                     </span>
 
                     {/* Col 3: Supplier */}
                     <span className="text-sm text-foreground truncate hidden md:block">
-                      {invoice.extractedSupplierName ?? "—"}
+                      <BusinessText value={invoice.extractedSupplierName ?? "—"} />
                     </span>
 
                     {/* Col 4: Amount (GST-inclusive) */}
                     <span className="text-sm font-medium text-foreground hidden md:block">
-                      {formatCurrency(invoice.extractedTotal)}
+                      <BusinessText value={formatCurrency(invoice.extractedTotal)} />
                     </span>
 
                     {/* Col 5: Issue Date */}
                     <span className="text-xs text-muted-foreground hidden xl:block">
-                      {formatShortDate(invoice.extractedInvoiceDate)}
+                      <BusinessText value={formatShortDate(invoice.extractedInvoiceDate)} />
                     </span>
 
                     {/* Col 6: Due Date (desktop only) */}
                     <span className="text-xs text-muted-foreground hidden xl:block">
-                      {formatShortDate(invoice.extractedDueDate)}
+                      <BusinessText value={formatShortDate(invoice.extractedDueDate)} />
                     </span>
 
                     {/* Col 7: Received Date (desktop only) */}
                     <span className="text-xs text-muted-foreground hidden xl:block">
-                      {formatRelativeTime(invoice.createdAt)}
+                      <BusinessText value={formatRelativeTime(invoice.createdAt)} />
                     </span>
 
                     {/* Col 8: Notes icons */}
@@ -393,10 +394,10 @@ export default function InvoiceList() {
                           <TooltipTrigger asChild>
                             <span className="inline-flex items-center gap-0.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
                               <MessageSquare className="h-3 w-3" />
-                              {invoice.queryNoteCount}
+                              <BusinessText value={invoice.queryNoteCount} />
                             </span>
                           </TooltipTrigger>
-                          <TooltipContent>Query Notes ({invoice.queryNoteCount})</TooltipContent>
+                          <TooltipContent>Query Notes (<BusinessText value={invoice.queryNoteCount} />)</TooltipContent>
                         </Tooltip>
                       )}
                       {invoice.internalNoteCount > 0 && (
@@ -404,10 +405,10 @@ export default function InvoiceList() {
                           <TooltipTrigger asChild>
                             <span className="inline-flex items-center gap-0.5 text-xs font-medium text-purple-600 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
                               <StickyNote className="h-3 w-3" />
-                              {invoice.internalNoteCount}
+                              <BusinessText value={invoice.internalNoteCount} />
                             </span>
                           </TooltipTrigger>
-                          <TooltipContent>Internal Notes ({invoice.internalNoteCount})</TooltipContent>
+                          <TooltipContent>Internal Notes (<BusinessText value={invoice.internalNoteCount} />)</TooltipContent>
                         </Tooltip>
                       )}
                     </div>

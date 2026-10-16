@@ -194,6 +194,7 @@ import { desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { getWarrantyReadiness, previewWarrantyAviso } from "./financialWarrantyAvisoService";
 import { getWarrantyEvents } from "./financialWarrantyAvisoDb";
+import { resolveVtigerDisplayReferences } from "./vtigerDisplayReferenceService";
 
 // ─── Admin guard ──────────────────────────────────────────────────────────────
 
@@ -547,6 +548,9 @@ export const appRouter = router({
   // no Xero write operation and cannot enable a financial target schedule.
   financialOperations: router({
     dashboard: protectedProcedure.query(() => getFinancialOperationsDashboard()),
+    vtigerDisplayReferences: protectedProcedure
+      .input(z.object({ recordIds: z.array(z.string().regex(/^(?:5|79)x\d{1,12}$/i)).max(50) }))
+      .query(({ input }) => resolveVtigerDisplayReferences(input.recordIds)),
     runs: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(250).optional() }).optional())
       .query(({ input }) => getFinancialWorkflowRuns(input?.limit ?? 100)),
     runDetail: protectedProcedure.input(z.object({ runId: z.number().int().positive() }))

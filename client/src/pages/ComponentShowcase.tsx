@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import {
   Accordion,
   AccordionContent,
@@ -170,7 +171,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { toast as sonnerToast } from "sonner";
+import { toast as sonnerToast } from "@/lib/businessToast";
 import { AIChatBox, type Message } from "@/components/AIChatBox";
 
 export default function ComponentsShowcase() {
@@ -526,10 +527,10 @@ export default function ComponentsShowcase() {
                   </Popover>
                   {datePickerDate && (
                     <p className="text-sm text-muted-foreground">
-                      Selected:{" "}
-                      {format(datePickerDate, "yyyy/MM/dd  HH:mm", {
+                      Selected:<BusinessText value={" "} />
+                      <BusinessText value={format(datePickerDate, "yyyy/MM/dd  HH:mm", {
                         locale: zhCN,
-                      })}
+                      })} />
                     </p>
                   )}
                 </div>
@@ -543,7 +544,7 @@ export default function ComponentsShowcase() {
                         aria-expanded={openCombobox}
                         className="w-full justify-between"
                       >
-                        {selectedFramework
+                        <BusinessText value={selectedFramework
                           ? [
                               { value: "react", label: "React" },
                               { value: "vue", label: "Vue" },
@@ -553,7 +554,7 @@ export default function ComponentsShowcase() {
                               { value: "nuxt", label: "Nuxt" },
                               { value: "remix", label: "Remix" },
                             ].find(fw => fw.value === selectedFramework)?.label
-                          : "Select framework..."}
+                          : "Select framework..."} />
                         <CalendarIcon className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
                     </PopoverTrigger>
@@ -591,7 +592,7 @@ export default function ComponentsShowcase() {
                                       : "opacity-0"
                                   }`}
                                 />
-                                {framework.label}
+                                <BusinessText value={framework.label} />
                               </CommandItem>
                             ))}
                           </CommandGroup>
@@ -601,9 +602,8 @@ export default function ComponentsShowcase() {
                   </Popover>
                   {selectedFramework && (
                     <p className="text-sm text-muted-foreground">
-                      Selected:{" "}
-                      {
-                        [
+                      Selected:<BusinessText value={" "} />
+                      <BusinessText value={[
                           { value: "react", label: "React" },
                           { value: "vue", label: "Vue" },
                           { value: "angular", label: "Angular" },
@@ -611,8 +611,7 @@ export default function ComponentsShowcase() {
                           { value: "nextjs", label: "Next.js" },
                           { value: "nuxt", label: "Nuxt" },
                           { value: "remix", label: "Remix" },
-                        ].find(fw => fw.value === selectedFramework)?.label
-                      }
+                        ].find(fw => fw.value === selectedFramework)?.label} />
                     </p>
                   )}
                 </div>
@@ -636,7 +635,7 @@ export default function ComponentsShowcase() {
                                 key={month}
                                 value={month.toString().padStart(2, "0")}
                               >
-                                {month.toString().padStart(2, "0")}
+                                <BusinessText value={month.toString().padStart(2, "0")} />
                               </SelectItem>
                             )
                           )}
@@ -660,7 +659,7 @@ export default function ComponentsShowcase() {
                             (_, i) => new Date().getFullYear() - 5 + i
                           ).map(year => (
                             <SelectItem key={year} value={year.toString()}>
-                              {year}
+                              <BusinessText value={year} />
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -669,7 +668,7 @@ export default function ComponentsShowcase() {
                   </div>
                   {selectedMonth && selectedYear && (
                     <p className="text-sm text-muted-foreground">
-                      Selected: {selectedYear}/{selectedMonth}/
+                      Selected: <BusinessText value={selectedYear} />/<BusinessText value={selectedMonth} />/
                     </p>
                   )}
                 </div>
@@ -756,7 +755,7 @@ export default function ComponentsShowcase() {
                               setCurrentPage(page);
                             }}
                           >
-                            {page}
+                            <BusinessText value={page} />
                           </PaginationLink>
                         </PaginationItem>
                       ))}
@@ -772,7 +771,7 @@ export default function ComponentsShowcase() {
                     </PaginationContent>
                   </Pagination>
                   <p className="text-sm text-muted-foreground text-center">
-                    Current page: {currentPage}
+                    Current page: <BusinessText value={currentPage} />
                   </p>
                 </div>
                 <Separator />
@@ -1197,7 +1196,7 @@ export default function ComponentsShowcase() {
                           <Card>
                             <CardContent className="flex aspect-square items-center justify-center p-6">
                               <span className="text-4xl font-semibold">
-                                {index + 1}
+                                <BusinessText value={index + 1} />
                               </span>
                             </CardContent>
                           </Card>
@@ -1274,7 +1273,7 @@ export default function ComponentsShowcase() {
                       <div className="space-y-4">
                         {Array.from({ length: 20 }).map((_, i) => (
                           <div key={i} className="text-sm">
-                            Item {i + 1}: This is a scrollable content area
+                            Item <BusinessText value={i + 1} />: This is a scrollable content area
                           </div>
                         ))}
                       </div>

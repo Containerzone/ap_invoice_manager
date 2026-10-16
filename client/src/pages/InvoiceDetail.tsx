@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import React, { useState, useEffect, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation, useParams } from "wouter";
@@ -15,7 +16,7 @@ import { SupplierCombobox } from "@/components/SupplierCombobox";
 import { formatCurrency, formatRelativeTime, parseContainerNumbers } from "@/lib/invoiceUtils";
 import { calculateInvoiceLineTotals } from "@shared/invoiceLineTotals";
 import { getInvoicePdfUrl, getPdfPreviewUrl, nextPdfZoom, type PdfPreviewZoom } from "@/lib/pdfPreview";
-import { toast } from "sonner";
+import { toast } from "@/lib/businessToast";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
   ArrowLeft, FileText, RefreshCw, Send, CheckCircle2,
@@ -124,7 +125,7 @@ function XeroPoStatusBadge({ status }: { status: string }) {
   const cfg = XERO_PO_STATUS_CONFIG[status] ?? { label: status, className: "bg-gray-100 text-gray-600 border-gray-200" };
   return (
     <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border", cfg.className)}>
-      {cfg.label}
+      <BusinessText value={cfg.label} />
     </span>
   );
 }
@@ -184,7 +185,7 @@ function DatePickerField({
     <div className="space-y-1">
       <Label className="text-xs text-muted-foreground flex items-center gap-1">
         <Icon className="h-3 w-3" />
-        {label}
+        <BusinessText value={label} />
       </Label>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
@@ -196,7 +197,7 @@ function DatePickerField({
             )}
           >
             <Calendar className="mr-2 h-3.5 w-3.5 shrink-0" />
-            {value ? toDisplayDate(value) : "Pick a date"}
+            <BusinessText value={value ? toDisplayDate(value) : "Pick a date"} />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="start">
@@ -210,7 +211,7 @@ function DatePickerField({
                   className="h-6 text-xs px-2"
                   onClick={() => handleQuick(d)}
                 >
-                  +{d}d
+                  +<BusinessText value={d} />d
                 </Button>
               ))}
               <Button
@@ -930,7 +931,7 @@ export default function InvoiceDetail() {
                 All Invoices
                 {allInvoices && (
                   <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5 ml-0.5">
-                    {allInvoices.length}
+                    <BusinessText value={allInvoices.length} />
                   </Badge>
                 )}
               </Button>
@@ -953,13 +954,13 @@ export default function InvoiceDetail() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-xs font-medium text-foreground truncate">
-                            {inv.extractedInvoiceNumber ?? `Invoice #${inv.id}`}
+                            <BusinessText value={inv.extractedInvoiceNumber ?? `Invoice #${inv.id}`} />
                           </p>
                           <p className="text-xs text-muted-foreground truncate mt-0.5">
-                            {inv.extractedSupplierName ?? inv.originalFileName ?? "Unknown"}
+                            <BusinessText value={inv.extractedSupplierName ?? inv.originalFileName ?? "Unknown"} />
                           </p>
                           {inv.extractedPoNumber && (
-                            <p className="text-xs text-primary/70 font-mono mt-0.5">{inv.extractedPoNumber}</p>
+                            <p className="text-xs text-primary/70 font-mono mt-0.5"><BusinessText value={inv.extractedPoNumber} /></p>
                           )}
                         </div>
                         <StatusBadge status={inv.status} className="shrink-0 text-xs" />
@@ -975,7 +976,7 @@ export default function InvoiceDetail() {
           <div className="hidden sm:block">
             <div className="flex items-center gap-2.5">
               <h1 className="text-xl font-semibold text-foreground tracking-tight">
-                {invoice.extractedInvoiceNumber ?? `Invoice #${invoice.id}`}
+                <BusinessText value={invoice.extractedInvoiceNumber ?? `Invoice #${invoice.id}`} />
               </h1>
               <StatusBadge status={invoice.status} />
               {(invoice as any).xeroFinalBillId && (
@@ -986,7 +987,7 @@ export default function InvoiceDetail() {
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {invoice.extractedSupplierName ?? "Unknown supplier"} · {invoice.originalFileName} · Uploaded {formatRelativeTime(invoice.createdAt)}
+              <BusinessText value={invoice.extractedSupplierName ?? "Unknown supplier"} /> · <BusinessText value={invoice.originalFileName} /> · Uploaded <BusinessText value={formatRelativeTime(invoice.createdAt)} />
             </p>
           </div>
         </div>
@@ -1031,7 +1032,7 @@ export default function InvoiceDetail() {
               onClick={() => openEmailDialog(isQueried && hasEmails)}
             >
               <Send className="h-3.5 w-3.5" />
-              {isQueried ? "Send Query Again" : "Send Query"}
+              <BusinessText value={isQueried ? "Send Query Again" : "Send Query"} />
             </Button>
           )}
 
@@ -1055,7 +1056,7 @@ export default function InvoiceDetail() {
               disabled={staffApproveMutation.isPending}
             >
               {staffApproveMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-              {requiresAdminApproval || !staffCanApproveThisInvoice ? "Admin Approval Required" : "Approve"}
+              <BusinessText value={requiresAdminApproval || !staffCanApproveThisInvoice ? "Admin Approval Required" : "Approve"} />
             </Button>
           )}
 
@@ -1100,7 +1101,7 @@ export default function InvoiceDetail() {
       <div className="sm:hidden">
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-semibold text-foreground tracking-tight">
-            {invoice.extractedInvoiceNumber ?? `Invoice #${invoice.id}`}
+            <BusinessText value={invoice.extractedInvoiceNumber ?? `Invoice #${invoice.id}`} />
           </h1>
           <StatusBadge status={invoice.status} />
           {(invoice as any).xeroFinalBillId && (
@@ -1111,7 +1112,7 @@ export default function InvoiceDetail() {
           )}
         </div>
         <p className="text-xs text-muted-foreground mt-0.5">
-          {invoice.extractedSupplierName ?? "Unknown supplier"} · Uploaded {formatRelativeTime(invoice.createdAt)}
+          <BusinessText value={invoice.extractedSupplierName ?? "Unknown supplier"} /> · Uploaded <BusinessText value={formatRelativeTime(invoice.createdAt)} />
         </p>
       </div>
 
@@ -1122,7 +1123,7 @@ export default function InvoiceDetail() {
           <div>
             <p className="text-sm font-semibold text-violet-800">Admin Approval Required</p>
             <p className="text-sm text-violet-700 mt-0.5">
-              The discrepancy of <strong>{formatCurrency(invoice.discrepancyAmount)}</strong> on this invoice (total {formatCurrency(invoice.extractedTotal)}) exceeds the staff approval threshold.
+              The discrepancy of <strong><BusinessText value={formatCurrency(invoice.discrepancyAmount)} /></strong> on this invoice (total <BusinessText value={formatCurrency(invoice.extractedTotal)} />) exceeds the staff approval threshold.
               An administrator must approve this invoice before it can be resolved.
             </p>
           </div>
@@ -1137,11 +1138,11 @@ export default function InvoiceDetail() {
             <p className="text-sm font-semibold text-emerald-800">Billed Amount is Lower than PO — Safe to Approve</p>
             <p className="text-sm text-emerald-700 mt-0.5">
               {poResults.length > 1
-                ? <>Each PO's invoice line items are within the approved PO budget. All {poResults.length} POs verified as under budget.
-                   {netUnderBilled && <> Total net saving: <strong>{formatCurrency(totalNetDiffAbs)}</strong> under PO budget.</>}
-                   {" "}You may proceed to approve and push to Xero.</>
-                : <>Invoice total {formatCurrency(invoice.extractedTotal)} is lower than the Xero PO total{" "}
-                   {formatCurrency(invoice.xeroTotal)} by <strong>{formatCurrency(totalNetDiffAbs)}</strong>. The billed amount is within the approved PO budget.
+                ? <>Each PO's invoice line items are within the approved PO budget. All <BusinessText value={poResults.length} /> POs verified as under budget.
+                   {netUnderBilled && <> Total net saving: <strong><BusinessText value={formatCurrency(totalNetDiffAbs)} /></strong> under PO budget.</>}
+                   <BusinessText value={" "} />You may proceed to approve and push to Xero.</>
+                : <>Invoice total <BusinessText value={formatCurrency(invoice.extractedTotal)} /> is lower than the Xero PO total<BusinessText value={" "} />
+                   <BusinessText value={formatCurrency(invoice.xeroTotal)} /> by <strong><BusinessText value={formatCurrency(totalNetDiffAbs)} /></strong>. The billed amount is within the approved PO budget.
                    You may proceed to approve and push to Xero.</>
               }
             </p>
@@ -1169,11 +1170,11 @@ export default function InvoiceDetail() {
           <CheckCircle2 className="h-5 w-5 text-sky-500 shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-semibold text-sky-800">
-              {(invoice as any).adminApproved ? "Approved by Admin" : "Approved"}
+              <BusinessText value={(invoice as any).adminApproved ? "Approved by Admin" : "Approved"} />
             </p>
             <p className="text-sm text-sky-700 mt-0.5">
               This invoice has been approved and is ready to push to Xero.
-              {(invoice as any).approvalNotes && ` Notes: ${(invoice as any).approvalNotes}`}
+              <BusinessText value={(invoice as any).approvalNotes && ` Notes: ${(invoice as any).approvalNotes}`} />
             </p>
           </div>
         </div>
@@ -1190,16 +1191,16 @@ export default function InvoiceDetail() {
               <div>
                 <p className="text-sm font-semibold text-red-800">Duplicate Billing Risk — PO Already Billed in Xero</p>
                 <p className="text-sm text-red-700 mt-0.5">
-                  Purchase Order{billedPOs.includes(",") ? "s" : ""} <strong>{billedPOs}</strong>{" "}
-                  {billedPOs.includes(",") ? "have" : "has"} already been billed in Xero.
+                  Purchase Order<BusinessText value={billedPOs.includes(",") ? "s" : ""} /> <strong><BusinessText value={billedPOs} /></strong><BusinessText value={" "} />
+                  <BusinessText value={billedPOs.includes(",") ? "have" : "has"} /> already been billed in Xero.
                 </p>
                 {paidPOs.length > 0 && (
                   <p className="text-sm text-red-700 mt-1">
                     {paidPOs.map((r) => (
                       <span key={r.poNumber}>
-                        PO <strong>{r.poNumber}</strong> has already been <strong>PAID</strong>
-                        {r.paidAmount ? ` ($${r.paidAmount.toFixed(2)})` : ""}
-                        {r.paidDate ? ` on ${r.paidDate}` : ""}.{" "}
+                        PO <strong><BusinessText value={r.poNumber} /></strong> has already been <strong>PAID</strong>
+                        <BusinessText value={r.paidAmount ? ` ($${r.paidAmount.toFixed(2)})` : ""} />
+                        <BusinessText value={r.paidDate ? ` on ${r.paidDate}` : ""} />.<BusinessText value={" "} />
                       </span>
                     ))}
                   </p>
@@ -1217,7 +1218,7 @@ export default function InvoiceDetail() {
               <div>
                 <p className="text-sm font-semibold text-amber-800">Purchase Order Not Found in Xero</p>
                 <p className="text-sm text-amber-700 mt-0.5">
-                  Purchase Order{notFoundPOs.includes(",") ? "s" : ""} <strong>{notFoundPOs}</strong> could not be found in Xero.
+                  Purchase Order<BusinessText value={notFoundPOs.includes(",") ? "s" : ""} /> <strong><BusinessText value={notFoundPOs} /></strong> could not be found in Xero.
                 </p>
               </div>
             </div>
@@ -1233,21 +1234,21 @@ export default function InvoiceDetail() {
                 <p className="text-sm font-semibold text-amber-800">Amount Discrepancy — Invoice Exceeds PO</p>
                 {overBilledPOs.map((r) => (
                   <p key={r.poNumber} className="text-sm text-amber-700">
-                    PO <strong>{r.poNumber}</strong>: invoice lines {formatCurrency(r.invoiceLineItemTotal ?? invoice.extractedTotal)}{" "}
-                    vs PO total {formatCurrency(r.poTotal)} — <strong className="text-red-700">over by {formatCurrency(r.diff)}</strong>
+                    PO <strong><BusinessText value={r.poNumber} /></strong>: invoice lines <BusinessText value={formatCurrency(r.invoiceLineItemTotal ?? invoice.extractedTotal)} /><BusinessText value={" "} />
+                    vs PO total <BusinessText value={formatCurrency(r.poTotal)} /> — <strong className="text-red-700">over by <BusinessText value={formatCurrency(r.diff)} /></strong>
                   </p>
                 ))}
                 {underBilledPOs.map((r) => (
                   <p key={r.poNumber} className="text-sm text-emerald-700">
-                    PO <strong>{r.poNumber}</strong>: invoice lines {formatCurrency(r.invoiceLineItemTotal ?? invoice.extractedTotal)}{" "}
-                    vs PO total {formatCurrency(r.poTotal)} — <strong>under by {formatCurrency(Math.abs(r.rawDiff ?? 0))}</strong>
+                    PO <strong><BusinessText value={r.poNumber} /></strong>: invoice lines <BusinessText value={formatCurrency(r.invoiceLineItemTotal ?? invoice.extractedTotal)} /><BusinessText value={" "} />
+                    vs PO total <BusinessText value={formatCurrency(r.poTotal)} /> — <strong>under by <BusinessText value={formatCurrency(Math.abs(r.rawDiff ?? 0))} /></strong>
                   </p>
                 ))}
                 <p className="text-sm font-medium text-amber-800 border-t border-amber-200 pt-1 mt-1">
                   Net total difference: {netOverBilled
-                    ? <><strong className="text-red-700">+{formatCurrency(totalNetDiffAbs)}</strong> over budget overall</>
+                    ? <><strong className="text-red-700">+<BusinessText value={formatCurrency(totalNetDiffAbs)} /></strong> over budget overall</>
                     : netUnderBilled
-                      ? <><strong className="text-emerald-700">−{formatCurrency(totalNetDiffAbs)}</strong> under budget overall (but flagged because at least one PO is over-billed)</>  
+                      ? <><strong className="text-emerald-700">−<BusinessText value={formatCurrency(totalNetDiffAbs)} /></strong> under budget overall (but flagged because at least one PO is over-billed)</>
                       : <>amounts balance out overall</>}
                 </p>
               </div>
@@ -1273,9 +1274,9 @@ export default function InvoiceDetail() {
             <div className="flex-1">
               <p className="text-sm font-semibold text-emerald-800">Bill Created in Xero</p>
               <p className="text-xs text-emerald-700 mt-0.5">
-                Bill number: <strong>{(invoice as any).xeroFinalBillNumber}</strong>
+                Bill number: <strong><BusinessText value={(invoice as any).xeroFinalBillNumber} /></strong>
                 {invoice.status === "resolved" && (
-                  <> — {["verified", "under_budget"].includes((invoice as any).resolvedFromStatus ?? "") ? "Awaiting Payment" : "Awaiting Approval"} in Xero</>
+                  <> — <BusinessText value={["verified", "under_budget"].includes((invoice as any).resolvedFromStatus ?? "") ? "Awaiting Payment" : "Awaiting Approval"} /> in Xero</>
                 )}
               </p>
               {(invoice as any).pdfAttachedToXero && (
@@ -1408,7 +1409,7 @@ export default function InvoiceDetail() {
                     <div className="flex items-center justify-between">
                       <Label className="text-xs text-muted-foreground flex items-center gap-1">
                         <Hash className="h-3 w-3" />
-                        PO Numbers ({editPoNumbers.length}/15)
+                        PO Numbers (<BusinessText value={editPoNumbers.length} />/15)
                       </Label>
                       {editPoNumbers.length < 15 && (
                         <Button
@@ -1425,7 +1426,7 @@ export default function InvoiceDetail() {
                     <div className="space-y-1.5">
                       {editPoNumbers.map((po, idx) => (
                         <div key={idx} className="flex items-center gap-1.5">
-                          <span className="text-xs text-muted-foreground w-5 shrink-0 text-right">{idx + 1}.</span>
+                          <span className="text-xs text-muted-foreground w-5 shrink-0 text-right"><BusinessText value={idx + 1} />.</span>
                           <Input
                             value={po}
                             onChange={(e) => handleUpdatePoField(idx, e.target.value)}
@@ -1465,12 +1466,12 @@ export default function InvoiceDetail() {
                       <div>
                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1.5">
                           <Hash className="h-3.5 w-3.5" />
-                          Purchase Order{viewPoNumbers.length > 1 ? "s" : ""} ({viewPoNumbers.length})
+                          Purchase Order<BusinessText value={viewPoNumbers.length > 1 ? "s" : ""} /> (<BusinessText value={viewPoNumbers.length} />)
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {viewPoNumbers.map((po) => (
                             <Badge key={po} variant="outline" className="font-mono text-xs text-primary border-primary/30">
-                              {po}
+                              <BusinessText value={po} />
                             </Badge>
                           ))}
                         </div>
@@ -1488,7 +1489,7 @@ export default function InvoiceDetail() {
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {containers.map((cn) => (
-                            <Badge key={cn} variant="secondary" className="font-mono text-xs">{cn}</Badge>
+                            <Badge key={cn} variant="secondary" className="font-mono text-xs"><BusinessText value={cn} /></Badge>
                           ))}
                         </div>
                       </div>
@@ -1504,7 +1505,7 @@ export default function InvoiceDetail() {
                       Amount Comparison
                       {invoice.xeroVerifiedAt && (
                         <span className="text-muted-foreground/60 font-normal normal-case tracking-normal ml-auto">
-                          verified {formatRelativeTime(invoice.xeroVerifiedAt)}
+                          verified <BusinessText value={formatRelativeTime(invoice.xeroVerifiedAt)} />
                         </span>
                       )}
                     </p>
@@ -1518,9 +1519,9 @@ export default function InvoiceDetail() {
                       </div>
                       <div className="space-y-2">
                         <p className="text-xs font-medium text-muted-foreground">
-                          {poResults.length === 0 ? "Xero PO" :
+                          <BusinessText value={poResults.length === 0 ? "Xero PO" :
                            poResults.length === 1 ? `Xero PO ${poResults[0].poNumber}` :
-                           `Xero POs (${poResults.length})`}
+                           `Xero POs (${poResults.length})`} />
                         </p>
                         {invoice.xeroTotal ? (
                           <>
@@ -1551,7 +1552,7 @@ export default function InvoiceDetail() {
                           )}>
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center gap-2">
-                                <span className="font-mono font-semibold text-sm">{po.poNumber}</span>
+                                <span className="font-mono font-semibold text-sm"><BusinessText value={po.poNumber} /></span>
                                 <XeroPoStatusBadge status={po.status} />
                                 {/* Match/no-match indicator */}
                                 {po.found && !po.alreadyBilled && (
@@ -1569,18 +1570,18 @@ export default function InvoiceDetail() {
                               {po.found && !po.alreadyBilled && (
                                 <div className="flex items-center gap-3 text-muted-foreground">
                                   {po.invoiceLineItemTotal !== undefined && (
-                                    <span>Invoice lines: <strong>{formatCurrency(po.invoiceLineItemTotal)}</strong></span>
+                                    <span>Invoice lines: <strong><BusinessText value={formatCurrency(po.invoiceLineItemTotal)} /></strong></span>
                                   )}
                                   <span>PO total: <strong className={cn(
                                     po.overBilled ? "text-amber-700" :
                                     po.underBilled ? "text-emerald-700" :
                                     "text-emerald-700"
-                                  )}>{formatCurrency(po.poTotal)}</strong></span>
+                                  )}><BusinessText value={formatCurrency(po.poTotal)} /></strong></span>
                                   {po.overBilled && (
-                                    <span className="text-amber-700 font-medium">⚠ Over by {formatCurrency(po.diff)}</span>
+                                    <span className="text-amber-700 font-medium">⚠ Over by <BusinessText value={formatCurrency(po.diff)} /></span>
                                   )}
                                   {po.underBilled && (
-                                    <span className="text-emerald-700 font-medium">✓ Under by {formatCurrency(Math.abs(po.diff))}</span>
+                                    <span className="text-emerald-700 font-medium">✓ Under by <BusinessText value={formatCurrency(Math.abs(po.diff))} /></span>
                                   )}
                                 </div>
                               )}
@@ -1593,8 +1594,8 @@ export default function InvoiceDetail() {
                                 {po.isPaid ? (
                                   <p className="text-red-700">
                                     <strong>PAID</strong>
-                                    {po.paidAmount ? ` — $${po.paidAmount.toFixed(2)}` : ""}
-                                    {po.paidDate ? ` on ${po.paidDate}` : ""}
+                                    <BusinessText value={po.paidAmount ? ` — $${po.paidAmount.toFixed(2)}` : ""} />
+                                    <BusinessText value={po.paidDate ? ` on ${po.paidDate}` : ""} />
                                   </p>
                                 ) : (
                                   <p className="text-amber-700">Payment status: <strong>NOT YET PAID</strong></p>
@@ -1622,9 +1623,9 @@ export default function InvoiceDetail() {
                                           <td className="py-1 pr-3 text-foreground max-w-[200px] truncate" title={li.description}>
                                             {li.description || <span className="italic text-muted-foreground">No description</span>}
                                           </td>
-                                          <td className="py-1 pr-3 text-right tabular-nums">{li.quantity}</td>
-                                          <td className="py-1 pr-3 text-right tabular-nums">{formatCurrency(li.unitAmount)}</td>
-                                          <td className="py-1 text-right tabular-nums font-medium">{formatCurrency(li.taxAmount ? li.lineAmount + li.taxAmount : li.lineAmount * 1.1)}</td>
+                                          <td className="py-1 pr-3 text-right tabular-nums"><BusinessText value={li.quantity} /></td>
+                                          <td className="py-1 pr-3 text-right tabular-nums"><BusinessText value={formatCurrency(li.unitAmount)} /></td>
+                                          <td className="py-1 text-right tabular-nums font-medium"><BusinessText value={formatCurrency(li.taxAmount ? li.lineAmount + li.taxAmount : li.lineAmount * 1.1)} /></td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -1653,7 +1654,7 @@ export default function InvoiceDetail() {
                 <FileText className="h-4 w-4 text-muted-foreground" />
                 Invoice Lines
                 {lineItems.length > 0 && (
-                  <Badge variant="secondary" className="text-xs font-normal">{lineItems.length} items</Badge>
+                  <Badge variant="secondary" className="text-xs font-normal"><BusinessText value={lineItems.length} /> items</Badge>
                 )}
                 {editMode && (
                   <Button
@@ -1736,19 +1737,19 @@ export default function InvoiceDetail() {
                           ))
                         : lineItems.map((li) => (
                             <tr key={li.id} className="text-foreground hover:bg-muted/30 transition-colors">
-                              <td className="py-2.5 pr-3 leading-relaxed">{li.description ?? "—"}</td>
+                              <td className="py-2.5 pr-3 leading-relaxed"><BusinessText value={li.description ?? "—"} /></td>
                               {hasLineItemPoReferences && (
                                 <td className="py-2.5 pr-3 text-xs font-mono text-primary">
                                   {(li as any).poNumber
-                                    ? <span title={(li as any).custRef ?? ""}>{(li as any).poNumber}</span>
+                                    ? <span title={(li as any).custRef ?? ""}><BusinessText value={(li as any).poNumber} /></span>
                                     : (li as any).custRef
-                                      ? <span className="text-muted-foreground text-xs">{(li as any).custRef}</span>
+                                      ? <span className="text-muted-foreground text-xs"><BusinessText value={(li as any).custRef} /></span>
                                       : "—"}
                                 </td>
                               )}
-                              <td className="py-2.5 text-right tabular-nums text-muted-foreground">{li.quantity ?? "—"}</td>
-                              <td className="py-2.5 text-right tabular-nums text-muted-foreground">{formatCurrency(li.unitPrice)}</td>
-                              <td className="py-2.5 text-right tabular-nums font-medium">{formatCurrency(li.amount)}</td>
+                              <td className="py-2.5 text-right tabular-nums text-muted-foreground"><BusinessText value={li.quantity ?? "—"} /></td>
+                              <td className="py-2.5 text-right tabular-nums text-muted-foreground"><BusinessText value={formatCurrency(li.unitPrice)} /></td>
+                              <td className="py-2.5 text-right tabular-nums font-medium"><BusinessText value={formatCurrency(li.amount)} /></td>
                             </tr>
                           ))
                       }
@@ -1758,28 +1759,28 @@ export default function InvoiceDetail() {
                         <td colSpan={lineFooterLabelColSpan} className="pt-2.5 text-right text-xs text-muted-foreground font-medium pr-3">
                           Subtotal <span className="font-normal">(from lines)</span>
                         </td>
-                        <td className="pt-2.5 text-right tabular-nums text-xs">{formatCurrency(displayedLineItemTotals.subtotal)}</td>
+                        <td className="pt-2.5 text-right tabular-nums text-xs"><BusinessText value={formatCurrency(displayedLineItemTotals.subtotal)} /></td>
                         {editMode && <td />}
                       </tr>
                       <tr>
                         <td colSpan={lineFooterLabelColSpan} className="pt-1 text-right text-xs text-muted-foreground pr-3">GST <span className="font-normal">(from lines)</span></td>
-                        <td className="pt-1 text-right tabular-nums text-xs">{formatCurrency(displayedLineItemTotals.tax)}</td>
+                        <td className="pt-1 text-right tabular-nums text-xs"><BusinessText value={formatCurrency(displayedLineItemTotals.tax)} /></td>
                         {editMode && <td />}
                       </tr>
                       <tr>
                         <td colSpan={lineFooterLabelColSpan} className="pt-1.5 text-right text-xs font-semibold pr-3">Total <span className="font-normal text-muted-foreground">(from lines)</span></td>
-                        <td className="pt-1.5 text-right tabular-nums text-xs font-semibold">{formatCurrency(displayedLineItemTotals.total)}</td>
+                        <td className="pt-1.5 text-right tabular-nums text-xs font-semibold"><BusinessText value={formatCurrency(displayedLineItemTotals.total)} /></td>
                         {editMode && <td />}
                       </tr>
                       {(displayedLineItemTotals.defaultTaxRateLineCount > 0 || displayedLineItemTotals.invalidAmountLineCount > 0) && (
                         <tr>
                           <td colSpan={lineFooterLabelColSpan + 1 + (editMode ? 1 : 0)} className="pt-2 text-right text-[11px] text-muted-foreground">
                             {displayedLineItemTotals.defaultTaxRateLineCount > 0 && (
-                              <span>{displayedLineItemTotals.defaultTaxRateLineCount} line{displayedLineItemTotals.defaultTaxRateLineCount === 1 ? "" : "s"} use the 10% GST default because no tax rate was extracted.</span>
+                              <span><BusinessText value={displayedLineItemTotals.defaultTaxRateLineCount} /> line<BusinessText value={displayedLineItemTotals.defaultTaxRateLineCount === 1 ? "" : "s"} /> use the 10% GST default because no tax rate was extracted.</span>
                             )}
-                            {displayedLineItemTotals.defaultTaxRateLineCount > 0 && displayedLineItemTotals.invalidAmountLineCount > 0 && " "}
+                            <BusinessText value={displayedLineItemTotals.defaultTaxRateLineCount > 0 && displayedLineItemTotals.invalidAmountLineCount > 0 && " "} />
                             {displayedLineItemTotals.invalidAmountLineCount > 0 && (
-                              <span>{displayedLineItemTotals.invalidAmountLineCount} line{displayedLineItemTotals.invalidAmountLineCount === 1 ? " has" : "s have"} no valid amount and {displayedLineItemTotals.invalidAmountLineCount === 1 ? "is" : "are"} excluded.</span>
+                              <span><BusinessText value={displayedLineItemTotals.invalidAmountLineCount} /> line<BusinessText value={displayedLineItemTotals.invalidAmountLineCount === 1 ? " has" : "s have"} /> no valid amount and <BusinessText value={displayedLineItemTotals.invalidAmountLineCount === 1 ? "is" : "are"} /> excluded.</span>
                             )}
                           </td>
                         </tr>
@@ -1798,7 +1799,7 @@ export default function InvoiceDetail() {
                 <MessageSquare className="h-4 w-4 text-muted-foreground" />
                 Query Points
                 {queryPoints.length > 0 && (
-                  <Badge variant="secondary" className="text-xs font-normal">{queryPoints.length} {queryPoints.length === 1 ? "point" : "points"}</Badge>
+                  <Badge variant="secondary" className="text-xs font-normal"><BusinessText value={queryPoints.length} /> <BusinessText value={queryPoints.length === 1 ? "point" : "points"} /></Badge>
                 )}
                 <span className="ml-auto text-xs font-normal text-muted-foreground">Reflected in dispute email</span>
               </CardTitle>
@@ -1810,7 +1811,7 @@ export default function InvoiceDetail() {
                 <ol className="space-y-2">
                   {queryPoints.map((pt, idx) => (
                     <li key={idx} className="flex items-start gap-2">
-                      <span className="shrink-0 mt-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold">{idx + 1}</span>
+                      <span className="shrink-0 mt-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold"><BusinessText value={idx + 1} /></span>
                       <Textarea value={pt} onChange={(e) => handleUpdateQueryPoint(idx, e.target.value)} className="flex-1 text-xs min-h-[60px] resize-none" placeholder={`Query point ${idx + 1}`} />
                       <Button variant="ghost" size="icon" className="h-7 w-7 mt-1 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleRemoveQueryPoint(idx)} title="Remove">
                         <Trash2 className="h-3.5 w-3.5" />
@@ -1831,7 +1832,7 @@ export default function InvoiceDetail() {
                   </SelectTrigger>
                   <SelectContent>
                     {DISPUTE_TEMPLATES.map((tpl) => (
-                      <SelectItem key={tpl} value={tpl} className="text-xs">{tpl}</SelectItem>
+                      <SelectItem key={tpl} value={tpl} className="text-xs"><BusinessText value={tpl} /></SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -1845,7 +1846,7 @@ export default function InvoiceDetail() {
               {(queryPointsDirty || queryPointsSaved) && (
                 <Button size="sm" className="w-full h-8 text-xs gap-1.5" onClick={handleSaveQueryPoints} disabled={saveQueryPointsMutation.isPending || queryPointsSaved}>
                   {saveQueryPointsMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : queryPointsSaved ? <CheckCircle2 className="h-3 w-3" /> : <Save className="h-3 w-3" />}
-                  {queryPointsSaved ? "Saved — email updated" : "Save & Update Email Template"}
+                  <BusinessText value={queryPointsSaved ? "Saved — email updated" : "Save & Update Email Template"} />
                 </Button>
               )}
             </CardContent>
@@ -1862,13 +1863,13 @@ export default function InvoiceDetail() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  <p className="text-sm font-semibold text-foreground">{supplier.name}</p>
-                  {supplier.abn && <p className="text-xs text-muted-foreground">ABN: {supplier.abn}</p>}
+                  <p className="text-sm font-semibold text-foreground"><BusinessText value={supplier.name} /></p>
+                  {supplier.abn && <p className="text-xs text-muted-foreground">ABN: <BusinessText value={supplier.abn} /></p>}
                   <div className="grid grid-cols-1 gap-1.5 mt-2">
-                    {supplier.contactName && <div className="flex items-center gap-2 text-xs text-muted-foreground"><User className="h-3 w-3 shrink-0" />{supplier.contactName}</div>}
-                    {supplier.email && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Mail className="h-3 w-3 shrink-0" />{supplier.email}</div>}
-                    {supplier.phone && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Phone className="h-3 w-3 shrink-0" />{supplier.phone}</div>}
-                    {supplier.address && <div className="flex items-start gap-2 text-xs text-muted-foreground"><MapPin className="h-3 w-3 shrink-0 mt-0.5" /><span className="whitespace-pre-line">{supplier.address}</span></div>}
+                    {supplier.contactName && <div className="flex items-center gap-2 text-xs text-muted-foreground"><User className="h-3 w-3 shrink-0" /><BusinessText value={supplier.contactName} /></div>}
+                    {supplier.email && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Mail className="h-3 w-3 shrink-0" /><BusinessText value={supplier.email} /></div>}
+                    {supplier.phone && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Phone className="h-3 w-3 shrink-0" /><BusinessText value={supplier.phone} /></div>}
+                    {supplier.address && <div className="flex items-start gap-2 text-xs text-muted-foreground"><MapPin className="h-3 w-3 shrink-0 mt-0.5" /><span className="whitespace-pre-line"><BusinessText value={supplier.address} /></span></div>}
                   </div>
                 </div>
               </CardContent>
@@ -1888,7 +1889,7 @@ export default function InvoiceDetail() {
                 <div className="flex items-center gap-1.5">
                   <div className="hidden sm:flex items-center rounded-md border bg-muted/30 p-0.5" role="group" aria-label="Invoice preview zoom">
                     <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setPdfZoom((current) => nextPdfZoom(current, -1))} disabled={pdfZoom === 100} title="Zoom out preview" aria-label="Zoom out invoice preview"><ZoomOut className="h-3 w-3" /></Button>
-                    <Button variant="ghost" size="sm" className="h-6 min-w-11 px-1 text-[10px] tabular-nums" onClick={() => setPdfZoom(100)} title="Reset to 100%">{pdfZoom}%</Button>
+                    <Button variant="ghost" size="sm" className="h-6 min-w-11 px-1 text-[10px] tabular-nums" onClick={() => setPdfZoom(100)} title="Reset to 100%"><BusinessText value={pdfZoom} />%</Button>
                     <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setPdfZoom((current) => nextPdfZoom(current, 1))} disabled={pdfZoom === 200} title="Zoom in preview" aria-label="Zoom in invoice preview"><ZoomIn className="h-3 w-3" /></Button>
                   </div>
                   <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => setPdfMagnifierOpen(true)} title="Open large magnified invoice preview" aria-label="Magnify invoice preview">
@@ -1901,7 +1902,7 @@ export default function InvoiceDetail() {
                   </Button>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">{invoice.originalFileName}</p>
+              <p className="text-xs text-muted-foreground mt-0.5"><BusinessText value={invoice.originalFileName} /></p>
             </CardHeader>
             <CardContent className="p-0 pb-4 px-4">
               <div className="rounded-lg overflow-hidden border bg-muted/20" style={{ height: "560px" }}>
@@ -1919,11 +1920,11 @@ export default function InvoiceDetail() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0 text-left">
                 <DialogTitle className="flex items-center gap-2 text-base"><ZoomIn className="h-4 w-4" /> Magnified invoice preview</DialogTitle>
-                <p className="mt-1 truncate text-xs text-muted-foreground">{invoice.originalFileName}</p>
+                <p className="mt-1 truncate text-xs text-muted-foreground"><BusinessText value={invoice.originalFileName} /></p>
               </div>
               <div className="flex items-center rounded-md border bg-muted/30 p-0.5" role="group" aria-label="Magnified invoice zoom">
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setPdfZoom((current) => nextPdfZoom(current, -1))} disabled={pdfZoom === 100} title="Zoom out" aria-label="Zoom out magnified invoice"><ZoomOut className="h-3.5 w-3.5" /></Button>
-                <Button variant="ghost" size="sm" className="h-8 min-w-14 px-2 text-xs tabular-nums" onClick={() => setPdfZoom(100)} title="Reset to 100%">{pdfZoom}%</Button>
+                <Button variant="ghost" size="sm" className="h-8 min-w-14 px-2 text-xs tabular-nums" onClick={() => setPdfZoom(100)} title="Reset to 100%"><BusinessText value={pdfZoom} />%</Button>
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setPdfZoom((current) => nextPdfZoom(current, 1))} disabled={pdfZoom === 200} title="Zoom in" aria-label="Zoom in magnified invoice"><ZoomIn className="h-3.5 w-3.5" /></Button>
               </div>
             </div>
@@ -1949,12 +1950,12 @@ export default function InvoiceDetail() {
                 <TabsTrigger value="activity" className="text-xs gap-1.5">
                   <MessageSquare className="h-3.5 w-3.5" />
                   Activity & Notes
-                  {notes.length > 0 && <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5">{notes.length}</Badge>}
+                  {notes.length > 0 && <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5"><BusinessText value={notes.length} /></Badge>}
                 </TabsTrigger>
                 <TabsTrigger value="emails" className="text-xs gap-1.5">
                   <Mail className="h-3.5 w-3.5" />
                   Email Log
-                  {emails.length > 0 && <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5">{emails.length}</Badge>}
+                  {emails.length > 0 && <Badge variant="secondary" className="text-xs font-normal h-4 px-1.5"><BusinessText value={emails.length} /></Badge>}
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -1974,10 +1975,10 @@ export default function InvoiceDetail() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-foreground">{config.label}</span>
-                            <span className="text-xs text-muted-foreground">{formatRelativeTime(note.createdAt)}</span>
+                            <span className="text-xs font-medium text-foreground"><BusinessText value={config.label} /></span>
+                            <span className="text-xs text-muted-foreground"><BusinessText value={formatRelativeTime(note.createdAt)} /></span>
                           </div>
-                          <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap break-words">{note.content}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap break-words"><BusinessText value={note.content} /></p>
                         </div>
                       </div>
                     );
@@ -2004,11 +2005,11 @@ export default function InvoiceDetail() {
                       <div className="p-3 space-y-1.5">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <p className="text-xs font-medium text-foreground">{email.subject}</p>
-                            <p className="text-xs text-muted-foreground">To: {email.toAddress} · {formatRelativeTime(email.sentAt)}</p>
+                            <p className="text-xs font-medium text-foreground"><BusinessText value={email.subject} /></p>
+                            <p className="text-xs text-muted-foreground">To: <BusinessText value={email.toAddress} /> · <BusinessText value={formatRelativeTime(email.sentAt)} /></p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <Badge variant={email.status === "sent" ? "default" : "destructive"} className="text-xs">{email.status}</Badge>
+                            <Badge variant={email.status === "sent" ? "default" : "destructive"} className="text-xs"><BusinessText value={email.status} /></Badge>
                             {!(email as any).replyBody && (
                               <Button size="sm" variant="outline" className="h-6 text-xs px-2 gap-1 border-blue-200 text-blue-700 hover:bg-blue-50" onClick={() => handleOpenReplyDialog(email.id)}>
                                 <Mail className="h-3 w-3" />
@@ -2017,15 +2018,15 @@ export default function InvoiceDetail() {
                             )}
                           </div>
                         </div>
-                        <p className="text-xs text-muted-foreground whitespace-pre-wrap border-t pt-1.5 mt-1.5 leading-relaxed line-clamp-4">{email.body}</p>
+                        <p className="text-xs text-muted-foreground whitespace-pre-wrap border-t pt-1.5 mt-1.5 leading-relaxed line-clamp-4"><BusinessText value={email.body} /></p>
                       </div>
                       {(email as any).replyBody && (
                         <div className="bg-blue-50/50 border-t border-blue-100 p-3">
                           <div className="flex items-center justify-between mb-1.5">
                             <p className="text-xs font-medium text-blue-700 flex items-center gap-1"><Mail className="h-3 w-3" />Supplier Reply</p>
-                            <p className="text-xs text-muted-foreground">{formatRelativeTime((email as any).repliedAt)}</p>
+                            <p className="text-xs text-muted-foreground"><BusinessText value={formatRelativeTime((email as any).repliedAt)} /></p>
                           </div>
-                          <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">{(email as any).replyBody}</p>
+                          <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed"><BusinessText value={(email as any).replyBody} /></p>
                         </div>
                       )}
                     </div>
@@ -2052,7 +2053,7 @@ export default function InvoiceDetail() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Send className="h-4 w-4" />
-              {isQueried && hasEmails ? "Send Follow-up Query" : "Send Supplier Query"}
+              <BusinessText value={isQueried && hasEmails ? "Send Follow-up Query" : "Send Supplier Query"} />
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -2103,9 +2104,9 @@ export default function InvoiceDetail() {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <p className="text-sm text-muted-foreground">
-              {poResults.length > 0
+              <BusinessText value={poResults.length > 0
                 ? `This will convert ${poResults.length} PO${poResults.length > 1 ? "s" : ""} (${poResults.map(r => r.poNumber).join(", ")}) into a bill in Xero and mark them as BILLED.`
-                : "This will create a draft bill in Xero ready for payment approval."}
+                : "This will create a draft bill in Xero ready for payment approval."} />
             </p>
             {xeroConflict && (
               <div className="flex gap-3 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 p-3">
@@ -2115,7 +2116,7 @@ export default function InvoiceDetail() {
                     Invoice number conflict in Xero
                   </p>
                   <p className="text-xs text-amber-700 dark:text-amber-400">
-                    Invoice <strong>{xeroConflict.invoiceNumber}</strong> already exists in Xero under a different supplier: <strong>&quot;{xeroConflict.conflictingSupplier}&quot;</strong> (${xeroConflict.amount.toFixed(2)}, {xeroConflict.status}). A new bill will still be created for this supplier — confirm this is intentional.
+                    Invoice <strong><BusinessText value={xeroConflict.invoiceNumber} /></strong> already exists in Xero under a different supplier: <strong>&quot;<BusinessText value={xeroConflict.conflictingSupplier} />&quot;</strong> ($<BusinessText value={xeroConflict.amount.toFixed(2)} />, <BusinessText value={xeroConflict.status} />). A new bill will still be created for this supplier — confirm this is intentional.
                   </p>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -2139,16 +2140,16 @@ export default function InvoiceDetail() {
             )}
             {supplierContactResolution?.status === "matched" && (
               <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
-                <span className="font-semibold">Xero supplier contact confirmed:</span>{" "}
-                {supplierContactResolution.contact.name}
-                {supplierContactResolution.contact.email ? ` (${supplierContactResolution.contact.email})` : ""}.
+                <span className="font-semibold">Xero supplier contact confirmed:</span><BusinessText value={" "} />
+                <BusinessText value={supplierContactResolution.contact.name} />
+                <BusinessText value={supplierContactResolution.contact.email ? ` (${supplierContactResolution.contact.email})` : ""} />.
               </div>
             )}
             {supplierContactResolution?.status === "create_new" && (
               <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
-                <span className="font-semibold">No Xero supplier contact found.</span>{" "}
-                Resolving this invoice will create a new Xero contact for <strong>{xeroSupplierName}</strong>
-                {xeroSupplierEmail ? ` using ${xeroSupplierEmail}` : ""}.
+                <span className="font-semibold">No Xero supplier contact found.</span><BusinessText value={" "} />
+                Resolving this invoice will create a new Xero contact for <strong><BusinessText value={xeroSupplierName} /></strong>
+                <BusinessText value={xeroSupplierEmail ? ` using ${xeroSupplierEmail}` : ""} />.
                 <div className="mt-2">
                   <Button
                     type="button"
@@ -2172,7 +2173,7 @@ export default function InvoiceDetail() {
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
                   <div>
                     <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Supplier contact needs approval</p>
-                    <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">{supplierContactResolution.message}</p>
+                    <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400"><BusinessText value={supplierContactResolution.message} /></p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -2193,9 +2194,9 @@ export default function InvoiceDetail() {
                         className="mt-0.5"
                       />
                       <span className="min-w-0">
-                        <span className="block font-semibold text-foreground">{candidate.name}</span>
+                        <span className="block font-semibold text-foreground"><BusinessText value={candidate.name} /></span>
                         <span className="block text-muted-foreground">
-                          {candidate.email ?? "No email in Xero"}{candidate.taxNumber ? ` · Tax no. ${candidate.taxNumber}` : ""}
+                          <BusinessText value={candidate.email ?? "No email in Xero"} /><BusinessText value={candidate.taxNumber ? ` · Tax no. ${candidate.taxNumber}` : ""} />
                         </span>
                       </span>
                     </label>
@@ -2214,7 +2215,7 @@ export default function InvoiceDetail() {
             )}
             {supplierContactUnavailable && supplierContactResolution && (
               <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
-                <span className="font-semibold">Supplier contact check unavailable.</span> {supplierContactResolution.message}
+                <span className="font-semibold">Supplier contact check unavailable.</span> <BusinessText value={supplierContactResolution.message} />
               </div>
             )}
             <div className="space-y-1.5">
@@ -2225,7 +2226,7 @@ export default function InvoiceDetail() {
           <DialogFooter>
             {resolveConfirmationBlockers.length > 0 && (
               <p className="mr-auto max-w-sm text-xs text-amber-700 dark:text-amber-300">
-                <strong>To continue:</strong> {resolveConfirmationBlockers.join(" and ")}.
+                <strong>To continue:</strong> <BusinessText value={resolveConfirmationBlockers.join(" and ")} />.
               </p>
             )}
             <Button variant="outline" onClick={() => setShowResolveDialog(false)}>Cancel</Button>
@@ -2282,8 +2283,8 @@ export default function InvoiceDetail() {
           </DialogHeader>
           <div className="py-2">
             <p className="text-sm text-muted-foreground">
-              Are you sure you want to permanently delete{" "}
-              <strong className="text-foreground">{invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}</strong>?
+              Are you sure you want to permanently delete<BusinessText value={" "} />
+              <strong className="text-foreground"><BusinessText value={invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`} /></strong>?
               This will remove all associated notes, email logs, and line items and cannot be undone.
             </p>
           </div>
@@ -2310,8 +2311,8 @@ export default function InvoiceDetail() {
             <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-800">
               <p className="font-medium">Within staff approval threshold</p>
               <p className="text-xs mt-1 text-emerald-700">
-                Invoice total: <strong>{formatCurrency(invoice.extractedTotal)}</strong> ·
-                Discrepancy: <strong>{formatCurrency(invoice.discrepancyAmount)}</strong>
+                Invoice total: <strong><BusinessText value={formatCurrency(invoice.extractedTotal)} /></strong> ·
+                Discrepancy: <strong><BusinessText value={formatCurrency(invoice.discrepancyAmount)} /></strong>
               </p>
             </div>
             <div className="space-y-1.5">
@@ -2340,14 +2341,14 @@ export default function InvoiceDetail() {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
-              You are approving{" "}
-              <strong className="text-foreground">{invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`}</strong>{" "}
+              You are approving<BusinessText value={" "} />
+              <strong className="text-foreground"><BusinessText value={invoice.extractedInvoiceNumber ?? `Invoice #${invoiceId}`} /></strong><BusinessText value={" "} />
               as administrator. This will update the PO details in Xero to match the invoice.
             </p>
             {invoice.discrepancyAmount && parseFloat(invoice.discrepancyAmount.toString()) > 0 && (
               <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
-                <p className="font-medium">Discrepancy: {formatCurrency(invoice.discrepancyAmount)}</p>
-                <p className="text-xs mt-1 text-amber-700">Invoice total: {formatCurrency(invoice.extractedTotal)}</p>
+                <p className="font-medium">Discrepancy: <BusinessText value={formatCurrency(invoice.discrepancyAmount)} /></p>
+                <p className="text-xs mt-1 text-amber-700">Invoice total: <BusinessText value={formatCurrency(invoice.extractedTotal)} /></p>
               </div>
             )}
             <div className="space-y-1.5">
@@ -2385,13 +2386,13 @@ function DataRow({
     <div>
       <p className="text-xs text-muted-foreground flex items-center gap-1 mb-0.5">
         <Icon className="h-3 w-3" />
-        {label}
+        <BusinessText value={label} />
       </p>
       <p className={cn(
         "text-sm font-medium truncate",
         value ? (highlight ? "text-primary" : "text-foreground") : "text-muted-foreground/50 italic text-xs font-normal"
       )}>
-        {value ?? "Not found"}
+        <BusinessText value={value ?? "Not found"} />
       </p>
     </div>
   );
@@ -2414,7 +2415,7 @@ function EditField({
     <div className="space-y-1">
       <Label className="text-xs text-muted-foreground flex items-center gap-1">
         <Icon className="h-3 w-3" />
-        {label}
+        <BusinessText value={label} />
       </Label>
       <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="h-8 text-sm" />
     </div>
@@ -2434,13 +2435,13 @@ function AmountRow({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-xs text-muted-foreground"><BusinessText value={label} /></span>
       <span className={cn(
         "text-xs tabular-nums",
         highlight ? "font-semibold text-foreground" : "text-muted-foreground",
         discrepancy && "text-red-600 font-semibold"
       )}>
-        {value}
+        <BusinessText value={value} />
       </span>
     </div>
   );

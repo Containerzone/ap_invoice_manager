@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useState } from "react";
 import { FileSearch, FileText, LockKeyhole } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -45,9 +46,9 @@ export default function DepositInvoices() {
           </p>
         </div>
         <Badge variant="outline">
-          {active
+          <BusinessText value={active
             ? "Independent receiver released"
-            : "Default off — no Draft writes"}
+            : "Default off — no Draft writes"} />
         </Badge>
       </header>
       <Card>
@@ -59,7 +60,7 @@ export default function DepositInvoices() {
           </p>
           <p>
             Contract: <code>INV-&lt;Deal digits&gt;-D</code> · ACCREC · DRAFT ·
-            AUD · GST inclusive · one positive <code>Deposit Required</code>{" "}
+            AUD · GST inclusive · one positive <code>Deposit Required</code><BusinessText value={" "} />
             line. Any exact collision, including deleted/voided history, is
             held. AP never adopts or suffixes it.
           </p>
@@ -79,31 +80,31 @@ export default function DepositInvoices() {
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <p>
-            Deposit writer:{" "}
+            Deposit writer:<BusinessText value={" "} />
             <strong>
-              {active
+              <BusinessText value={active
                 ? "enabled only on protected receiver with approved current policy"
-                : "disabled / not verified"}
-            </strong>{" "}
+                : "disabled / not verified"} />
+            </strong><BusinessText value={" "} />
             · scope: <code>new_events_only</code>.
           </p>
           <p className="break-all font-mono text-xs">
-            {readiness.data?.webhookPath ??
-              "/api/webhooks/vtiger/deposit-invoice"}
+            <BusinessText value={readiness.data?.webhookPath ??
+              "/api/webhooks/vtiger/deposit-invoice"} />
           </p>
           <p>
-            Dedicated Deposit branch:{" "}
-            {readiness.data?.policy.depositOnlyVtigerBranch
+            Dedicated Deposit branch:<BusinessText value={" "} />
+            <BusinessText value={readiness.data?.policy.depositOnlyVtigerBranch
               ? "confirmed"
-              : "not confirmed"}{" "}
-            · Operations Deposit handoff:{" "}
-            {readiness.data?.policy.operationsDepositHandoff
+              : "not confirmed"} /><BusinessText value={" "} />
+            · Operations Deposit handoff:<BusinessText value={" "} />
+            <BusinessText value={readiness.data?.policy.operationsDepositHandoff
               ? "confirmed"
-              : "not confirmed"}{" "}
-            · source mappings:{" "}
-            {readiness.data?.policy.sourceMappingsConfirmed
+              : "not confirmed"} /><BusinessText value={" "} />
+            · source mappings:<BusinessText value={" "} />
+            <BusinessText value={readiness.data?.policy.sourceMappingsConfirmed
               ? "approved"
-              : "not approved"}
+              : "not approved"} />
             .
           </p>
           <p className="text-muted-foreground">
@@ -111,7 +112,7 @@ export default function DepositInvoices() {
             Deposit. Disabled receivers hold before any source/Xero/DB call.
           </p>
           {readiness.data?.releaseHoldReason ? (
-            <p className="text-amber-900">{readiness.data.releaseHoldReason}</p>
+            <p className="text-amber-900"><BusinessText value={readiness.data.releaseHoldReason} /></p>
           ) : null}
           {readiness.error ? (
             <p role="alert" className="text-red-700">
@@ -144,7 +145,7 @@ export default function DepositInvoices() {
                 setDeal(event.target.value);
                 setSelectedDeal("");
               }}
-              placeholder="D702877 or 5x12345"
+              placeholder="D702877"
               className="font-mono"
             />
             <Button
@@ -158,47 +159,47 @@ export default function DepositInvoices() {
                 else setSelectedDeal(value);
               }}
             >
-              {preview.isFetching
+              <BusinessText value={preview.isFetching
                 ? "Reading current evidence…"
-                : "Preview current evidence"}
+                : "Preview current evidence"} />
             </Button>
           </div>
           {selectedDeal && preview.error ? (
             <p role="alert" className="text-sm text-red-700">
-              {preview.error.message}
+              <BusinessText value={preview.error.message} />
             </p>
           ) : null}
           {selectedDeal && result ? (
             <div className="space-y-3 rounded-lg border p-4 text-sm">
               <div className="flex justify-between gap-2">
                 <p className="font-medium">
-                  {result.facts.dealNumber} ·{" "}
-                  {result.facts.customerName || "Customer unresolved"}
+                  <BusinessText value={result.facts.dealNumber} /> ·<BusinessText value={" "} />
+                  <BusinessText value={result.facts.customerName || "Customer unresolved"} />
                 </p>
                 <Badge
                   variant={result.state === "held" ? "destructive" : "outline"}
                 >
-                  {result.state === "held"
+                  <BusinessText value={result.state === "held"
                     ? "Held — no write"
-                    : "Evidence preview only"}
+                    : "Evidence preview only"} />
                 </Badge>
               </div>
               {result.holdReason ? (
                 <p className="rounded-md bg-amber-50 p-3 text-amber-900">
-                  {result.holdReason}
+                  <BusinessText value={result.holdReason} />
                 </p>
               ) : null}
-              {result.customerContactPlan ? <div className="rounded-md bg-muted/50 p-3 text-xs"><p className="font-medium">Customer contact decision · {String(result.customerContactPlan.outcome).replaceAll("_", " ")}</p><p className="mt-1">Billing kind {result.customerContactPlan.source?.billingKind ?? "unresolved"} · lookup {Array.isArray(result.customerContactPlan.lookupOrder) ? result.customerContactPlan.lookupOrder.join(" → ") : "not recorded"}</p><p className="mt-1 text-muted-foreground">Resolved party {result.customerContactPlan.source?.name ?? "unavailable"} · source email {result.customerContactPlan.source?.email ? "available" : "not available"} · {result.customerContactPlan.status === "would_create" ? "Preview only — no Xero Contact will be created." : result.customerContactPlan.contactId ? `Immutable ContactID ${result.customerContactPlan.contactId}` : "No ContactID bound."}</p></div> : null}
+              {result.customerContactPlan ? <div className="rounded-md bg-muted/50 p-3 text-xs"><p className="font-medium">Customer contact decision · <BusinessText value={String(result.customerContactPlan.outcome).replaceAll("_", " ")} /></p><p className="mt-1">Billing kind <BusinessText value={result.customerContactPlan.source?.billingKind ?? "unresolved"} /> · lookup <BusinessText value={Array.isArray(result.customerContactPlan.lookupOrder) ? result.customerContactPlan.lookupOrder.join(" → ") : "not recorded"} /></p><p className="mt-1 text-muted-foreground">Resolved party <BusinessText value={result.customerContactPlan.source?.name ?? "unavailable"} /> · source email <BusinessText value={result.customerContactPlan.source?.email ? "available" : "not available"} /> · <BusinessText value={result.customerContactPlan.status === "would_create" ? "Preview only — no Xero Contact will be created." : result.customerContactPlan.contactId ? `Immutable ContactID ${result.customerContactPlan.contactId}` : "No ContactID bound."} /></p></div> : null}
               <div className="grid gap-3 md:grid-cols-3">
                 <div>
                   <p className="text-xs text-muted-foreground">
                     Deposit Status / required inclusive
                   </p>
                   <p>
-                    {result.facts.depositStatus || "blank"} ·{" "}
-                    {result.facts.depositAmountRequiredInclusive === null
+                    <BusinessText value={result.facts.depositStatus || "blank"} /> ·<BusinessText value={" "} />
+                    <BusinessText value={result.facts.depositAmountRequiredInclusive === null
                       ? "not resolved"
-                      : money(result.facts.depositAmountRequiredInclusive)}
+                      : money(result.facts.depositAmountRequiredInclusive)} />
                   </p>
                 </div>
                 <div>
@@ -206,12 +207,12 @@ export default function DepositInvoices() {
                     Supply / collection date
                   </p>
                   <p>
-                    {result.facts.emptyContainerSupplyDate || "blank"} /{" "}
-                    {result.facts.fullContainerCollectionDate || "blank"}
+                    <BusinessText value={result.facts.emptyContainerSupplyDate || "blank"} /> /<BusinessText value={" "} />
+                    <BusinessText value={result.facts.fullContainerCollectionDate || "blank"} />
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Due-date evidence:{" "}
-                    {result.preview.dueDateSource ?? "held / unresolved"}
+                    Due-date evidence:<BusinessText value={" "} />
+                    <BusinessText value={result.preview.dueDateSource ?? "held / unresolved"} />
                   </p>
                 </div>
                 <div>
@@ -219,21 +220,21 @@ export default function DepositInvoices() {
                     Exact Xero -D preflight
                   </p>
                   <p>
-                    {result.preflight?.duplicateState ?? "not checked"}{" "}
-                    {result.preflight?.status ?? ""}
+                    <BusinessText value={result.preflight?.duplicateState ?? "not checked"} /><BusinessText value={" "} />
+                    <BusinessText value={result.preflight?.status ?? ""} />
                   </p>
                 </div>
               </div>
               {document ? (
                 <div className="rounded-md bg-muted/40 p-3">
                   <p className="font-mono font-semibold">
-                    {document.proposedDocumentNumber}
+                    <BusinessText value={document.proposedDocumentNumber} />
                   </p>
                   <p>
-                    {money(document.total)} inclusive ={" "}
-                    {money(document.subtotal)} net + {money(document.taxAmount)}{" "}
-                    GST · due {date(document.dueDate)} · account{" "}
-                    {document.accountCode || "unresolved"}.
+                    <BusinessText value={money(document.total)} /> inclusive =<BusinessText value={" "} />
+                    <BusinessText value={money(document.subtotal)} /> net + <BusinessText value={money(document.taxAmount)} /><BusinessText value={" "} />
+                    GST · due <BusinessText value={date(document.dueDate)} /> · account<BusinessText value={" "} />
+                    <BusinessText value={document.accountCode || "unresolved"} />.
                   </p>
                 </div>
               ) : null}
@@ -242,7 +243,7 @@ export default function DepositInvoices() {
                   Current confirmed field names and source evidence
                 </summary>
                 <pre className="mt-2 overflow-auto rounded-md bg-muted p-3">
-                  {JSON.stringify(
+                  <BusinessText value={JSON.stringify(
                     {
                       mappings: result.facts.mappingEvidence,
                       dealId: result.facts.dealId,
@@ -254,7 +255,7 @@ export default function DepositInvoices() {
                     },
                     null,
                     2
-                  )}
+                  )} />
                 </pre>
               </details>
             </div>
@@ -300,50 +301,50 @@ export default function DepositInvoices() {
                     return (
                       <tr key={row.id} className="border-b align-top">
                         <td className="p-3">
-                          <p className="font-mono">{row.dealNumber}</p>
+                          <p className="font-mono"><BusinessText value={row.dealNumber} /></p>
                           <p className="text-xs text-muted-foreground">
-                            {row.customerName || "not resolved"}
+                            <BusinessText value={row.customerName || "not resolved"} />
                           </p>
                         </td>
                         <td className="p-3">
                           <p className="font-mono">
-                            {row.proposedInvoiceNumber}
+                            <BusinessText value={row.proposedInvoiceNumber} />
                           </p>
                           <p className="text-xs">
-                            {proposal ? money(proposal.total) : "Held source"} ·
+                            <BusinessText value={proposal ? money(proposal.total) : "Held source"} /> ·
                             inclusive
                           </p>
                           <p className="break-all text-xs text-muted-foreground">
-                            {row.xeroInvoiceId || "No verified Xero receipt"}
+                            <BusinessText value={row.xeroInvoiceId || "No verified Xero receipt"} />
                           </p>
                         </td>
                         <td className="p-3">
                           <Badge variant="outline">
-                            {row.status.replaceAll("_", " ")}
+                            <BusinessText value={row.status.replaceAll("_", " ")} />
                           </Badge>
                           {row.holdReason ? (
                             <p className="mt-2 max-w-80 text-xs text-amber-900">
-                              {row.holdReason}
+                              <BusinessText value={row.holdReason} />
                             </p>
                           ) : null}
                           <p className="mt-2 max-w-80 text-xs text-muted-foreground">
-                            {row.postconditionHold}
+                            <BusinessText value={row.postconditionHold} />
                           </p>
                         </td>
                         <td className="p-3 text-xs text-muted-foreground">
                           <p>
-                            Event #{row.id} · execution{" "}
-                            {row.executionId ?? "none"}
+                            Event #<BusinessText value={row.id} /> · execution<BusinessText value={" "} />
+                            <BusinessText value={row.executionId ?? "none"} />
                           </p>
-                          <p>Source {row.sourceSnapshotHash.slice(0, 12)}…</p>
+                          <p>Source <BusinessText value={row.sourceSnapshotHash.slice(0, 12)} />…</p>
                           <p>
-                            Preflight{" "}
-                            {row.xeroPreflightHash?.slice(0, 12) ?? "none"}…
+                            Preflight<BusinessText value={" "} />
+                            <BusinessText value={row.xeroPreflightHash?.slice(0, 12) ?? "none"} />…
                           </p>
                           <p>
-                            {row.authorisedPayload
+                            <BusinessText value={row.authorisedPayload
                               ? "Immutable payload bound"
-                              : "No write payload bound"}
+                              : "No write payload bound"} />
                           </p>
                         </td>
                       </tr>

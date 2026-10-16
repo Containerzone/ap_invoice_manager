@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import { toast } from "@/lib/businessToast";
 import {
   Users as UsersIcon, ShieldCheck, User, Loader2, UserPlus, Mail, Trash2, CheckCircle2,
 } from "lucide-react";
@@ -202,7 +203,7 @@ export default function Users() {
             <CardTitle className="text-base font-medium flex items-center gap-2">
               <Mail className="h-4 w-4 text-muted-foreground" />
               Pending Invites
-              <Badge variant="secondary" className="ml-1 text-xs">{pendingInvites.length}/3</Badge>
+              <Badge variant="secondary" className="ml-1 text-xs"><BusinessText value={pendingInvites.length} />/3</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -228,10 +229,10 @@ export default function Users() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground truncate">
-                        {invite.name ?? invite.email}
+                        <BusinessText value={invite.name ?? invite.email} />
                       </p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {invite.name ? invite.email : "Awaiting sign-in"} · Created {formatRelativeTime(invite.createdAt)}
+                        <BusinessText value={invite.name ? invite.email : "Awaiting sign-in"} /> · Created <BusinessText value={formatRelativeTime(invite.createdAt)} />
                       </p>
                     </div>
                     <Badge
@@ -241,7 +242,7 @@ export default function Users() {
                       variant={invite.role === "admin" ? "outline" : "secondary"}
                     >
                       {invite.role === "admin" ? <ShieldCheck className="h-3 w-3" /> : <User className="h-3 w-3" />}
-                      {invite.role === "admin" ? "Admin" : "Staff"}
+                      <BusinessText value={invite.role === "admin" ? "Admin" : "Staff"} />
                     </Badge>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
@@ -258,7 +259,7 @@ export default function Users() {
                         <AlertDialogHeader>
                           <AlertDialogTitle>Remove Invite</AlertDialogTitle>
                           <AlertDialogDescription>
-                            Remove the pending invite for <strong>{invite.email}</strong>?
+                            Remove the pending invite for <strong><BusinessText value={invite.email} /></strong>?
                             They will not be able to join unless re-invited.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
@@ -287,7 +288,7 @@ export default function Users() {
           <CardTitle className="text-base font-medium flex items-center gap-2">
             <UsersIcon className="h-4 w-4 text-muted-foreground" />
             Active Users
-            {users && <Badge variant="secondary" className="ml-1 text-xs">{users.length}</Badge>}
+            {users && <Badge variant="secondary" className="ml-1 text-xs"><BusinessText value={users.length} /></Badge>}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -333,12 +334,12 @@ export default function Users() {
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar className="h-9 w-9 shrink-0">
                           <AvatarFallback className="text-sm font-medium bg-primary/10 text-primary">
-                            {(u.name ?? u.email ?? "?")[0].toUpperCase()}
+                            <BusinessText value={(u.name ?? u.email ?? "?")[0].toUpperCase()} />
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-foreground truncate">
-                            {u.name ?? "Unknown"}
+                            <BusinessText value={u.name ?? "Unknown"} />
                             {isSelf && (
                               <span className="ml-2 text-xs text-muted-foreground">(you)</span>
                             )}
@@ -348,14 +349,14 @@ export default function Users() {
                               </span>
                             )}
                           </p>
-                          <p className="text-xs text-muted-foreground md:hidden">{u.email}</p>
+                          <p className="text-xs text-muted-foreground md:hidden"><BusinessText value={u.email} /></p>
                         </div>
                       </div>
                       <p className="text-sm text-muted-foreground truncate hidden md:block">
-                        {u.email ?? "—"}
+                        <BusinessText value={u.email ?? "—"} />
                       </p>
                       <p className="text-xs text-muted-foreground hidden md:block">
-                        {formatRelativeTime(u.lastSignedIn)}
+                        <BusinessText value={formatRelativeTime(u.lastSignedIn)} />
                       </p>
                       <div className="flex items-center gap-2">
                         {u.role === "admin" ? (
@@ -394,9 +395,9 @@ export default function Users() {
                                   <AlertDialogHeader>
                                     <AlertDialogTitle>Change User Role</AlertDialogTitle>
                                     <AlertDialogDescription>
-                                      Change {u.name}'s role from{" "}
-                                      <strong>{u.role === "admin" ? "Admin" : "Staff"}</strong> to{" "}
-                                      <strong>{u.role === "admin" ? "Staff" : "Admin"}</strong>?
+                                      Change <BusinessText value={u.name} />'s role from<BusinessText value={" "} />
+                                      <strong><BusinessText value={u.role === "admin" ? "Admin" : "Staff"} /></strong> to<BusinessText value={" "} />
+                                      <strong><BusinessText value={u.role === "admin" ? "Staff" : "Admin"} /></strong>?
                                       {u.role === "admin" && (
                                         <span className="block mt-1 text-amber-600">
                                           This will remove their admin access.
@@ -439,7 +440,7 @@ export default function Users() {
                                   <AlertDialogHeader>
                                     <AlertDialogTitle>Re-enable User</AlertDialogTitle>
                                     <AlertDialogDescription>
-                                      Re-enable <strong>{u.name ?? u.email}</strong>'s account?
+                                      Re-enable <strong><BusinessText value={u.name ?? u.email} /></strong>'s account?
                                       They will be able to log in and access the system again.
                                     </AlertDialogDescription>
                                   </AlertDialogHeader>
@@ -474,7 +475,7 @@ export default function Users() {
                                   <AlertDialogHeader>
                                     <AlertDialogTitle>Disable User</AlertDialogTitle>
                                     <AlertDialogDescription>
-                                      Disable <strong>{u.name ?? u.email}</strong>'s account?
+                                      Disable <strong><BusinessText value={u.name ?? u.email} /></strong>'s account?
                                       They will immediately lose access to the system and cannot
                                       log in until re-enabled. Their data will not be deleted.
                                     </AlertDialogDescription>
@@ -520,13 +521,13 @@ export default function Users() {
                     <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground truncate">{invite.email}</p>
+                    <p className="text-sm text-foreground truncate"><BusinessText value={invite.email} /></p>
                     <p className="text-xs text-muted-foreground">
-                      Claimed {invite.claimedAt ? formatRelativeTime(invite.claimedAt) : ""}
+                      Claimed <BusinessText value={invite.claimedAt ? formatRelativeTime(invite.claimedAt) : ""} />
                     </p>
                   </div>
                   <Badge variant="outline" className="text-xs">
-                    {invite.role === "admin" ? "Admin" : "Staff"}
+                    <BusinessText value={invite.role === "admin" ? "Admin" : "Staff"} />
                   </Badge>
                 </div>
               ))}

@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Landmark, Workflow } from "lucide-react";
@@ -88,9 +89,9 @@ export default function FinancialAutomation() {
                 value={item.value}
                 className="h-auto min-w-36 flex-col items-start gap-1 whitespace-nowrap rounded-lg px-3 py-2.5 text-left text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
               >
-                <span className="font-medium">{item.label}</span>
+                <span className="font-medium"><BusinessText value={item.label} /></span>
                 <span className="max-w-44 whitespace-normal text-[10px] leading-snug opacity-70 data-[state=active]:opacity-85">
-                  {item.description}
+                  <BusinessText value={item.description} />
                 </span>
               </TabsTrigger>
             ))}
@@ -99,7 +100,7 @@ export default function FinancialAutomation() {
 
         {FINANCIAL_AUTOMATION_TABS.map((item) => (
           <TabsContent key={item.value} value={item.value} className="mt-0 focus-visible:outline-none">
-            {WORKSPACE_CONTENT[item.value]}
+            <BusinessText value={WORKSPACE_CONTENT[item.value]} />
           </TabsContent>
         ))}
       </Tabs>

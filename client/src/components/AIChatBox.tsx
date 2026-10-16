@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Loader2, Send, User, Sparkles } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { Streamdown } from "streamdown";
+import { BusinessText, useBusinessReferenceText } from "./BusinessReferenceDisplay";
 
 /**
  * Message type matching server-side LLM Message interface
@@ -120,6 +121,7 @@ export function AIChatBox({
   emptyStateMessage = "Start a conversation with AI",
   suggestedPrompts,
 }: AIChatBoxProps) {
+  const businessText = useBusinessReferenceText([messages, suggestedPrompts, emptyStateMessage]);
   const [input, setInput] = useState("");
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -203,7 +205,7 @@ export function AIChatBox({
             <div className="flex flex-1 flex-col items-center justify-center gap-6 text-muted-foreground">
               <div className="flex flex-col items-center gap-3">
                 <Sparkles className="size-12 opacity-20" />
-                <p className="text-sm">{emptyStateMessage}</p>
+                <p className="text-sm"><BusinessText value={emptyStateMessage} /></p>
               </div>
 
               {suggestedPrompts && suggestedPrompts.length > 0 && (
@@ -215,7 +217,7 @@ export function AIChatBox({
                       disabled={isLoading}
                       className="rounded-lg border border-border bg-card px-4 py-2 text-sm transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {prompt}
+                      <BusinessText value={prompt} />
                     </button>
                   ))}
                 </div>
@@ -262,11 +264,11 @@ export function AIChatBox({
                     >
                       {message.role === "assistant" ? (
                         <div className="prose prose-sm dark:prose-invert max-w-none">
-                          <Streamdown>{message.content}</Streamdown>
+                          <Streamdown>{businessText(message.content)}</Streamdown>
                         </div>
                       ) : (
                         <p className="whitespace-pre-wrap text-sm">
-                          {message.content}
+                          <BusinessText value={message.content} />
                         </p>
                       )}
                     </div>

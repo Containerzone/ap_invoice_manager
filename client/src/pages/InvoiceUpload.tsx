@@ -1,9 +1,10 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useState, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { toast } from "sonner";
+import { toast } from "@/lib/businessToast";
 import { Upload, FileText, X, ArrowLeft, Loader2, CheckCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -146,7 +147,7 @@ export default function InvoiceUpload() {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-foreground">
-                      Drop your PDF here, or{" "}
+                      Drop your PDF here, or<BusinessText value={" "} />
                       <span className="text-primary underline underline-offset-2">browse</span>
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">PDF files up to 20MB</p>
@@ -160,9 +161,9 @@ export default function InvoiceUpload() {
                     <FileText className="h-4.5 w-4.5 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{selectedFile.name}</p>
+                    <p className="text-sm font-medium text-foreground truncate"><BusinessText value={selectedFile.name} /></p>
                     <p className="text-xs text-muted-foreground">
-                      {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                      <BusinessText value={(selectedFile.size / 1024 / 1024).toFixed(2)} /> MB
                     </p>
                   </div>
                   <Button
@@ -196,12 +197,12 @@ export default function InvoiceUpload() {
               </div>
               <div className="text-center">
                 <p className="text-base font-medium text-foreground">
-                  {step === "uploading" ? "Uploading invoice..." : "Extracting data with AI..."}
+                  <BusinessText value={step === "uploading" ? "Uploading invoice..." : "Extracting data with AI..."} />
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {step === "uploading"
+                  <BusinessText value={step === "uploading"
                     ? "Securely storing your PDF"
-                    : "Reading invoice details, amounts, and container numbers"}
+                    : "Reading invoice details, amounts, and container numbers"} />
                 </p>
               </div>
               {/* Progress steps */}

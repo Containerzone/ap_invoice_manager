@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle, CheckCircle2, Clock3, Mail, RefreshCw, Siren } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/businessToast";
 
 type WorkflowFailure = {
   id: number;
@@ -84,18 +85,18 @@ export default function OperationalFailures() {
         <Card>
           <CardContent className="pt-6 flex items-center gap-3">
             <Siren className="h-8 w-8 text-red-600" />
-            <div><p className="text-2xl font-bold">{statusLoading ? "—" : status?.openFailureCount ?? 0}</p><p className="text-xs text-muted-foreground">Open failures</p></div>
+            <div><p className="text-2xl font-bold"><BusinessText value={statusLoading ? "—" : status?.openFailureCount ?? 0} /></p><p className="text-xs text-muted-foreground">Open failures</p></div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 flex items-center gap-3">
             <Mail className="h-8 w-8 text-blue-600" />
-            <div><p className="text-2xl font-bold">{statusLoading ? "—" : status?.alertRecipientCount ?? 0}</p><p className="text-xs text-muted-foreground">Immediate alert recipients</p></div>
+            <div><p className="text-2xl font-bold"><BusinessText value={statusLoading ? "—" : status?.alertRecipientCount ?? 0} /></p><p className="text-xs text-muted-foreground">Immediate alert recipients</p></div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3"><Clock3 className="h-8 w-8 text-amber-600" /><div><p className="font-semibold">{status?.dailySummaryEnabled ? "Daily summary enabled" : "Daily summary not enabled"}</p><p className="text-xs text-muted-foreground">{status?.lastDailySummaryAt ? `Last sent ${formatTimestamp(status.lastDailySummaryAt)}` : "Runs at 7:00 AM AEST / 8:00 AM AEDT after activation"}</p></div></div>
+            <div className="flex items-center gap-3"><Clock3 className="h-8 w-8 text-amber-600" /><div><p className="font-semibold"><BusinessText value={status?.dailySummaryEnabled ? "Daily summary enabled" : "Daily summary not enabled"} /></p><p className="text-xs text-muted-foreground"><BusinessText value={status?.lastDailySummaryAt ? `Last sent ${formatTimestamp(status.lastDailySummaryAt)}` : "Runs at 7:00 AM AEST / 8:00 AM AEDT after activation"} /></p></div></div>
             {!status?.dailySummaryEnabled && <Button size="sm" onClick={() => enableSummaryMutation.mutate()} disabled={enableSummaryMutation.isPending}>Enable</Button>}
           </CardContent>
         </Card>
@@ -113,11 +114,11 @@ export default function OperationalFailures() {
               <table className="w-full text-sm">
                 <thead className="border-b text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="text-left p-3">Workflow</th><th className="text-left p-3">Failure</th><th className="text-left p-3">Status</th><th className="text-left p-3">Last occurrence</th><th className="text-left p-3">Action</th></tr></thead>
                 <tbody>{rows.map((failure) => <tr className="border-b last:border-0" key={failure.id}>
-                  <td className="p-3 align-top"><p className="font-medium">{failure.workflowType}</p><p className="text-xs text-muted-foreground mt-1">{failure.recordKey}</p></td>
-                  <td className="p-3 align-top max-w-xl"><p className="font-medium">{failure.title}</p><p className="text-xs text-destructive mt-1 line-clamp-2">{failure.errorMessage}</p>{failure.occurrenceCount > 1 && <p className="text-xs text-muted-foreground mt-1">Occurred {failure.occurrenceCount} times</p>}</td>
-                  <td className="p-3 align-top">{failureBadge(failure)}</td>
-                  <td className="p-3 align-top whitespace-nowrap text-xs text-muted-foreground">{formatTimestamp(failure.lastOccurredAt)}</td>
-                  <td className="p-3 align-top"><Button size="sm" variant="outline" onClick={() => { setSelected(failure); setResolutionNotes(failure.resolutionNotes ?? ""); }}>{failure.status === "open" ? "Review" : "View"}</Button></td>
+                  <td className="p-3 align-top"><p className="font-medium"><BusinessText value={failure.workflowType} /></p><p className="text-xs text-muted-foreground mt-1"><BusinessText value={failure.recordKey} /></p></td>
+                  <td className="p-3 align-top max-w-xl"><p className="font-medium"><BusinessText value={failure.title} /></p><p className="text-xs text-destructive mt-1 line-clamp-2"><BusinessText value={failure.errorMessage} /></p>{failure.occurrenceCount > 1 && <p className="text-xs text-muted-foreground mt-1">Occurred <BusinessText value={failure.occurrenceCount} /> times</p>}</td>
+                  <td className="p-3 align-top"><BusinessText value={failureBadge(failure)} /></td>
+                  <td className="p-3 align-top whitespace-nowrap text-xs text-muted-foreground"><BusinessText value={formatTimestamp(failure.lastOccurredAt)} /></td>
+                  <td className="p-3 align-top"><Button size="sm" variant="outline" onClick={() => { setSelected(failure); setResolutionNotes(failure.resolutionNotes ?? ""); }}><BusinessText value={failure.status === "open" ? "Review" : "View"} /></Button></td>
                 </tr>)}</tbody>
               </table>
             </div>
@@ -128,15 +129,15 @@ export default function OperationalFailures() {
 
       <Dialog open={selected !== null} onOpenChange={(open) => !open && setSelected(null)}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>{selected?.title}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle><BusinessText value={selected?.title} /></DialogTitle></DialogHeader>
           {selected && <div className="space-y-4 text-sm">
-            <div className="flex items-center gap-2">{failureBadge(selected)}<span className="text-muted-foreground">{selected.workflowType} · {selected.recordKey}</span></div>
-            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-red-900 whitespace-pre-wrap">{selected.errorMessage}</div>
-            <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground"><span>First occurred: {formatTimestamp(selected.firstOccurredAt)}</span><span>Last occurred: {formatTimestamp(selected.lastOccurredAt)}</span><span>Occurrences: {selected.occurrenceCount}</span><span>Last alert: {formatTimestamp(selected.lastAlertedAt)}</span></div>
-            {selected.alertError && <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900"><AlertTriangle className="h-4 w-4 inline mr-1" />Alert delivery issue: {selected.alertError}</div>}
-            {Boolean(selected.details) && <pre className="max-h-40 overflow-auto rounded-md bg-muted p-3 text-xs">{JSON.stringify(selected.details, null, 2)}</pre>}
+            <div className="flex items-center gap-2"><BusinessText value={failureBadge(selected)} /><span className="text-muted-foreground"><BusinessText value={selected.workflowType} /> · <BusinessText value={selected.recordKey} /></span></div>
+            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-red-900 whitespace-pre-wrap"><BusinessText value={selected.errorMessage} /></div>
+            <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground"><span>First occurred: <BusinessText value={formatTimestamp(selected.firstOccurredAt)} /></span><span>Last occurred: <BusinessText value={formatTimestamp(selected.lastOccurredAt)} /></span><span>Occurrences: <BusinessText value={selected.occurrenceCount} /></span><span>Last alert: <BusinessText value={formatTimestamp(selected.lastAlertedAt)} /></span></div>
+            {selected.alertError && <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900"><AlertTriangle className="h-4 w-4 inline mr-1" />Alert delivery issue: <BusinessText value={selected.alertError} /></div>}
+            {Boolean(selected.details) && <pre className="max-h-40 overflow-auto rounded-md bg-muted p-3 text-xs"><BusinessText value={JSON.stringify(selected.details, null, 2)} /></pre>}
             {selected.status === "open" && <div className="space-y-2"><label className="text-sm font-medium">Resolution notes (optional)</label><Textarea value={resolutionNotes} onChange={(event) => setResolutionNotes(event.target.value)} placeholder="What was checked or corrected?" /></div>}
-            {selected.status === "resolved" && selected.resolutionNotes && <div className="rounded-md bg-emerald-50 p-3 text-emerald-900">Resolution notes: {selected.resolutionNotes}</div>}
+            {selected.status === "resolved" && selected.resolutionNotes && <div className="rounded-md bg-emerald-50 p-3 text-emerald-900">Resolution notes: <BusinessText value={selected.resolutionNotes} /></div>}
           </div>}
           <DialogFooter>{selected?.status === "open" && <Button onClick={() => selected && resolveMutation.mutate({ id: selected.id, resolutionNotes: resolutionNotes || undefined })} disabled={resolveMutation.isPending}><CheckCircle2 className="h-4 w-4 mr-2" />Mark resolved</Button>}</DialogFooter>
         </DialogContent>

@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -103,7 +104,7 @@ export default function DashboardLayout({
       }
     >
       <DashboardLayoutContent setSidebarWidth={setSidebarWidth}>
-        {children}
+        <BusinessText value={children} />
       </DashboardLayoutContent>
     </SidebarProvider>
   );
@@ -188,7 +189,7 @@ function DashboardLayoutContent({
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-sidebar-foreground truncate leading-none">ContainerZone</p>
-                    <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5">{APP_NAME}</p>
+                    <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5"><BusinessText value={APP_NAME} /></p>
                   </div>
                 </div>
               ) : null}
@@ -210,7 +211,7 @@ function DashboardLayoutContent({
                       }`}
                     >
                       <item.icon className={`h-4 w-4 ${isActive ? 'text-sidebar-primary' : ''}`} />
-                      <span>{item.label}</span>
+                      <span><BusinessText value={item.label} /></span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
@@ -224,15 +225,15 @@ function DashboardLayoutContent({
                 <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <Avatar className="h-9 w-9 border shrink-0">
                     <AvatarFallback className="text-xs font-medium">
-                      {user?.name?.charAt(0).toUpperCase()}
+                      <BusinessText value={user?.name?.charAt(0).toUpperCase()} />
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
                     <p className="text-sm font-medium truncate leading-none">
-                      {user?.name || "-"}
+                      <BusinessText value={user?.name || "-"} />
                     </p>
                     <p className="text-xs text-muted-foreground truncate mt-1.5">
-                      {user?.email || "-"}
+                      <BusinessText value={user?.email || "-"} />
                     </p>
                   </div>
                 </button>
@@ -267,14 +268,14 @@ function DashboardLayoutContent({
               <div className="flex items-center gap-3">
                 <div className="flex flex-col gap-1">
                   <span className="tracking-tight text-foreground">
-                    {activeMenuItem?.label ?? "Menu"}
+                    <BusinessText value={activeMenuItem?.label ?? "Menu"} />
                   </span>
                 </div>
               </div>
             </div>
           </div>
         )}
-        <main className="flex-1 p-4">{children}</main>
+        <main className="flex-1 p-4"><BusinessText value={children} /></main>
       </SidebarInset>
     </>
   );

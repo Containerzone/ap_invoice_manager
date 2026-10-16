@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { Component, ReactNode } from "react";
+import { BusinessText } from "./BusinessReferenceDisplay";
 
 interface Props {
   children: ReactNode;
@@ -35,7 +36,7 @@ class ErrorBoundary extends Component<Props, State> {
 
             <div className="p-4 w-full rounded bg-muted overflow-auto mb-6">
               <pre className="text-sm text-muted-foreground whitespace-break-spaces">
-                {this.state.error?.stack}
+                <BusinessText value={this.state.error?.stack} />
               </pre>
             </div>
 

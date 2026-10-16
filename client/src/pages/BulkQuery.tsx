@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
@@ -14,7 +15,7 @@ import { formatCurrency } from "@/lib/invoiceUtils";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import { toast } from "@/lib/businessToast";
 import { Send, Loader2, ArrowLeft, Building2, FileText, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -242,7 +243,7 @@ export default function BulkQuery() {
                 <SelectContent>
                   {suppliers?.map((s) => (
                     <SelectItem key={s.id} value={String(s.id)}>
-                      {s.name}
+                      <BusinessText value={s.name} />
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -257,14 +258,14 @@ export default function BulkQuery() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium flex items-center gap-2">
                     <FileText className="h-4 w-4 text-muted-foreground" />
-                    Invoices from {selectedSupplier?.name}
+                    Invoices from <BusinessText value={selectedSupplier?.name} />
                     {supplierInvoices.length > 0 && (
-                      <Badge variant="secondary" className="text-xs">{supplierInvoices.length}</Badge>
+                      <Badge variant="secondary" className="text-xs"><BusinessText value={supplierInvoices.length} /></Badge>
                     )}
                   </CardTitle>
                   {supplierInvoices.length > 0 && (
                     <Button variant="ghost" size="sm" className="text-xs h-7" onClick={toggleAll}>
-                      {selectedInvoiceIds.size === supplierInvoices.length ? "Deselect All" : "Select All"}
+                      <BusinessText value={selectedInvoiceIds.size === supplierInvoices.length ? "Deselect All" : "Select All"} />
                     </Button>
                   )}
                 </div>
@@ -296,18 +297,18 @@ export default function BulkQuery() {
                         />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-foreground truncate">
-                            {inv.extractedInvoiceNumber ?? `Invoice #${inv.id}`}
+                            <BusinessText value={inv.extractedInvoiceNumber ?? `Invoice #${inv.id}`} />
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {inv.extractedPoNumber && `PO: ${inv.extractedPoNumber} · `}
-                            {formatCurrency(inv.extractedTotal, inv.extractedCurrency ?? "AUD")}
+                            <BusinessText value={inv.extractedPoNumber && `PO: ${inv.extractedPoNumber} · `} />
+                            <BusinessText value={formatCurrency(inv.extractedTotal, inv.extractedCurrency ?? "AUD")} />
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           {inv.hasDiscrepancy && (
                             <span className="text-xs text-amber-600 flex items-center gap-1">
                               <AlertTriangle className="h-3 w-3" />
-                              Δ {formatCurrency(inv.discrepancyAmount)}
+                              Δ <BusinessText value={formatCurrency(inv.discrepancyAmount)} />
                             </span>
                           )}
                           <StatusBadge status={inv.status} size="sm" />
@@ -323,7 +324,7 @@ export default function BulkQuery() {
           {selectedInvoiceIds.size > 0 && (
             <div className="flex items-center justify-between pt-2">
               <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">{selectedInvoiceIds.size}</span> invoice{selectedInvoiceIds.size > 1 ? "s" : ""} selected
+                <span className="font-medium text-foreground"><BusinessText value={selectedInvoiceIds.size} /></span> invoice<BusinessText value={selectedInvoiceIds.size > 1 ? "s" : ""} /> selected
               </p>
               <Button onClick={handleProceedToCompose} className="gap-2">
                 Compose Email
@@ -343,7 +344,7 @@ export default function BulkQuery() {
                   .filter((i) => selectedInvoiceIds.has(i.id))
                   .map((inv) => (
                     <Badge key={inv.id} variant="outline" className="text-xs">
-                      {inv.extractedInvoiceNumber ?? `#${inv.id}`}
+                      <BusinessText value={inv.extractedInvoiceNumber ?? `#${inv.id}`} />
                     </Badge>
                   ))}
                 <Button
@@ -425,7 +426,7 @@ export default function BulkQuery() {
               ) : (
                 <Send className="h-4 w-4" />
               )}
-              Send to {selectedInvoiceIds.size} Invoice{selectedInvoiceIds.size > 1 ? "s" : ""}
+              Send to <BusinessText value={selectedInvoiceIds.size} /> Invoice<BusinessText value={selectedInvoiceIds.size > 1 ? "s" : ""} />
             </Button>
           </div>
         </div>

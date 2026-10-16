@@ -1,3 +1,4 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -5,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "sonner";
+import { toast } from "@/lib/businessToast";
 import { Building2, Plus, Search, Mail, Phone, Hash, Edit2, Check, Loader2, Trash2 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -108,7 +109,7 @@ export default function Suppliers() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground tracking-tight">Suppliers</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {suppliers?.length ?? 0} supplier{suppliers?.length !== 1 ? "s" : ""} in database
+            <BusinessText value={suppliers?.length ?? 0} /> supplier<BusinessText value={suppliers?.length !== 1 ? "s" : ""} /> in database
           </p>
         </div>
         {isAdmin && (
@@ -143,7 +144,7 @@ export default function Suppliers() {
             <Building2 className="h-12 w-12 text-muted-foreground/25 mb-4" />
             <p className="text-base font-medium text-foreground">No suppliers found</p>
             <p className="text-sm text-muted-foreground mt-1 mb-4">
-              {search ? "Try adjusting your search" : "Suppliers are created automatically when invoices are uploaded"}
+              <BusinessText value={search ? "Try adjusting your search" : "Suppliers are created automatically when invoices are uploaded"} />
             </p>
             {isAdmin && !search && (
               <Button variant="outline" size="sm" className="gap-2" onClick={openCreate}>
@@ -185,23 +186,23 @@ export default function Suppliers() {
                     </div>
                   )}
                 </div>
-                <p className="text-sm font-semibold text-foreground">{s.name}</p>
+                <p className="text-sm font-semibold text-foreground"><BusinessText value={s.name} /></p>
                 {s.abn && (
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                     <Hash className="h-3 w-3" />
-                    ABN: {s.abn}
+                    ABN: <BusinessText value={s.abn} />
                   </p>
                 )}
                 {s.email && (
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1 truncate">
                     <Mail className="h-3 w-3 shrink-0" />
-                    {s.email}
+                    <BusinessText value={s.email} />
                   </p>
                 )}
                 {s.phone && (
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                     <Phone className="h-3 w-3" />
-                    {s.phone}
+                    <BusinessText value={s.phone} />
                   </p>
                 )}
                 {s.xeroContactId && (
@@ -220,7 +221,7 @@ export default function Suppliers() {
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{editingId ? "Edit Supplier" : "Add Supplier"}</DialogTitle>
+            <DialogTitle><BusinessText value={editingId ? "Edit Supplier" : "Add Supplier"} /></DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             {[
@@ -232,7 +233,7 @@ export default function Suppliers() {
               { key: "xeroContactId", label: "Xero Contact ID", placeholder: "Optional" },
             ].map(({ key, label, placeholder }) => (
               <div key={key} className="space-y-1.5">
-                <Label className="text-xs">{label}</Label>
+                <Label className="text-xs"><BusinessText value={label} /></Label>
                 <Input
                   placeholder={placeholder}
                   value={form[key as keyof SupplierFormData]}
@@ -246,7 +247,7 @@ export default function Suppliers() {
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancel</Button>
             <Button onClick={handleSubmit} disabled={isPending} className="gap-2">
               {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              {editingId ? "Save Changes" : "Create Supplier"}
+              <BusinessText value={editingId ? "Save Changes" : "Create Supplier"} />
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -258,7 +259,7 @@ export default function Suppliers() {
           <DialogHeader>
             <DialogTitle>Delete Supplier</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete <span className="font-semibold text-foreground">"{deleteName}"</span>?
+              Are you sure you want to delete <span className="font-semibold text-foreground">"<BusinessText value={deleteName} />"</span>?
               This will not delete any invoices linked to this supplier, but the supplier profile will be removed permanently.
             </DialogDescription>
           </DialogHeader>

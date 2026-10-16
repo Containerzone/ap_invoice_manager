@@ -1,9 +1,10 @@
+import { BusinessText } from "@/components/BusinessReferenceDisplay";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "sonner";
+import { toast } from "@/lib/businessToast";
 import {
   CheckCircle2, ExternalLink, Loader2, RefreshCw,
   Settings as SettingsIcon, Unlink, Zap, Mail, Shield, AlertTriangle
@@ -100,7 +101,7 @@ export default function Settings() {
                   <div>
                     <p className="text-sm font-semibold text-amber-900">Xero connection needs reconnection</p>
                     <p className="mt-0.5 text-sm text-amber-800">
-                      The saved connection is for <strong>{xeroStatus.tenantName ?? "the previous organisation"}</strong>, but its access window has expired.
+                      The saved connection is for <strong><BusinessText value={xeroStatus.tenantName ?? "the previous organisation"} /></strong>, but its access window has expired.
                       Select <strong>Reconnect Xero</strong>, complete consent, and wait for the confirmation screen before returning here.
                     </p>
                   </div>
@@ -111,18 +112,18 @@ export default function Settings() {
                   <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-sm font-semibold text-red-900">
-                      Xero {xeroStatus.rateLimit.problem === "day" ? "Daily" : "API"} Request Limit Reached
+                      Xero <BusinessText value={xeroStatus.rateLimit.problem === "day" ? "Daily" : "API"} /> Request Limit Reached
                     </p>
                     <p className="text-sm text-red-800 mt-0.5">
-                      Xero has instructed the application to pause this organisation until{" "}
+                      Xero has instructed the application to pause this organisation until<BusinessText value={" "} />
                       <strong>
-                        {xeroStatus.rateLimit.pausedUntil
+                        <BusinessText value={xeroStatus.rateLimit.pausedUntil
                           ? new Date(xeroStatus.rateLimit.pausedUntil).toLocaleString("en-AU")
-                          : "the limit resets"}
+                          : "the limit resets"} />
                       </strong>.
                     </p>
                     <p className="text-xs text-red-700 mt-1">
-                      The application will not send further Xero requests during this pause. Daily calls remaining: {xeroStatus.rateLimit.dayRemaining ?? 0}; minute calls remaining: {xeroStatus.rateLimit.minuteRemaining ?? "unknown"}.
+                      The application will not send further Xero requests during this pause. Daily calls remaining: <BusinessText value={xeroStatus.rateLimit.dayRemaining ?? 0} />; minute calls remaining: <BusinessText value={xeroStatus.rateLimit.minuteRemaining ?? "unknown"} />.
                     </p>
                   </div>
                 </div>
@@ -154,25 +155,25 @@ export default function Settings() {
                 <div>
                   <p className={`text-sm font-semibold ${
                     xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-800" : "text-amber-900"
-                  }`}>{xeroExpired ? "Xero connection expired" : "Connected to Xero"}</p>
+                  }`}><BusinessText value={xeroExpired ? "Xero connection expired" : "Connected to Xero"} /></p>
                   {xeroStatus.tenantName && (
                     <p className={`text-sm mt-0.5 ${
                     xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-700" : "text-amber-800"
                     }`}>
-                      Organisation: <strong>{xeroStatus.tenantName}</strong>
+                      Organisation: <strong><BusinessText value={xeroStatus.tenantName} /></strong>
                     </p>
                   )}
                   {xeroStatus.expiresAt && (
                     <p className={`text-xs mt-1 ${
                     xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-600" : "text-amber-700"
                   }`}>
-                      Token {xeroExpired ? "expired" : "expires"}: {new Date(xeroStatus.expiresAt).toLocaleString("en-AU")}
+                      Token <BusinessText value={xeroExpired ? "expired" : "expires"} />: <BusinessText value={new Date(xeroStatus.expiresAt).toLocaleString("en-AU")} />
                     </p>
                   )}
                   <p className={`text-xs mt-1 ${
                     xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-600" : "text-amber-700 font-medium"
                   }`}>
-                    PDF attachments: {xeroStatus.hasAttachmentsScope && !xeroExpired ? "✓ Enabled" : "✗ Reconnect required"}
+                    PDF attachments: <BusinessText value={xeroStatus.hasAttachmentsScope && !xeroExpired ? "✓ Enabled" : "✗ Reconnect required"} />
                   </p>
                 </div>
               </div>
@@ -184,7 +185,7 @@ export default function Settings() {
                   onClick={handleXeroConnect}
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  {xeroExpired ? "Reconnect Xero" : "Re-authenticate"}
+                  <BusinessText value={xeroExpired ? "Reconnect Xero" : "Re-authenticate"} />
                 </Button>
                 <Button
                   variant="outline"
@@ -248,7 +249,7 @@ export default function Settings() {
             <div className="p-3 bg-muted/40 rounded-lg border">
               <p className="text-xs text-muted-foreground">SMTP Host</p>
               <p className="text-sm font-medium text-foreground mt-0.5">
-                {import.meta.env.VITE_SMTP_CONFIGURED === "true" ? "Configured" : "smtp.office365.com"}
+                <BusinessText value={import.meta.env.VITE_SMTP_CONFIGURED === "true" ? "Configured" : "smtp.office365.com"} />
               </p>
             </div>
           </div>
@@ -260,7 +261,7 @@ export default function Settings() {
               <div>
                 <p className="text-sm font-medium text-foreground">Invoice email upload</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Send supplier PDFs to <span className="font-medium">{microsoftStatus?.invoiceAlias ?? "invoices@containerzone.com.au"}</span>. The app watches the admin mailbox and accepts PDF attachments only.
+                  Send supplier PDFs to <span className="font-medium"><BusinessText value={microsoftStatus?.invoiceAlias ?? "invoices@containerzone.com.au"} /></span>. The app watches the admin mailbox and accepts PDF attachments only.
                 </p>
               </div>
               <Button size="sm" onClick={handleEnableMicrosoftInbox} disabled={enableMicrosoftMutation.isPending}>
@@ -268,18 +269,18 @@ export default function Settings() {
               </Button>
             </div>
             {microsoftStatus?.subscriptionId ? (
-              <p className="text-xs text-emerald-800">Connected. Subscription expires {microsoftStatus.subscriptionExpiresAt ? new Date(microsoftStatus.subscriptionExpiresAt).toLocaleString() : "soon"}; renewal runs automatically.</p>
+              <p className="text-xs text-emerald-800">Connected. Subscription expires <BusinessText value={microsoftStatus.subscriptionExpiresAt ? new Date(microsoftStatus.subscriptionExpiresAt).toLocaleString() : "soon"} />; renewal runs automatically.</p>
             ) : (
               <p className="text-xs text-amber-800">Not yet activated. Enable this after publishing the current version so Microsoft can validate the secure webhook.</p>
             )}
-            {microsoftStatus?.lastSubscriptionError && <p className="text-xs text-destructive">{microsoftStatus.lastSubscriptionError}</p>}
+            {microsoftStatus?.lastSubscriptionError && <p className="text-xs text-destructive"><BusinessText value={microsoftStatus.lastSubscriptionError} /></p>}
             {microsoftStatus?.submissions?.length ? (
               <div className="border-t pt-2 mt-2 space-y-1.5">
                 <p className="text-xs font-medium text-foreground">Recent email submissions</p>
                 {microsoftStatus.submissions.slice(0, 5).map((submission) => (
                   <div key={submission.id} className="flex items-center justify-between gap-3 text-xs">
-                    <span className="truncate text-muted-foreground">{submission.attachmentName} · {submission.senderAddress ?? "Unknown sender"}</span>
-                    <span className={submission.status === "processed" ? "text-emerald-700 font-medium" : submission.status === "failed" ? "text-destructive font-medium" : "text-amber-700 font-medium"}>{submission.status}</span>
+                    <span className="truncate text-muted-foreground"><BusinessText value={submission.attachmentName} /> · <BusinessText value={submission.senderAddress ?? "Unknown sender"} /></span>
+                    <span className={submission.status === "processed" ? "text-emerald-700 font-medium" : submission.status === "failed" ? "text-destructive font-medium" : "text-amber-700 font-medium"}><BusinessText value={submission.status} /></span>
                   </div>
                 ))}
               </div>
@@ -302,7 +303,7 @@ export default function Settings() {
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
               <p className="text-xs text-muted-foreground">Application</p>
-              <p className="font-medium text-foreground">{APP_NAME}</p>
+              <p className="font-medium text-foreground"><BusinessText value={APP_NAME} /></p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Organisation</p>
@@ -314,7 +315,7 @@ export default function Settings() {
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Logged in as</p>
-              <p className="font-medium text-foreground">{user?.name ?? "—"}</p>
+              <p className="font-medium text-foreground"><BusinessText value={user?.name ?? "—"} /></p>
             </div>
           </div>
         </CardContent>
