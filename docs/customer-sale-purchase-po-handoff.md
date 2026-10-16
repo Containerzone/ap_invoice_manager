@@ -27,6 +27,7 @@
 - The pre-cutover C1879 event remains held because its current source status is not `REQUEST`; it is not eligible for replay under the new-events-only release.
 - An authenticated local public-receiver probe using a deliberately nonexistent Container Control returned `202` held and `xeroWritesAttempted: 0`; no Xero or VTiger record was created or changed.
 - The reference-free PO rule is published. An authenticated public probe using a deliberately nonexistent Container Control returned `202` held with `xeroWritesAttempted: 0`, proving the public receiver loaded the current release gate without creating a source, Xero or VTiger write.
+- **C1915 one-time recovery:** The pre-cutover Customer Sale record was individually preflighted and owner-approved. AP verified the current `CUSTOMER SALE / REQUEST` source, exact supplier contact, selected `20' Sale` item and absence of an existing `SC1915` PO, then created and re-read Xero Draft PO `SC1915` (execution `840001`, Xero PO ID `8c0e3770-b01f-4fec-b083-a8c7a3341ddb`). Its Xero Reference is blank. No VTiger change, PO approval, sending, payment, void, deletion or update occurred; the related operational hold was resolved.
 
 ## Published-receiver verification
 
