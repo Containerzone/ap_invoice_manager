@@ -3,7 +3,7 @@ import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWo
 
 export const CUSTOMER_SALE_PURCHASE_ACCOUNT_CODE = "322" as const;
 export const CUSTOMER_SALE_PURCHASE_ITEM_CODES = { 20: "20' Sale", 40: "40' Sale" } as const;
-export const CUSTOMER_SALE_PURCHASE_RULES_VERSION = "container-control-customer-sale-v2-sale-items-placeholders" as const;
+export const CUSTOMER_SALE_PURCHASE_RULES_VERSION = "container-control-customer-sale-v3-sale-items-no-po-reference" as const;
 export const CUSTOMER_SALE_PURCHASE_RULES_HASH = createHash("sha256").update(CUSTOMER_SALE_PURCHASE_RULES_VERSION).digest("hex");
 
 export type CustomerSalePurchaseContainerControlFacts = {
@@ -121,7 +121,9 @@ export function buildCustomerSalePurchasePo(facts: CustomerSalePurchaseContainer
       documentType: "customer_sale_purchase",
       proposedAction: "create_draft",
       proposedDocumentNumber: poNumber,
-      reference: facts.controlNumber,
+      // The S-prefixed Order Number is the Customer Sale identifier. Do not
+      // repeat the Container Control in Xero's separate Reference field.
+      reference: null,
       partyName: facts.supplierName,
       partySourceId: null,
       accountCode: CUSTOMER_SALE_PURCHASE_ACCOUNT_CODE,

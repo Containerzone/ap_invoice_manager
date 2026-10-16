@@ -11,7 +11,7 @@ The dedicated Asset flow follows the authorised Operations behavior while remain
 | Source | Exact current VTiger `vtcmcontainercontrols` record, then exact referenced `Supplier Name` Vendor |
 | Trigger eligibility | `Acquisition Type = ASSET` and `Status = REQUEST` only |
 | Route | `POST /api/webhooks/vtiger/container-control-asset` with existing private AP webhook header |
-| Reference | `A<Container Control Number>` — e.g. `AC1860` |
+| Order number / Xero reference | Order number `A<Container Control Number>` — e.g. `AC1860`; the separate Xero **Reference** field is intentionally blank |
 | Xero document | One new **Draft Purchase Order** only |
 | Item / account | `20' Sale` for 20-foot containers or `40' Sale` for 40-foot containers / account `322` |
 | GST / currency | GST-exclusive line, AUD |

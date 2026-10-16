@@ -17,7 +17,7 @@ describe("Asset Container Control purchase-order rules", () => {
     expect(result).toMatchObject({ eligible: true, proposedPoNumber: "AC1860" });
     expect(result.document).toMatchObject({
       proposedDocumentNumber: "AC1860", documentFamily: "purchase_order", documentType: "asset_purchase",
-      partyName: "Asset Supplier", accountCode: "322", gstTreatment: "GST_EXCLUSIVE",
+      reference: null, partyName: "Asset Supplier", accountCode: "322", gstTreatment: "GST_EXCLUSIVE",
       subtotal: 1000, taxAmount: 100, total: 1100, issueDate: new Date("2026-10-11T00:00:00.000Z"),
     });
     expect(result.document?.lineItems).toEqual([expect.objectContaining({

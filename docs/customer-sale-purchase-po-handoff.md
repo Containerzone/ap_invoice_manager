@@ -12,7 +12,7 @@
 | Authentication | Existing `x-financial-webhook-secret` private header; body must name exact `id` or `record_id` in VTiger `moduleId` form such as `24x901` |
 | Current-source authority | Webhook body financial values are ignored. AP re-reads the exact Container Control and assigned VTiger Vendor. |
 | Source eligibility | Acquisition exactly `CUSTOMER SALE`; status exactly `REQUEST`; assigned supplier, container ID, Purchase Price INCL GST and Purchase Date all required. |
-| PO reference | `S<Container Control>` — e.g. `C1895` → `SC1895` |
+| Order number / Xero reference | Order number `S<Container Control>` — e.g. `C1895` → `SC1895`; the separate Xero **Reference** field is intentionally blank |
 | PO line | `20' Sale` or `40' Sale` selected from current container type, account `322`, AUD, GST exclusive, price = VTiger `Purchase Price INCL GST / 1.10`; description resolves the native container-type and condition placeholders. |
 | Xero evidence | GET-only exact contact, item and duplicate-reference preflight. Any existing `S…` reference is held—not adopted, suffixed or overwritten. |
 | Write boundary | New Xero Purchase Order `POST` only; exactly one line, `DRAFT`, `AUD`, `Exclusive`, account `322`; exact Xero Draft read-back required before local success. |

@@ -194,11 +194,12 @@ function xeroLineItems(document: ProposedFinancialDocument) {
 
 function xeroDocumentShape(document: ProposedFinancialDocument, target: ExistingDraftTarget | null): Record<string, unknown> {
   const lineItems = xeroLineItems(document);
+  const reference = document.reference?.trim();
   if (document.documentFamily === "purchase_order") {
     return {
       PurchaseOrderID: target?.xeroDocumentId,
       PurchaseOrderNumber: documentKey(document),
-      Reference: document.reference ?? undefined,
+      ...(reference ? { Reference: reference } : {}),
       Contact: xeroContact(document),
       Status: "DRAFT",
       Date: isoDate(document.issueDate),
@@ -210,7 +211,7 @@ function xeroDocumentShape(document: ProposedFinancialDocument, target: Existing
     InvoiceID: target?.xeroDocumentId,
     Type: "ACCREC",
     InvoiceNumber: documentKey(document),
-    Reference: document.reference ?? undefined,
+    ...(reference ? { Reference: reference } : {}),
     Contact: xeroContact(document),
     Status: "DRAFT",
     Date: isoDate(document.issueDate),

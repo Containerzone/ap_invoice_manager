@@ -73,6 +73,11 @@ describe("guarded financial production writer", () => {
     });
   });
 
+  it("omits the Xero Reference field when a Draft proposal deliberately has no reference", () => {
+    const payload = prepareFinancialDraftPayload(proposal({ reference: null }), "workflow-key");
+    expect(payload.body.PurchaseOrders?.[0]).not.toHaveProperty("Reference");
+  });
+
   it("prepares an ACCREC Draft invoice while retaining the evaluator's GST treatment", () => {
     const payload = prepareFinancialDraftPayload(proposal({
       documentFamily: "customer_invoice",

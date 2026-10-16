@@ -3,7 +3,7 @@ import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWo
 
 export const ASSET_PURCHASE_ACCOUNT_CODE = "322" as const;
 export const ASSET_PURCHASE_ITEM_CODES = { 20: "20' Sale", 40: "40' Sale" } as const;
-export const ASSET_PURCHASE_RULES_VERSION = "container-control-asset-v2-sale-items-placeholders" as const;
+export const ASSET_PURCHASE_RULES_VERSION = "container-control-asset-v3-sale-items-no-po-reference" as const;
 export const ASSET_PURCHASE_RULES_HASH = createHash("sha256").update(ASSET_PURCHASE_RULES_VERSION).digest("hex");
 
 export type AssetPurchaseContainerControlFacts = {
@@ -123,7 +123,9 @@ export function buildAssetPurchasePo(facts: AssetPurchaseContainerControlFacts):
       documentType: "asset_purchase",
       proposedAction: "create_draft",
       proposedDocumentNumber: poNumber,
-      reference: facts.controlNumber,
+      // The A-prefixed Order Number is the Asset identifier. Do not repeat the
+      // Container Control in Xero's separate Reference field.
+      reference: null,
       partyName: facts.supplierName,
       partySourceId: null,
       accountCode: ASSET_PURCHASE_ACCOUNT_CODE,
