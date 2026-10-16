@@ -68,6 +68,21 @@ export function financialAutomationTabFromSearch(search: string): FinancialAutom
   return isFinancialAutomationTab(value) ? value : "storage";
 }
 
+/**
+ * Wouter's location value can omit a query-only change. Prefer its query string
+ * when present, otherwise read the current browser query string so tab clicks
+ * select immediately without requiring a page refresh.
+ */
+export function financialAutomationTabFromLocation(
+  location: string,
+  browserSearch = typeof window === "undefined" ? "" : window.location.search,
+): FinancialAutomationTab {
+  const queryIndex = location.indexOf("?");
+  return financialAutomationTabFromSearch(
+    queryIndex >= 0 ? location.slice(queryIndex) : browserSearch,
+  );
+}
+
 export function financialAutomationPath(tab: FinancialAutomationTab): string {
   return `/financial-automation?tab=${tab}`;
 }

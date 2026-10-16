@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Landmark, Workflow } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -5,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   FINANCIAL_AUTOMATION_TABS,
   financialAutomationPath,
-  financialAutomationTabFromSearch,
+  financialAutomationTabFromLocation,
   type FinancialAutomationTab,
 } from "@/lib/financialAutomationNavigation";
 import StorageAutomation from "./StorageAutomation";
@@ -33,9 +34,28 @@ const WORKSPACE_CONTENT: Record<FinancialAutomationTab, React.ReactNode> = {
 
 export default function FinancialAutomation() {
   const [location, setLocation] = useLocation();
-  const tab = financialAutomationTabFromSearch(
-    location.includes("?") ? location.slice(location.indexOf("?")) : window.location.search
+  const [tab, setTab] = useState<FinancialAutomationTab>(() =>
+    financialAutomationTabFromLocation(location),
   );
+
+  useEffect(() => {
+    const syncTabFromLocation = () => {
+      setTab(financialAutomationTabFromLocation(location));
+    };
+
+    // Sync direct URLs, sidebar redirects and browser back/forward navigation.
+    syncTabFromLocation();
+    window.addEventListener("popstate", syncTabFromLocation);
+    return () => window.removeEventListener("popstate", syncTabFromLocation);
+  }, [location]);
+
+  const selectTab = (value: string) => {
+    const nextTab = value as FinancialAutomationTab;
+    // A query-only navigation does not always trigger a Wouter re-render. Keep
+    // local selection authoritative for this click, then persist it in the URL.
+    setTab(nextTab);
+    setLocation(financialAutomationPath(nextTab));
+  };
 
   return (
     <div className="space-y-5 pb-12">
@@ -57,7 +77,7 @@ export default function FinancialAutomation() {
 
       <Tabs
         value={tab}
-        onValueChange={(value) => setLocation(financialAutomationPath(value as FinancialAutomationTab))}
+        onValueChange={selectTab}
         className="space-y-5"
       >
         <div className="overflow-x-auto rounded-xl border bg-card p-2 shadow-sm">

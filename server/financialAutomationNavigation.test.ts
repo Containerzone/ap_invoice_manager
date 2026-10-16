@@ -3,6 +3,7 @@ import {
   FINANCIAL_AUTOMATION_TABS,
   financialAutomationPath,
   financialAutomationTabFromLegacyPath,
+  financialAutomationTabFromLocation,
   financialAutomationTabFromSearch,
   isFinancialAutomationTab,
 } from "../client/src/lib/financialAutomationNavigation";
@@ -34,6 +35,12 @@ describe("Financial Automations parent navigation", () => {
     );
     expect(isFinancialAutomationTab("main-invoices")).toBe(true);
     expect(isFinancialAutomationTab("financial-operations")).toBe(false);
+  });
+
+  it("preserves query-only subtab changes when the router location omits its search string", () => {
+    expect(financialAutomationTabFromLocation("/financial-automation?tab=asset-pos", "?tab=storage")).toBe("asset-pos");
+    expect(financialAutomationTabFromLocation("/financial-automation", "?tab=extra-hire")).toBe("extra-hire");
+    expect(financialAutomationTabFromLocation("/financial-automation", "?tab=not-a-tab")).toBe("storage");
   });
 
   it("maps every legacy workflow URL to its matching parent subtab", () => {
