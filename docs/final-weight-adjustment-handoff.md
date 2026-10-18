@@ -36,7 +36,7 @@ The Xero current Draft can change between the last GET and exact-resource POST b
 
 The independent `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED` flag is securely set to **`true`** and published. With the approved policy, only either dedicated Final Weight route can proceed to exact current evidence. Unauthenticated requests return **401** first; malformed authenticated ID envelopes return **400** without reads/writes.
 
-If the policy is missing/invalid, both routes return **503** after only a local policy SELECT, before evidence/claim writes or upstream calls. The policy retains both VTiger branches, both Operations handovers, exact mappings, Draft-only approval and `new_events_only` scope. The future overweight-only Reference policy is bound to rules v3's hash; the pre-existing v2 policy record is not changed by this implementation and cannot authorize v3 until separately approved with the current hash.
+If the policy is missing/invalid, both routes return **503** after only a local policy SELECT, before evidence/claim writes or upstream calls. The policy retains both VTiger branches, both Operations handovers, exact mappings, Draft-only approval and `new_events_only` scope. On 2026-10-18 the approved policy was audit-refreshed to rules v3 hash `ae14a2343c6befd965c9e074d0ae93a658b51535fb72d32be2baa09a35de8a0c`, preserving its original 2026-10-12 new-events-only effective time. The current overweight-only Customer PO → Container number Reference rule is therefore live for eligible future events.
 
 The separate config key is `financial-automation.final-weight-adjustment-release`. Policy fields are **only**:
 
@@ -50,7 +50,7 @@ Both branches/handoffs must be true. Missing/invalid/future approval/effective d
 
 ## Source mapping evidence and remaining review
 
-See [Operations final-weight alignment](operations-final-weight-alignment.md) for the exact labels/API names observed through **metadata-only describe** on 2026-10-11. No exact label is unresolved. Required current facts are named D-number Deal, linked Deal customer, actual/estimated weights, per-extra-tonne and underweight pickup date; overweight additionally requires the string Customer PO mapping, although a blank current value falls back only to the named Deal's Container number. Runtime uniqueness/type/scalar checks hold on drift/absence/ambiguity.
+See [Operations final-weight alignment](operations-final-weight-alignment.md) for the exact labels/API names observed through **metadata-only describe** on 2026-10-11 and reverified on 2026-10-18. No exact label is unresolved. Required current facts are named D-number Deal, linked Deal customer, actual/estimated weights, per-extra-tonne and underweight pickup date; overweight additionally reads `cf_potentials_customerpo` (**Customer PO**) when it is a non-empty string, otherwise the named Deal's `potentialname` (**Container number**). Runtime uniqueness/type/scalar checks hold on drift/absence/ambiguity.
 
 Before a future release, independently confirm:
 
