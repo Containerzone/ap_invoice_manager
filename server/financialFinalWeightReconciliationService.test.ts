@@ -9,7 +9,8 @@ vi.mock("./financialFinalWeightReconciliationDb", () => ({ reserveFinalWeightRec
 vi.mock("./financialWriterExecutionService", () => ({ executeGuardedFinancialWriterCommand: m.writer }));
 import { applyApprovedFinalWeightReconciliation, previewFinalWeightReconciliation } from "./financialFinalWeightReconciliationService";
 import { facts, policy, xero } from "./_test/finalWeightFixtures";
-import { buildFinalWeightAdjustment, prepareFinalWeightPayload } from "./financialFinalWeightAdjustmentRules";
+import { buildFinalWeightAdjustment, FINAL_WEIGHT_RULES_VERSION, prepareFinalWeightPayload } from "./financialFinalWeightAdjustmentRules";
+import { FINAL_WEIGHT_XERO_DRIFT_HOLD_REASON } from "./financialFinalWeightReconciliationOrigin";
 
 const originalEvent = (patch: Record<string, unknown> = {}) => ({
   id: 22, status: "reconciliation_required", holdReason: "Request failed with status code 404", executionId: 31,
@@ -33,17 +34,38 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Final Weight legacy 404 reconciliation", () => {
-  it("is GET-only until a separately enabled apply call and keeps original claim immutable", async () => {
+  it("keeps the existing 404-with-execution recovery eligible, GET-only and immutable", async () => {
     const preview = await previewFinalWeightReconciliation(22);
     expect(preview).toMatchObject({ originalEventId: 22, invoiceNumber: "INV-702877", noWrites: true, payload: { method: "POST", endpoint: "/Invoices/invoice-exact" } });
     expect(m.reserve).not.toHaveBeenCalled(); expect(m.writer).not.toHaveBeenCalled();
   });
   it.each([
     { status: "draft_updated" }, { holdReason: "Request failed with status code 500" }, { xeroInvoiceId: null }, { executionId: null },
-  ])("rejects non-eligible original records %#", async patch => {
+    { holdReason: FINAL_WEIGHT_XERO_DRIFT_HOLD_REASON, executionId: 31 },
+    { holdReason: `${FINAL_WEIGHT_XERO_DRIFT_HOLD_REASON}; arbitrary extra prose`, executionId: null },
+    { holdReason: "An operator put this event on reconciliation hold", executionId: null },
+  ])("refuses arbitrary or non-eligible original reconciliation holds %#", async patch => {
     m.original.mockResolvedValue(originalEvent(patch));
-    await expect(previewFinalWeightReconciliation(22)).rejects.toThrow(/Only a Final Weight immutable 404/);
+    await expect(previewFinalWeightReconciliation(22)).rejects.toThrow(/Only an immutable Final Weight 404 or exact Xero-drift/);
     expect(m.preview).not.toHaveBeenCalled();
+  });
+  it("allows only the exact no-execution Xero-drift class and records current rules evidence", async () => {
+    m.original.mockResolvedValue(originalEvent({ holdReason: FINAL_WEIGHT_XERO_DRIFT_HOLD_REASON, executionId: null }));
+    const preview = await previewFinalWeightReconciliation(22);
+    expect(m.preview).toHaveBeenCalledWith("5x77", "overweight");
+    expect(preview).toMatchObject({ originalEventId: 22, invoiceNumber: "INV-702877", xeroInvoiceId: "invoice-exact", noWrites: true,
+      evidence: { sourceSnapshot: expect.objectContaining({ direction: "overweight", rulesVersion: FINAL_WEIGHT_RULES_VERSION }) } });
+    expect(m.reserve).not.toHaveBeenCalled(); expect(m.writer).not.toHaveBeenCalled();
+  });
+  it.each([
+    () => ({ ...currentPreview(), state: "held" }),
+    () => ({ ...currentPreview(), preview: { ...currentPreview().preview, eligible: false } }),
+    () => ({ ...currentPreview(), preview: { ...currentPreview().preview, invoiceId: "other-invoice" } }),
+  ])("refuses a drift recovery unless the fresh current preview is previewed, eligible and the same invoice %#", async current => {
+    m.original.mockResolvedValue(originalEvent({ holdReason: FINAL_WEIGHT_XERO_DRIFT_HOLD_REASON, executionId: null }));
+    m.preview.mockResolvedValue(current());
+    await expect(previewFinalWeightReconciliation(22)).rejects.toThrow(/Current Final Weight source\/Xero Draft is not eligible for exact recovery/);
+    expect(m.reserve).not.toHaveBeenCalled(); expect(m.writer).not.toHaveBeenCalled();
   });
   it("refuses to apply while the separate recovery gate is off", async () => {
     vi.stubEnv("FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED", "");

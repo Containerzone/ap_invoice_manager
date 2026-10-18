@@ -10,7 +10,8 @@ import {
   type FinalWeightReconciliationEvidence,
 } from "./financialFinalWeightReconciliationDb";
 import { getFinalWeightEvent } from "./financialFinalWeightAdjustmentDb";
-import { prepareFinalWeightPayload, type FinalWeightDirection } from "./financialFinalWeightAdjustmentRules";
+import { FINAL_WEIGHT_RULES_VERSION, prepareFinalWeightPayload, type FinalWeightDirection } from "./financialFinalWeightAdjustmentRules";
+import { finalWeightReconciliationOrigin, finalWeightReconciliationOriginalHash } from "./financialFinalWeightReconciliationOrigin";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
 
 export type FinalWeightReconciliationPreview = {
@@ -26,19 +27,15 @@ export type FinalWeightReconciliationPreview = {
   noWrites: true;
 };
 
-function originalEventHash(event: NonNullable<Awaited<ReturnType<typeof getFinalWeightEvent>>>) {
-  return financialSha256({ id: event.id, status: event.status, holdReason: event.holdReason, executionId: event.executionId, originalDraftHash: event.originalDraftHash, expectedDraftHash: event.expectedDraftHash });
-}
-
 /**
- * GET-only reconciliation preview for a legacy 404 that reached Xero using the
- * superseded method. It never changes the immutable original claim or Draft.
+ * GET-only reconciliation preview for either the immutable legacy 404 that
+ * reached Xero using the superseded method, or a no-transport exact Xero-drift
+ * hold. It never changes the immutable original claim or Draft.
  */
 export async function previewFinalWeightReconciliation(originalEventId: number): Promise<FinalWeightReconciliationPreview> {
   const original = await getFinalWeightEvent(originalEventId);
-  if (!original || original.status !== "reconciliation_required" || !/status code 404/i.test(String(original.holdReason ?? "")) ||
-    !original.invoiceNumber || !original.xeroInvoiceId || !original.originalDraftHash || !original.expectedDraftHash || !original.executionId) {
-    throw new Error("Only a Final Weight immutable 404 reconciliation record may be considered for recovery.");
+  if (!original || !finalWeightReconciliationOrigin(original)) {
+    throw new Error("Only an immutable Final Weight 404 or exact Xero-drift reconciliation record may be considered for recovery.");
   }
   const result = await previewFinalWeightAdjustment(original.dealId, original.direction);
   if (result.state !== "previewed" || !result.preview.eligible || !result.preview.invoiceId || !result.preview.invoiceNumber || !result.preview.originalDraft || !result.preview.expectedDraft || !result.xero || !result.xeroPreflightHash ||
@@ -53,10 +50,10 @@ export async function previewFinalWeightReconciliation(originalEventId: number):
     dealNumber: result.facts.dealNumber,
     invoiceNumber: result.preview.invoiceNumber,
     xeroInvoiceId: result.preview.invoiceId,
-    originalEventHash: originalEventHash(original),
+    originalEventHash: finalWeightReconciliationOriginalHash(original),
     sourceSnapshotHash: result.sourceSnapshotHash,
     xeroPreflightHash: result.xeroPreflightHash,
-    sourceSnapshot: { ...result.facts, direction: original.direction, rulesVersion: "2026-10-12.final-weight.draft-amendment.v2" },
+    sourceSnapshot: { ...result.facts, direction: original.direction, rulesVersion: FINAL_WEIGHT_RULES_VERSION },
     xeroPreflight: result.xero,
     originalDraft: result.preview.originalDraft,
     expectedDraft: result.preview.expectedDraft,

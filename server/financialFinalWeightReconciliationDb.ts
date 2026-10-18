@@ -11,6 +11,7 @@ import { assertFinalWeightRelease, getFinalWeightReleasePolicy } from "./financi
 import { buildFinalWeightAdjustment, FINAL_WEIGHT_RULES_HASH, FINAL_WEIGHT_RULES_VERSION, prepareFinalWeightPayload, type FinalWeightDirection } from "./financialFinalWeightAdjustmentRules";
 import { readFinalWeightFacts } from "./financialFinalWeightAdjustmentSource";
 import { readFinalWeightXeroEvidence } from "./financialReadOnlyXeroService";
+import { finalWeightReconciliationOrigin, finalWeightReconciliationOriginalHash } from "./financialFinalWeightReconciliationOrigin";
 
 const affected = (result: any) => Number(result?.[0]?.affectedRows ?? result?.rowsAffected ?? 0) === 1;
 async function database() {
@@ -82,12 +83,12 @@ export async function verifyFinalWeightReconciliationWriteAccess(input: { eventI
   const event = await getFinalWeightReconciliationEvent(input.eventId);
   const original = event ? (await db.select().from(adjustmentEvents).where(eq(adjustmentEvents.id, event.originalEventId)).limit(1))[0] : null;
   const authorised = event?.authorisedPayload as { hash?: string } | null;
-  if (!event || !original || original.status !== "reconciliation_required" || !/status code 404/i.test(String(original.holdReason ?? "")) ||
+  if (!event || !original || !finalWeightReconciliationOrigin(original) ||
     event.status !== "reserved" || event.processingToken !== input.token || event.releaseKey !== input.releaseKey || event.releaseKey !== policy.releaseKey ||
     !authorised || authorised.hash !== financialSha256(input.payload) || input.preparedBy !== policy.approvedBy ||
     input.payload.documentNumber !== event.invoiceNumber || input.payload.expectedXeroDocumentId !== event.xeroInvoiceId ||
-    financialSha256({ id: original.id, status: original.status, holdReason: original.holdReason, executionId: original.executionId, originalDraftHash: original.originalDraftHash, expectedDraftHash: original.expectedDraftHash }) !== event.originalEventHash) {
-    throw new Error("Final Weight reconciliation requires its original immutable 404 record and a new exact-resource reservation.");
+    finalWeightReconciliationOriginalHash(original) !== event.originalEventHash) {
+    throw new Error("Final Weight reconciliation requires its original immutable 404 or exact Xero-drift record and a new exact-resource reservation.");
   }
   assertFinalWeightRelease(policy, event.direction);
   const facts = await readFinalWeightFacts(event.dealId, event.direction);
