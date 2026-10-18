@@ -21,8 +21,8 @@ describe("Final weight exact GET/full-line readback", () => {
     const result = await readFinalWeightXeroEvidence("INV-702877", "Synthetic Customer", "overweight"); expect(result.exactMatches).toHaveLength(2); expect(result.invoice).toBeNull(); expect(m.get.mock.calls.some(([url]) => url.endsWith("/Invoices/invoice-exact"))).toBe(false); noMutations();
   });
   it("existing readback validates exact retained lines/date/header for underweight", async () => {
-    const expected = buildFinalWeightAdjustment(facts({ actualWeight: 9, requiredDueDate: "2026-10-20" }), "underweight", xero()).expectedDraft!;
-    m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : { Invoices: [invoice({ DueDate: "2026-10-20" })] } }));
+    const expected = buildFinalWeightAdjustment(facts({ actualWeight: 9, collectionDate: "2026-10-20" }), "underweight", xero()).expectedDraft!;
+    m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : { Invoices: [invoice({ Date: "2026-10-20", DueDate: "2026-10-22" })] } }));
     expect(await readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-702877", expectedXeroDocumentId: "invoice-exact", expectedFinalWeightDraft: expected })).toMatchObject({ status: "DRAFT", lineCount: 1 }); noMutations();
   });
   it("preserves an intentionally absent Draft due date", async () => {
@@ -56,13 +56,13 @@ describe("Final weight exact GET/full-line readback", () => {
     await expect(readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-702877", expectedXeroDocumentId: "invoice-exact", expectedFinalWeightDraft: expected })).rejects.toThrow(); noMutations();
   });
   it.each([{ Total: 100 }, { TotalTax: 0 }, { AmountPaid: 1 }, { CreditNotes: [{}] }, { Url: "unexpected" }])("underweight changed total/allocation/optional header holds %#", async patch => {
-    const expected = buildFinalWeightAdjustment(facts({ actualWeight: 9, requiredDueDate: "2026-10-20" }), "underweight", xero()).expectedDraft!;
-    m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : { Invoices: [invoice({ DueDate: "2026-10-20", ...patch })] } }));
+    const expected = buildFinalWeightAdjustment(facts({ actualWeight: 9, collectionDate: "2026-10-20" }), "underweight", xero()).expectedDraft!;
+    m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : { Invoices: [invoice({ Date: "2026-10-20", DueDate: "2026-10-22", ...patch })] } }));
     await expect(readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-702877", expectedXeroDocumentId: "invoice-exact", expectedFinalWeightDraft: expected })).rejects.toThrow(); noMutations();
   });
-  it.each([{ DueDate: "2026-10-21" }, { Contact: { ContactID: "wrong" } }, { LineItems: [{ ...invoice().LineItems[0], DiscountRate: 0 }] }, { Status: "PAID" }, { InvoiceID: "other" }])("rejects changed exact readback %#", async patch => {
+  it.each([{ Date: "2026-10-21" }, { DueDate: "2026-10-21" }, { Contact: { ContactID: "wrong" } }, { LineItems: [{ ...invoice().LineItems[0], DiscountRate: 0 }] }, { Status: "PAID" }, { InvoiceID: "other" }])("rejects changed exact readback %#", async patch => {
     m.get.mockImplementation(async (url: string) => ({ data: url.endsWith("/Organisation") ? { Organisations: [{ Name: "CONTAINERZONE" }] } : { Invoices: [invoice(patch)] } }));
-    const expected = buildFinalWeightAdjustment(facts({ actualWeight: 9, requiredDueDate: "2026-10-20" }), "underweight", xero()).expectedDraft!;
+    const expected = buildFinalWeightAdjustment(facts({ actualWeight: 9, collectionDate: "2026-10-20" }), "underweight", xero()).expectedDraft!;
     await expect(readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-702877", expectedXeroDocumentId: "invoice-exact", expectedFinalWeightDraft: expected })).rejects.toThrow(); noMutations();
   });
 });

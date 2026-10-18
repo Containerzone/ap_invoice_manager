@@ -1,10 +1,11 @@
 import { DEFAULT_FINANCIAL_AUTOMATION_RULES } from "./financialAutomationRules";
 import { financialSha256 } from "./financialProposalIntegrity";
 import type { FinancialDraftPayload } from "./financialProductionWriter";
+import { Temporal } from "@js-temporal/polyfill";
 
 export type FinalWeightDirection = "overweight" | "underweight";
-export const FINAL_WEIGHT_RULES_VERSION = "2026-10-18.final-weight.draft-amendment.v3";
-export const FINAL_WEIGHT_RULES_HASH = financialSha256({ version: FINAL_WEIGHT_RULES_VERSION, item: DEFAULT_FINANCIAL_AUTOMATION_RULES.itemCodes.overweight, scope: "new_events_only", operations: ["positive-exclusive-SER70-replacement", "due-date-only", "overweight-reference-customer-po-then-container-number"], preserve: "all-retained-lines-and-invoice-fields-except-overweight-reference", overweightReference: { sourcesInPriorityOrder: ["current-deal-customer-po", "current-deal-container-number"], noFallbackBeyondSources: true, requireCustomerPOMetadata: true } });
+export const FINAL_WEIGHT_RULES_VERSION = "2026-10-18.final-weight.draft-amendment.v4";
+export const FINAL_WEIGHT_RULES_HASH = financialSha256({ version: FINAL_WEIGHT_RULES_VERSION, item: DEFAULT_FINANCIAL_AUTOMATION_RULES.itemCodes.overweight, scope: "new_events_only", operations: ["positive-exclusive-SER70-replacement", "set-date-to-current-deal-full-container-pickup-date", "set-due-date-to-sydney-calendar-date-plus-2-or-on-account-plus-14", "overweight-reference-customer-po-then-container-number"], preserve: "all-retained-lines-and-invoice-fields-except-Date-DueDate-and-overweight-reference", collectionDate: { source: "current-deal-cf_potentials_fullcontainercollectiondate", exactLabel: "Full Container Pickup DATE", type: "date" }, depositStatus: { source: "current-deal-cf_potentials_depositstatus", exactLabel: "Deposit Status", type: "picklist", onAccountNormalizedValue: "ON ACCOUNT" }, dueDate: { normalSydneyCalendarDays: 2, onAccountSydneyCalendarDays: 14 }, overweightReference: { sourcesInPriorityOrder: ["current-deal-customer-po", "current-deal-container-number"], noFallbackBeyondSources: true, requireCustomerPOMetadata: true } });
 export const FINAL_WEIGHT_PATHS = {
   overweight: "/api/webhooks/vtiger/final-weight-overweight",
   underweight: "/api/webhooks/vtiger/final-weight-underweight",
@@ -13,7 +14,7 @@ export type FinalWeightFacts = {
   dealId: string; dealNumber: string; dealName: string; customerPO: string;
   customerVtigerId: string; customerName: string; customerKind: "organisation" | "contact";
   estimatedWeight: number | null; actualWeight: number | null; perExtraTonne: number | null;
-  requiredDueDate: string | null; sourceRefreshedAt: string | null; customerRefreshedAt: string | null;
+  collectionDate: string | null; depositStatus: string | null; sourceRefreshedAt: string | null; customerRefreshedAt: string | null;
   mappingEvidence: Record<string, string>; sourceHoldReason: string | null;
 };
 export type FinalWeightXeroEvidence = {
@@ -36,6 +37,29 @@ export function finalWeightDate(value: unknown): string | null {
   const date = new Date(`${iso}T00:00:00Z`);
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === iso ? iso : null;
 }
+/** Picklist comparison is intentionally limited to case and internal/edge whitespace normalization. */
+export function normalizedFinalWeightDepositStatus(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().replace(/\s+/g, " ").toUpperCase();
+  return normalized;
+}
+/** Add whole calendar days in Australia/Sydney, including across daylight-saving transitions. */
+export function finalWeightSydneyCalendarDueDate(collectionDate: unknown, depositStatus: unknown): string | null {
+  const date = finalWeightDate(collectionDate);
+  const normalizedStatus = normalizedFinalWeightDepositStatus(depositStatus);
+  // A blank scalar Deposit Status is the normal/default two-day case. `null`
+  // means a missing or non-scalar source fact and must hold.
+  if (!date || normalizedStatus === null) return null;
+  try {
+    return Temporal.PlainDate.from(date)
+      .toZonedDateTime({ timeZone: "Australia/Sydney", plainTime: Temporal.PlainTime.from("12:00") })
+      .add({ days: normalizedStatus === "ON ACCOUNT" ? 14 : 2 })
+      .toPlainDate()
+      .toString();
+  } catch {
+    return null;
+  }
+}
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 /** Writable invoice header plus EVERY full source line (IDs, tracking, discounts, tax included). */
 export function finalWeightDraftEvidence(invoice: Record<string, any>): Record<string, any> {
@@ -54,10 +78,11 @@ export function finalWeightSourceHold(facts: FinalWeightFacts, direction: FinalW
   if (!/^\d+x\d{1,12}$/i.test(facts.dealId) || !/^D\d{1,12}$/i.test(facts.dealNumber) || !facts.dealName.trim()) return "An exact named current D-number Deal is required.";
   if (!/^\d+x\d+$/i.test(facts.customerVtigerId) || !facts.customerName.trim()) return "Exact linked current Deal customer is required.";
   if (facts.estimatedWeight === null || facts.actualWeight === null || !Number.isFinite(facts.estimatedWeight) || !Number.isFinite(facts.actualWeight) || facts.estimatedWeight < 0 || facts.actualWeight < 0) return "Current actual and estimated weight must be finite non-negative tonnes.";
+  if (!finalWeightDate(facts.collectionDate)) return "Both final-weight routes require the verified Full Container Pickup DATE; no invented fallback is allowed.";
+  if (normalizedFinalWeightDepositStatus(facts.depositStatus) === null) return "Both final-weight routes require a scalar Deposit Status; no default is allowed when it is absent or non-scalar.";
   const difference = facts.actualWeight - facts.estimatedWeight;
   if (direction === "overweight" && difference <= 0 || direction === "underweight" && difference >= 0) return "Current weights do not match the dedicated route direction (equal weight is held).";
   if (direction === "overweight" && (facts.perExtraTonne === null || !Number.isFinite(facts.perExtraTonne) || facts.perExtraTonne <= 0)) return "Overweight requires a positive current per-extra-tonne GST-exclusive value.";
-  if (direction === "underweight" && !finalWeightDate(facts.requiredDueDate)) return "Underweight requires the verified Full Container Pickup DATE; no invented fallback is allowed.";
   return null;
 }
 export function buildFinalWeightAdjustment(facts: FinalWeightFacts, direction: FinalWeightDirection, xero: FinalWeightXeroEvidence | null): FinalWeightPreview {
@@ -77,16 +102,20 @@ export function buildFinalWeightAdjustment(facts: FinalWeightFacts, direction: F
   // Existing Draft amendments retain the original immutable Xero ContactID.
   // They never rematch or replace the invoice customer from current Deal data.
   if (xero.contact.count !== 1 || !xero.contact.contactId || !invoice.Contact?.ContactID || invoice.Contact?.ContactID !== xero.contact.contactId || match.Contact?.ContactID !== xero.contact.contactId) return held("Exact Draft invoice contact evidence is incomplete or inconsistent; no customer rematch will occur.");
-  if (!finalWeightDate(invoice.DateString ?? invoice.Date) || !finalWeightDate(invoice.DueDateString ?? invoice.DueDate)) return held("Existing Draft dates are missing or ambiguous; retained dates cannot be invented.");
   const lines = invoice.LineItems;
   if (!Array.isArray(lines) || !lines.length || lines.some((line: any) => !line || !String(line.LineItemID ?? "").trim() || typeof line.Description !== "string" ||
     ["Quantity", "UnitAmount", "LineAmount", "TaxAmount"].some(key => line[key] === null || line[key] === undefined || line[key] === "" || !Number.isFinite(Number(line[key]))) ||
     !String(line.AccountCode ?? "").trim() || !String(line.TaxType ?? "").trim()) || new Set(lines.map((line: any) => line.LineItemID)).size !== lines.length) return held("Current full Draft line evidence is incomplete or line IDs collide; no retained line may be dropped or guessed.");
   const originalDraft = finalWeightDraftEvidence(invoice);
   const expectedDraft = clone(originalDraft);
+  const collectionDate = finalWeightDate(facts.collectionDate);
+  const dueDate = finalWeightSydneyCalendarDueDate(collectionDate, facts.depositStatus);
+  if (!collectionDate || !dueDate) return held("Current final-weight collection date or Deposit Status cannot produce a verified Sydney calendar due date.");
+  expectedDraft.Date = collectionDate;
+  expectedDraft.DueDate = dueDate;
   let excessAmountExclusive: number | null = null;
   if (direction === "underweight") {
-    expectedDraft.DueDate = facts.requiredDueDate;
+    // Underweight intentionally changes no line or reference evidence.
   } else {
     if (!xero.ser70 || xero.ser70.itemCode !== "SER70" || xero.ser70.taxType !== "OUTPUT" || !xero.ser70.accountCode) return held("Current exact SER70 sales item/account/OUTPUT GST configuration is not verified.");
     excessAmountExclusive = Math.round((facts.actualWeight! - facts.estimatedWeight!) * facts.perExtraTonne! * 100) / 100;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertFinalWeightReadback, buildFinalWeightAdjustment, finalWeightDate, finalWeightDraftEvidence, prepareFinalWeightPayload } from "./financialFinalWeightAdjustmentRules";
+import { assertFinalWeightReadback, buildFinalWeightAdjustment, finalWeightDate, finalWeightDraftEvidence, finalWeightSydneyCalendarDueDate, normalizedFinalWeightDepositStatus, prepareFinalWeightPayload } from "./financialFinalWeightAdjustmentRules";
 import { baseLine, facts, invoice, xero } from "./_test/finalWeightFixtures";
 describe("Final weight isolated pure Draft amendment rules", () => {
   it("adds one positive GST-exclusive SER70 and preserves every original full line/header", () => {
@@ -8,9 +8,10 @@ describe("Final weight isolated pure Draft amendment rules", () => {
     expect(result.eligible).toBe(true); expect(result.excessAmountExclusive).toBe(250);
     expect(result.expectedDraft!.LineItems[0]).toEqual(baseLine());
     expect(result.expectedDraft!.LineItems[1]).toEqual({ ItemCode: "SER70", Description: "Excess weight", Quantity: 1, UnitAmount: 250, AccountCode: "200", TaxType: "OUTPUT" });
-    const { LineItems: _, Reference: _reference, ...headers } = result.originalDraft!;
+    const { LineItems: _, Reference: _reference, Date: _date, DueDate: _dueDate, ...headers } = result.originalDraft!;
     expect(result.expectedDraft).toMatchObject(headers); expect(evidence).toEqual(before);
     expect(result.expectedDraft!.Reference).toBe("Synthetic Customer PO");
+    expect(result.expectedDraft).toMatchObject({ Date: "2026-10-20", DueDate: "2026-10-22" });
     const payload = prepareFinalWeightPayload(result, "source");
     expect(payload).toMatchObject({ method: "POST", endpoint: "/Invoices/invoice-exact", expectedXeroDocumentId: "invoice-exact", documentNumber: "INV-702877" });
     expect(payload.body.Invoices).toEqual([result.expectedDraft]);
@@ -30,13 +31,15 @@ describe("Final weight isolated pure Draft amendment rules", () => {
   it("overweight prioritizes the current Deal Customer PO for Reference", () => {
     const result = buildFinalWeightAdjustment(facts({ customerPO: "  PO-42  ", dealName: "Container 8" }), "overweight", xero());
     expect(result).toMatchObject({ eligible: true, expectedDraft: { Reference: "PO-42" } });
-    const readback = invoice({ Reference: "PO-42", LineItems: [baseLine(), { ...result.expectedDraft!.LineItems[1], LineItemID: "new-ser70", LineAmount: 250, TaxAmount: 25 }], SubTotal: 340, TotalTax: 34, Total: 374 });
+    const readback = invoice({ Date: "2026-10-20", DueDate: "2026-10-22", Reference: "PO-42", LineItems: [baseLine(), { ...result.expectedDraft!.LineItems[1], LineItemID: "new-ser70", LineAmount: 250, TaxAmount: 25 }], SubTotal: 340, TotalTax: 34, Total: 374 });
     expect(() => assertFinalWeightReadback(readback, result.expectedDraft!)).not.toThrow();
     expect(() => assertFinalWeightReadback({ ...readback, Reference: "wrong" }, result.expectedDraft!)).toThrow(/Reference/);
   });
   it("accepts an exact Xero Draft amendment when Xero reorders its retained and new lines", () => {
     const result = buildFinalWeightAdjustment(facts({ customerPO: "PO-42" }), "overweight", xero());
     const readback = invoice({
+      Date: "2026-10-20",
+      DueDate: "2026-10-22",
       Reference: "PO-42",
       LineItems: [
         { ...result.expectedDraft!.LineItems[1], LineItemID: "new-ser70", LineAmount: 250, TaxAmount: 25 },
@@ -52,14 +55,24 @@ describe("Final weight isolated pure Draft amendment rules", () => {
     const result = buildFinalWeightAdjustment(facts({ customerPO: "  ", dealName: "Container 8" }), "overweight", xero());
     expect(result).toMatchObject({ eligible: true, expectedDraft: { Reference: "Container 8" } });
   });
-  it("underweight changes exactly DueDate with no new or negative line, even if existing SER70 exists", () => {
+  it("underweight changes exactly Date/DueDate with no new or negative line, even if existing SER70 exists", () => {
     const full = invoice({ LineItems: [baseLine(), { ...baseLine(), ItemCode: "SER70", LineItemID: "existing-ser" }] });
-    const result = buildFinalWeightAdjustment(facts({ actualWeight: 9, requiredDueDate: "2026-10-20", perExtraTonne: null }), "underweight", xero({ invoice: full, ser70: null }));
+    const result = buildFinalWeightAdjustment(facts({ actualWeight: 9, collectionDate: "2026-10-20", perExtraTonne: null }), "underweight", xero({ invoice: full, ser70: null }));
     expect(result.eligible).toBe(true);
     expect(result.expectedDraft!.LineItems).toEqual(full.LineItems);
-    expect(result.expectedDraft).toEqual({ ...result.originalDraft, DueDate: "2026-10-20" });
+    expect(result.expectedDraft).toEqual({ ...result.originalDraft, Date: "2026-10-20", DueDate: "2026-10-22" });
     expect(result.expectedDraft!.Reference).toBe("Preserve this reference");
     expect(result.excessAmountExclusive).toBeNull();
+  });
+  it("uses ON ACCOUNT case/whitespace-normalized Deposit Status for a 14-Sydney-calendar-day due date", () => {
+    const result = buildFinalWeightAdjustment(facts({ collectionDate: "2026-10-04", depositStatus: "  on   account  " }), "overweight", xero());
+    expect(result).toMatchObject({ eligible: true, expectedDraft: { Date: "2026-10-04", DueDate: "2026-10-18" } });
+    expect(finalWeightSydneyCalendarDueDate("2026-10-04", "Deposit Required")).toBe("2026-10-06");
+    expect(normalizedFinalWeightDepositStatus("  on   account  ")).toBe("ON ACCOUNT");
+  });
+  it("uses the default two-Sydney-calendar-day due date when the current Deposit Status is blank", () => {
+    const result = buildFinalWeightAdjustment(facts({ collectionDate: "2026-10-04", depositStatus: "" }), "overweight", xero());
+    expect(result).toMatchObject({ eligible: true, expectedDraft: { Date: "2026-10-04", DueDate: "2026-10-06" } });
   });
   it.each(["AUTHORISED", "PAID", "VOIDED", "DELETED", "SUBMITTED", "DRAFT "])("holds status %s without an invoice proposal", status => {
     const result = buildFinalWeightAdjustment(facts(), "overweight", xero({ exactMatches: [invoice({ Status: status })], invoice: invoice({ Status: status }) }));
@@ -71,7 +84,7 @@ describe("Final weight isolated pure Draft amendment rules", () => {
     { invoice: null }, { invoice: invoice({ InvoiceID: "wrong-id" }) }, { invoice: invoice({ InvoiceNumber: "INV-702877-D" }) },
     { invoice: invoice({ Type: "ACCPAY" }) }, { invoice: invoice({ AmountPaid: 1 }) }, { invoice: invoice({ Payments: [{}] }) },
     { invoice: invoice({ AmountCredited: 1 }) }, { invoice: invoice({ CreditNotes: [{}] }) }, { invoice: invoice({ CurrencyCode: "NZD" }) },
-    { invoice: invoice({ LineAmountTypes: "Inclusive" }) }, { invoice: invoice({ Date: "" }) }, { invoice: invoice({ DueDate: "" }) },
+    { invoice: invoice({ LineAmountTypes: "Inclusive" }) },
     { invoice: invoice({ LineItems: [] }) }, { invoice: invoice({ LineItems: [{ Description: "partial" }] }) },
     { contact: { count: 2, contactId: "customer-exact", partyName: "Synthetic Customer" } },
     { invoice: invoice({ Contact: { ContactID: "wrong" } }) }, { ser70: null },
@@ -85,8 +98,13 @@ describe("Final weight isolated pure Draft amendment rules", () => {
   ])("holds invalid current overweight source %#", patch => {
     expect(buildFinalWeightAdjustment(facts(patch), "overweight", xero()).eligible).toBe(false);
   });
-  it.each([null, "", "2026-02-30", "20-10-2026", "2026-10-20T04:00:00Z"])("underweight holds missing/ambiguous source date %s", requiredDueDate => {
-    expect(buildFinalWeightAdjustment(facts({ actualWeight: 9, requiredDueDate }), "underweight", xero()).eligible).toBe(false);
+  it.each([null, "", "2026-02-30", "20-10-2026", "2026-10-20T04:00:00Z"])("both routes hold missing/ambiguous collection date %s", collectionDate => {
+    expect(buildFinalWeightAdjustment(facts({ collectionDate }), "overweight", xero()).eligible).toBe(false);
+    expect(buildFinalWeightAdjustment(facts({ actualWeight: 9, collectionDate }), "underweight", xero()).eligible).toBe(false);
+  });
+  it.each([null, 10, {}, []])("both routes hold missing/non-scalar Deposit Status %#", depositStatus => {
+    expect(buildFinalWeightAdjustment(facts({ depositStatus: depositStatus as any }), "overweight", xero()).eligible).toBe(false);
+    expect(buildFinalWeightAdjustment(facts({ actualWeight: 9, depositStatus: depositStatus as any }), "underweight", xero()).eligible).toBe(false);
   });
   it("rounds positive net excess to cents but holds rounded zero and overflow", () => {
     expect(buildFinalWeightAdjustment(facts({ actualWeight: 10.12345, perExtraTonne: 12.34 }), "overweight", xero()).excessAmountExclusive).toBe(1.52);

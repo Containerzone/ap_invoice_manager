@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
+import { Temporal } from "@js-temporal/polyfill";
 import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export const MAIN_CUSTOMER_INVOICE_ACCOUNT_CODE = "200" as const;
-export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v5-hire-items-quote-descriptions-preserved" as const;
+export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v6-full-container-pickup-date-deposit-status-due-date" as const;
 export const MAIN_CUSTOMER_INVOICE_RULES_HASH = createHash("sha256").update(MAIN_CUSTOMER_INVOICE_RULES_VERSION).digest("hex");
 
 export type MainCustomerInvoiceServiceLineFacts = {
@@ -26,6 +27,14 @@ export type MainCustomerInvoiceFacts = {
   originSuburb: string;
   /** Current Deal Destination Suburb; never sourced from the webhook body. */
   destinationSuburb: string;
+  /** Current Potentials Full Container Pickup DATE, after metadata-confirmed mapping. */
+  fullContainerPickupDate: string;
+  /** Current Potentials Deposit Status, after metadata-confirmed mapping. */
+  depositStatus: string;
+  /** Exact current Potentials custom-field API names used for date/status facts. */
+  mappingEvidence: Record<string, string>;
+  /** Schema/scalar/date evidence failure; the proposal must remain held. */
+  sourceHoldReason: string | null;
   sourceRefreshedAt: string | null;
   serviceLines: MainCustomerInvoiceServiceLineFacts[];
 };
@@ -51,6 +60,23 @@ function normal(value: string): string {
 
 function upper(value: string): string {
   return normal(value).toUpperCase();
+}
+
+/** Strict date-only VTiger business date; never parse locale strings or rollover dates. */
+export function mainCustomerInvoiceBusinessDate(value: string): Temporal.PlainDate | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  try {
+    return Temporal.PlainDate.from(value, { overflow: "reject" });
+  } catch {
+    return null;
+  }
+}
+
+function xeroBusinessDate(value: Temporal.PlainDate): Date {
+  // A VTiger date field has no time or offset.  Retain that calendar date in
+  // Xero's Date/Date UTC transport representation rather than applying host
+  // or UTC-instant arithmetic.
+  return new Date(`${value.toString()}T00:00:00.000Z`);
 }
 
 /**
@@ -174,7 +200,14 @@ export function applyMainCustomerInvoiceXeroTransportDescription(input: {
  * evidence. Warranty is intentionally excluded: it has a separately guarded
  * lifecycle and must not be inferred or bundled during Main Invoice migration.
  */
-export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, now = new Date()): MainCustomerInvoicePreview {
+export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, _now = new Date()): MainCustomerInvoicePreview {
+  if (facts.sourceHoldReason) {
+    return { eligible: false, holdReason: facts.sourceHoldReason, proposedInvoiceNumber: null, document: null };
+  }
+  const issueBusinessDate = mainCustomerInvoiceBusinessDate(facts.fullContainerPickupDate);
+  if (!issueBusinessDate) {
+    return { eligible: false, holdReason: "Current Deal Full Container Pickup DATE must be a valid YYYY-MM-DD business date.", proposedInvoiceNumber: null, document: null };
+  }
   if (!/^\d+x\d+$/i.test(facts.dealId) || !facts.dealNumber.trim()) {
     return { eligible: false, holdReason: "A current VTiger Deal ID and Deal number are required.", proposedInvoiceNumber: null, document: null };
   }
@@ -195,7 +228,11 @@ export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, now = 
   if (!facts.serviceLines.length || facts.serviceLines.some((line) => !validServiceLine(line))) {
     return { eligible: false, holdReason: "The linked VTiger Quote requires one or more current billable Service line items with quantity and list price.", proposedInvoiceNumber: null, document: null };
   }
-  const issueDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  // PlainDate addition is calendar arithmetic. The +14 ON ACCOUNT term and
+  // normal +2 term therefore remain correct across Sydney DST changes.
+  const dueBusinessDate = issueBusinessDate.add({ days: upper(facts.depositStatus) === "ON ACCOUNT" ? 14 : 2 });
+  const issueDate = xeroBusinessDate(issueBusinessDate);
+  const dueDate = xeroBusinessDate(dueBusinessDate);
   const lineItems = facts.serviceLines.map((line) => toFinancialLine(line, transportItemCode));
   const subtotal = money(lineItems.reduce((total, line) => total + line.lineAmount, 0));
   const invoiceNumber = mainCustomerInvoiceNumber(facts.dealNumber);
@@ -218,7 +255,7 @@ export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, now = 
       taxAmount: money(subtotal * 0.1),
       total: money(subtotal * 1.1),
       issueDate,
-      dueDate: null,
+      dueDate,
       lineItems,
       sourceWorkflow: "main_customer_invoice",
       sourceRecordId: facts.dealId,

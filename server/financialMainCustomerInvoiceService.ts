@@ -4,6 +4,7 @@ import {
   MAIN_CUSTOMER_INVOICE_RULES_VERSION,
   applyMainCustomerInvoiceXeroTransportDescription,
   buildMainCustomerInvoice,
+  mainCustomerInvoiceBusinessDate,
   type MainCustomerInvoiceFacts,
   type MainCustomerInvoicePreview,
 } from "./financialMainCustomerInvoiceDrafts";
@@ -21,7 +22,7 @@ import { preflightFinancialXeroIntents, type FinancialXeroPreflight } from "./fi
 import { financialSha256, sourceSnapshotHash } from "./financialProposalIntegrity";
 import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
-import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
+import { describeVtigerFinancialModuleFields, retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
 import { readCurrentCustomerContactSource } from "./financialCustomerContactSource";
 import { resolveOrCreateAutomaticCustomerContact } from "./financialCustomerContactService";
 import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
@@ -30,6 +31,18 @@ import { processAutomaticDepositMainDeduction } from "./financialDepositMainDedu
 
 export const MAIN_CUSTOMER_INVOICE_VTIGER_MODULE = "Potentials" as const;
 export const MAIN_CUSTOMER_INVOICE_WEBHOOK_PATH = "/api/webhooks/vtiger/main-customer-invoice" as const;
+export const MAIN_CUSTOMER_INVOICE_SOURCE_FIELDS = {
+  fullContainerPickupDate: {
+    label: "Full Container Pickup DATE",
+    apiName: "cf_potentials_fullcontainercollectiondate",
+    type: "date",
+  },
+  depositStatus: {
+    label: "Deposit Status",
+    apiName: "cf_potentials_depositstatus",
+    type: "picklist",
+  },
+} as const;
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : typeof value === "number" && Number.isFinite(value) ? String(value) : "";
@@ -47,6 +60,65 @@ function latestTimestamp(...values: unknown[]): string | null {
   const dates = values.map(timestamp).filter((value): value is Date => Boolean(value));
   if (!dates.length) return null;
   return new Date(Math.max(...dates.map((value) => value.getTime()))).toISOString();
+}
+
+type MainCustomerInvoiceMetadata = Awaited<ReturnType<typeof describeVtigerFinancialModuleFields>>;
+type MainCustomerInvoiceSourceFieldKey = keyof typeof MAIN_CUSTOMER_INVOICE_SOURCE_FIELDS;
+
+/**
+ * Confirms the actual Potentials API field names from current metadata instead
+ * of using a historical alias. Exact labels, names and types are all required
+ * because both source values control the dates of a financial document.
+ */
+export function resolveMainCustomerInvoiceSourceMappings(metadata: MainCustomerInvoiceMetadata): {
+  mappingEvidence: Record<string, string>;
+  holdReason: string | null;
+} {
+  const mappingEvidence: Record<string, string> = {};
+  const holds: string[] = [];
+  if (metadata.name !== MAIN_CUSTOMER_INVOICE_VTIGER_MODULE) {
+    holds.push("Current metadata does not describe Potentials exactly.");
+  }
+  for (const key of Object.keys(MAIN_CUSTOMER_INVOICE_SOURCE_FIELDS) as MainCustomerInvoiceSourceFieldKey[]) {
+    const expected = MAIN_CUSTOMER_INVOICE_SOURCE_FIELDS[key];
+    const fields = metadata.fields.filter((field) => field.label === expected.label);
+    if (fields.length !== 1) {
+      holds.push(`Deal field mapping for ${expected.label} is missing or ambiguous; no alias will be guessed.`);
+      continue;
+    }
+    const field = fields[0]!;
+    if (field.name !== expected.apiName || metadata.fields.filter((candidate) => candidate.name === field.name).length !== 1) {
+      holds.push(`Deal field mapping for ${expected.label} does not confirm its approved VTiger API field.`);
+      continue;
+    }
+    mappingEvidence[key] = field.name;
+    if (field.type.name !== expected.type) {
+      holds.push(`Deal field mapping for ${expected.label} has an unverified field type.`);
+    }
+  }
+  return { mappingEvidence, holdReason: holds.length ? holds.join(" ") : null };
+}
+
+function mappedScalar(
+  deal: Record<string, unknown>,
+  mappingEvidence: Record<string, string>,
+  key: MainCustomerInvoiceSourceFieldKey,
+  holds: string[],
+  allowBlank = false,
+): string {
+  const expected = MAIN_CUSTOMER_INVOICE_SOURCE_FIELDS[key];
+  const name = mappingEvidence[key];
+  if (!name) return "";
+  const value = deal[name];
+  if (!Object.prototype.hasOwnProperty.call(deal, name) || typeof value !== "string") {
+    holds.push(`Current Deal retrieve does not supply a scalar ${expected.label} field.`);
+    return "";
+  }
+  const scalar = text(value);
+  if (!scalar && !allowBlank) {
+    holds.push(`Current Deal retrieve does not supply a populated scalar ${expected.label} field.`);
+  }
+  return scalar;
 }
 function lineSource(quote: Record<string, unknown>): Record<string, unknown>[] {
   const raw = quote.LineItems ?? quote.lineitems ?? quote.line_items;
@@ -72,6 +144,41 @@ async function nameForCustomer(reference: string, kind: "organisation" | "contac
 /** Re-reads the exact Deal, linked Quote and current Service descriptions. */
 export async function readMainCustomerInvoiceFacts(dealId: string): Promise<MainCustomerInvoiceFacts> {
   const deal = await exactRecord(dealId, "Deal");
+  const mapping = resolveMainCustomerInvoiceSourceMappings(
+    await describeVtigerFinancialModuleFields(MAIN_CUSTOMER_INVOICE_VTIGER_MODULE),
+  );
+  const sourceHolds = mapping.holdReason ? [mapping.holdReason] : [];
+  const fullContainerPickupDate = mappedScalar(deal, mapping.mappingEvidence, "fullContainerPickupDate", sourceHolds);
+  // A blank Deposit Status is the normal/default two-day case. Its current
+  // metadata-backed scalar is still required so a missing/wrong-type source
+  // cannot silently be treated as blank.
+  const depositStatus = mappedScalar(deal, mapping.mappingEvidence, "depositStatus", sourceHolds, true);
+  if (!mainCustomerInvoiceBusinessDate(fullContainerPickupDate)) {
+    sourceHolds.push("Current Deal Full Container Pickup DATE must be a valid YYYY-MM-DD business date.");
+  }
+  // These two fields determine the financial document's IssueDate/DueDate.
+  // A mapping, scalar or calendar-date failure holds before any unrelated
+  // Quote/customer lookup or Xero preflight can turn it into a Draft.
+  if (sourceHolds.length) {
+    return {
+      dealId,
+      dealNumber: text(deal.potential_no ?? deal.deal_no),
+      quoteId: "",
+      quoteNumber: "",
+      customerVtigerId: "",
+      customerName: "",
+      customerKind: "contact",
+      containerSituation: text(deal.cf_potentials_containersituationselectone),
+      originSuburb: text(deal.cf_potentials_pickuplocation),
+      destinationSuburb: text(deal.cf_potentials_deliverylocation),
+      fullContainerPickupDate,
+      depositStatus,
+      mappingEvidence: mapping.mappingEvidence,
+      sourceHoldReason: sourceHolds.join(" "),
+      sourceRefreshedAt: latestTimestamp(deal.modifiedtime ?? deal.modifiedTime ?? deal.createdtime),
+      serviceLines: [],
+    };
+  }
   const quoteId = recordId(deal.cf_potentials_quotereference ?? deal.quote_reference ?? deal.items_sync_with);
   if (!quoteId) throw new Error("Main Customer Invoice requires an exact linked VTiger Quote id.");
   const quote = await exactRecord(quoteId, "Linked Quote");
@@ -102,6 +209,10 @@ export async function readMainCustomerInvoiceFacts(dealId: string): Promise<Main
     containerSituation: text(deal.cf_potentials_containersituationselectone),
     originSuburb: text(deal.cf_potentials_pickuplocation),
     destinationSuburb: text(deal.cf_potentials_deliverylocation),
+    fullContainerPickupDate,
+    depositStatus,
+    mappingEvidence: mapping.mappingEvidence,
+    sourceHoldReason: sourceHolds.length ? sourceHolds.join(" ") : null,
     sourceRefreshedAt: latestTimestamp(deal.modifiedtime ?? deal.modifiedTime ?? deal.createdtime, quote.modifiedtime ?? quote.modifiedTime ?? quote.createdtime),
     serviceLines: services,
   };

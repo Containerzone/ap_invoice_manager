@@ -6,6 +6,9 @@ const facts = (overrides: Record<string, unknown> = {}) => ({
   dealId: "5x702877", dealNumber: "D702877", quoteId: "20x44", quoteNumber: "Q-702877",
   customerVtigerId: "4x99", customerName: "ContainerZone Customer", customerKind: "organisation" as const,
   containerSituation: "SHIPPER OWN", originSuburb: "Originville", destinationSuburb: "Destinationton",
+  fullContainerPickupDate: "2026-10-11", depositStatus: "PENDING",
+  mappingEvidence: { fullContainerPickupDate: "cf_potentials_fullcontainercollectiondate", depositStatus: "cf_potentials_depositstatus" },
+  sourceHoldReason: null,
   sourceRefreshedAt: "2026-10-11T00:00:00.000Z",
   serviceLines: [
     { serviceVtigerId: "14x10", description: "Rail delivery", quantity: 2, unitAmount: 250 },
@@ -26,6 +29,30 @@ describe("Main Customer Invoice rules", () => {
       expect.objectContaining({ itemCode: "", description: "Rail delivery", quantity: 2, unitAmount: 250, accountCode: "200", gstTreatment: "GST_EXCLUSIVE" }),
       expect.objectContaining({ itemCode: "", description: "Container handling", quantity: 1, unitAmount: 100, accountCode: "200", gstTreatment: "GST_EXCLUSIVE" }),
     ]);
+    expect(result.document?.issueDate?.toISOString()).toBe("2026-10-11T00:00:00.000Z");
+    expect(result.document?.dueDate?.toISOString()).toBe("2026-10-13T00:00:00.000Z");
+  });
+
+  it("uses the current pickup calendar date and normalized ON ACCOUNT status for the approved fourteen-day term", () => {
+    const result = buildMainCustomerInvoice(facts({
+      fullContainerPickupDate: "2026-10-04",
+      depositStatus: "  on   account ",
+    }));
+
+    expect(result).toMatchObject({ eligible: true });
+    expect(result.document?.issueDate?.toISOString()).toBe("2026-10-04T00:00:00.000Z");
+    expect(result.document?.dueDate?.toISOString()).toBe("2026-10-18T00:00:00.000Z");
+  });
+
+  it("uses the default two-day term when the current Deposit Status is blank", () => {
+    const result = buildMainCustomerInvoice(facts({
+      fullContainerPickupDate: "2026-10-04",
+      depositStatus: "",
+    }));
+
+    expect(result).toMatchObject({ eligible: true });
+    expect(result.document?.issueDate?.toISOString()).toBe("2026-10-04T00:00:00.000Z");
+    expect(result.document?.dueDate?.toISOString()).toBe("2026-10-06T00:00:00.000Z");
   });
 
   it("maps only the authorised current Deal container situations and renders the native Xero route template", () => {
@@ -87,6 +114,8 @@ describe("Main Customer Invoice rules", () => {
     expect(buildMainCustomerInvoice(facts({ containerSituation: "IMPORT", serviceLines: transportLine }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Container Situation") });
     expect(buildMainCustomerInvoice(facts({ originSuburb: "", serviceLines: transportLine }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Origin Suburb") });
     expect(buildMainCustomerInvoice(facts({ serviceLines: [{ serviceVtigerId: "", description: "", quantity: 0, unitAmount: 0 }] }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("billable Service") });
+    expect(buildMainCustomerInvoice(facts({ fullContainerPickupDate: "2026-02-30" }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Pickup DATE") });
+    expect(buildMainCustomerInvoice(facts({ sourceHoldReason: "Deal field mapping for Full Container Pickup DATE is missing or ambiguous; no alias will be guessed." }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("mapping") });
   });
 });
 

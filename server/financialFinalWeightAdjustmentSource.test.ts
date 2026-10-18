@@ -6,7 +6,7 @@ import { deal, metadata } from "./_test/finalWeightFixtures";
 beforeEach(() => { vi.clearAllMocks(); m.describe.mockResolvedValue(metadata()); m.retrieve.mockImplementation(async id => id === "5x77" ? deal() : { id, accountname: "Synthetic Customer", firstname: "Synthetic", lastname: "Contact", modifiedtime: "2026-10-10T00:00:00Z" }); });
 describe("Final weight runtime metadata/source mapping", () => {
   it("resolves each verified exact label uniquely, including custom API names", () => {
-    expect(resolveFinalWeightSourceMappings(metadata(), "underweight")).toMatchObject({ holdReason: null, mappingEvidence: { estimatedWeight: "mapped_estimatedWeight", actualWeight: "mapped_actualWeight", requiredDueDate: "mapped_requiredDueDate" } });
+    expect(resolveFinalWeightSourceMappings(metadata(), "underweight")).toMatchObject({ holdReason: null, mappingEvidence: { estimatedWeight: "mapped_estimatedWeight", actualWeight: "mapped_actualWeight", collectionDate: "cf_potentials_fullcontainercollectiondate", depositStatus: "cf_potentials_depositstatus" } });
   });
   it.each(["missing", "duplicate-label", "duplicate-name", "wrong-case", "wrong-module", "wrong-type"])("holds %s metadata without guessing", mode => {
     const meta = metadata();
@@ -15,13 +15,19 @@ describe("Final weight runtime metadata/source mapping", () => {
     if (mode === "duplicate-name") meta.fields.push({ ...meta.fields[0]!, label: "Unrelated" });
     if (mode === "wrong-case") meta.fields[0]!.label = "deal id" as any;
     if (mode === "wrong-module") meta.name = "Quotes";
-    if (mode === "wrong-type") meta.fields.find(f => f.name === "mapped_requiredDueDate")!.type = { name: "string" };
+    if (mode === "wrong-type") meta.fields.find(f => f.name === "cf_potentials_fullcontainercollectiondate")!.type = { name: "string" };
     expect(resolveFinalWeightSourceMappings(meta, "underweight").holdReason).toBeTruthy();
   });
-  it("requires pickup-date mapping only for underweight", () => {
-    const meta = metadata(); meta.fields = meta.fields.filter(f => f.name !== "mapped_requiredDueDate");
-    expect(resolveFinalWeightSourceMappings(meta, "overweight").holdReason).toBeNull();
-    expect(resolveFinalWeightSourceMappings(meta, "underweight").holdReason).toMatch(/Pickup/);
+  it.each(["overweight", "underweight"] as const)("requires pickup-date and Deposit Status mappings for %s", direction => {
+    const withoutPickup = metadata(); withoutPickup.fields = withoutPickup.fields.filter(f => f.name !== "cf_potentials_fullcontainercollectiondate");
+    expect(resolveFinalWeightSourceMappings(withoutPickup, direction).holdReason).toMatch(/Pickup/);
+    const withoutDepositStatus = metadata(); withoutDepositStatus.fields = withoutDepositStatus.fields.filter(f => f.name !== "cf_potentials_depositstatus");
+    expect(resolveFinalWeightSourceMappings(withoutDepositStatus, direction).holdReason).toMatch(/Deposit Status/);
+  });
+  it.each(["collectionDate", "depositStatus"] as const)("holds the approved %s label if its metadata API name is not exact", key => {
+    const meta = metadata(); const field = meta.fields.find(f => f.name === (key === "collectionDate" ? "cf_potentials_fullcontainercollectiondate" : "cf_potentials_depositstatus"))!;
+    field.name = `mapped_${key}`;
+    expect(resolveFinalWeightSourceMappings(meta, "overweight").holdReason).toMatch(/verified API field/);
   });
   it.each(["missing", "ambiguous"])("holds overweight when Customer PO mapping is %s", async mode => {
     const meta = metadata();
@@ -37,9 +43,9 @@ describe("Final weight runtime metadata/source mapping", () => {
     const result = await readFinalWeightFacts("5x77", "overweight");
     expect(result).toMatchObject({ customerPO: "Synthetic Customer PO", mappingEvidence: { customerPO: "mapped_customerPO" }, sourceHoldReason: null });
   });
-  it("reads only exact Deal and linked organisation, validates mapping and date from current Deal", async () => {
+  it("reads only exact Deal and linked organisation, validates mapping and finalisation facts from current Deal", async () => {
     const result = await readFinalWeightFacts("5x77", "underweight");
-    expect(result).toMatchObject({ dealId: "5x77", dealNumber: "D702877", customerPO: "", estimatedWeight: 10, actualWeight: 12.5, perExtraTonne: 100, requiredDueDate: "2026-10-20", customerVtigerId: "4x2", sourceHoldReason: null });
+    expect(result).toMatchObject({ dealId: "5x77", dealNumber: "D702877", customerPO: "", estimatedWeight: 10, actualWeight: 12.5, perExtraTonne: 100, collectionDate: "2026-10-20", depositStatus: "Deposit Required", customerVtigerId: "4x2", sourceHoldReason: null });
     expect(m.describe).toHaveBeenCalledWith("Potentials");
     expect(m.retrieve.mock.calls).toEqual([["5x77"], ["4x2"]]);
   });
@@ -58,9 +64,9 @@ describe("Final weight runtime metadata/source mapping", () => {
     expect((await readFinalWeightFacts("5x77", "overweight"))).toMatchObject({ customerKind: "contact", customerVtigerId: "12x3", customerName: "Synthetic Contact" });
   });
   it("holds absent/non-scalar fields, no currency parsing guesses and invalid locale date", async () => {
-    m.retrieve.mockImplementation(async id => id === "5x77" ? deal({ mapped_actualWeight: undefined, mapped_perExtraTonne: "$100", mapped_requiredDueDate: "20-10-2026" }) : { id, accountname: "Synthetic Customer" });
+    m.retrieve.mockImplementation(async id => id === "5x77" ? deal({ mapped_actualWeight: undefined, mapped_perExtraTonne: "$100", cf_potentials_fullcontainercollectiondate: "20-10-2026", cf_potentials_depositstatus: undefined }) : { id, accountname: "Synthetic Customer" });
     const result = await readFinalWeightFacts("5x77", "underweight");
-    expect(result.sourceHoldReason).toMatch(/scalar/); expect(result.actualWeight).toBeNull(); expect(result.perExtraTonne).toBeNull(); expect(result.requiredDueDate).toBeNull();
+    expect(result.sourceHoldReason).toMatch(/scalar/); expect(result.actualWeight).toBeNull(); expect(result.perExtraTonne).toBeNull(); expect(result.collectionDate).toBeNull(); expect(result.depositStatus).toBeNull();
   });
   it("rejects wrong exact record response and non-webservice IDs", async () => {
     m.retrieve.mockResolvedValue(deal({ id: "5x88" }));

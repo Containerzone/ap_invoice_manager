@@ -2,13 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   retrieve: vi.fn(),
+  describe: vi.fn(),
   preflight: vi.fn(),
   recordPreview: vi.fn().mockResolvedValue({ id: 51, status: "previewed" }),
   getEvent: vi.fn(), claim: vi.fn(), bind: vi.fn(), complete: vi.fn(), hold: vi.fn(),
   policy: vi.fn(), writer: vi.fn(), contactSource: vi.fn(), contactResolution: vi.fn(), contactV2Source: vi.fn(), contactV2Preview: vi.fn(), contactV2Execute: vi.fn(),
 }));
 const { retrieve, preflight, recordPreview } = mocks;
-vi.mock("./vtigerFinancialReadService", () => ({ retrieveCurrentVtigerFinancialRecord: mocks.retrieve }));
+vi.mock("./vtigerFinancialReadService", () => ({
+  retrieveCurrentVtigerFinancialRecord: mocks.retrieve,
+  describeVtigerFinancialModuleFields: mocks.describe,
+}));
 vi.mock("./financialReadOnlyXeroService", () => ({ preflightFinancialXeroIntents: mocks.preflight }));
 vi.mock("./financialMainCustomerInvoiceDb", () => ({
   recordMainCustomerInvoicePreview: mocks.recordPreview, getMainCustomerInvoiceEvent: mocks.getEvent, getMainCustomerInvoiceEvents: vi.fn(),
@@ -21,8 +25,19 @@ vi.mock("./financialCustomerContactSource", () => ({ readCurrentCustomerContactS
 vi.mock("./financialCustomerContactService", () => ({ resolveOrCreateAutomaticCustomerContact: mocks.contactResolution }));
 vi.mock("./financialCustomerContactSourceV2", () => ({ readCurrentCustomerContactResolution: mocks.contactV2Source }));
 vi.mock("./financialCustomerContactServiceV2", () => ({ previewCustomerContactResolution: mocks.contactV2Preview, executeCustomerContactCreationV2: mocks.contactV2Execute }));
+vi.mock("./financialDepositMainDeductionService", () => ({
+  processAutomaticDepositMainDeduction: vi.fn().mockResolvedValue({ status: "disabled", reason: "independently gated", xeroWritesAttempted: 0 }),
+}));
 
-import { previewMainCustomerInvoice, processAutomaticMainCustomerInvoice, readMainCustomerInvoiceFacts } from "./financialMainCustomerInvoiceService";
+import { previewMainCustomerInvoice, processAutomaticMainCustomerInvoice, readMainCustomerInvoiceFacts, resolveMainCustomerInvoiceSourceMappings } from "./financialMainCustomerInvoiceService";
+
+const currentMetadata = () => ({
+  name: "Potentials",
+  fields: [
+    { name: "cf_potentials_fullcontainercollectiondate", label: "Full Container Pickup DATE", type: { name: "date" }, mandatory: false },
+    { name: "cf_potentials_depositstatus", label: "Deposit Status", type: { name: "picklist" }, mandatory: false },
+  ],
+});
 
 const readyPreflight = () => [{
   duplicateState: "not_found", status: null,
@@ -31,10 +46,11 @@ const readyPreflight = () => [{
 }];
 
 beforeEach(() => {
-  retrieve.mockReset(); preflight.mockReset(); recordPreview.mockClear(); mocks.getEvent.mockReset(); mocks.claim.mockReset(); mocks.bind.mockReset(); mocks.complete.mockReset(); mocks.hold.mockReset(); mocks.policy.mockReset(); mocks.writer.mockReset(); mocks.contactSource.mockReset(); mocks.contactResolution.mockReset(); mocks.contactV2Source.mockReset(); mocks.contactV2Preview.mockReset(); mocks.contactV2Execute.mockReset(); vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "");
+  retrieve.mockReset(); mocks.describe.mockReset(); preflight.mockReset(); recordPreview.mockClear(); mocks.getEvent.mockReset(); mocks.claim.mockReset(); mocks.bind.mockReset(); mocks.complete.mockReset(); mocks.hold.mockReset(); mocks.policy.mockReset(); mocks.writer.mockReset(); mocks.contactSource.mockReset(); mocks.contactResolution.mockReset(); mocks.contactV2Source.mockReset(); mocks.contactV2Preview.mockReset(); mocks.contactV2Execute.mockReset(); vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "");
+  mocks.describe.mockResolvedValue(currentMetadata());
   retrieve.mockImplementation(async (id: string) => {
     const records: Record<string, Record<string, unknown>> = {
-      "5x77": { id: "5x77", potential_no: "D702877", cf_potentials_quotereference: "20x9", related_to: "4x2", cf_potentials_containersituationselectone: "SHIPPER OWN", cf_potentials_pickuplocation: "Origin", cf_potentials_deliverylocation: "Destination", modifiedtime: "2026-10-11T01:00:00Z" },
+      "5x77": { id: "5x77", potential_no: "D702877", cf_potentials_quotereference: "20x9", related_to: "4x2", cf_potentials_containersituationselectone: "SHIPPER OWN", cf_potentials_pickuplocation: "Origin", cf_potentials_deliverylocation: "Destination", cf_potentials_fullcontainercollectiondate: "2026-10-12", cf_potentials_depositstatus: "PENDING", modifiedtime: "2026-10-11T01:00:00Z" },
       "20x9": { id: "20x9", quote_no: "Q-702877", LineItems: { 1: { productid: "14x1", quantity: "2", listprice: "250" } }, modifiedtime: "2026-10-11T02:00:00Z" },
       "4x2": { id: "4x2", accountname: "Customer Pty Ltd" },
       "14x1": { id: "14x1", servicename: "Transport - Loaded Container" },
@@ -55,10 +71,10 @@ describe("Main Customer Invoice current-source evidence", () => {
   it("re-reads Deal, Quote, organisation and each VTiger Service before forming a GET-only Xero-ready proposal", async () => {
     const facts = await readMainCustomerInvoiceFacts("5x77");
     expect(retrieve.mock.calls.map(([id]) => id)).toEqual(["5x77", "20x9", "4x2", "14x1"]);
-    expect(facts).toMatchObject({ dealNumber: "D702877", quoteNumber: "Q-702877", customerName: "Customer Pty Ltd", serviceLines: [{ serviceVtigerId: "14x1", description: "Transport - Loaded Container", quantity: 2, unitAmount: 250 }] });
+    expect(facts).toMatchObject({ dealNumber: "D702877", quoteNumber: "Q-702877", customerName: "Customer Pty Ltd", fullContainerPickupDate: "2026-10-12", depositStatus: "PENDING", mappingEvidence: { fullContainerPickupDate: "cf_potentials_fullcontainercollectiondate", depositStatus: "cf_potentials_depositstatus" }, sourceHoldReason: null, serviceLines: [{ serviceVtigerId: "14x1", description: "Transport - Loaded Container", quantity: 2, unitAmount: 250 }] });
     const result = await previewMainCustomerInvoice("5x77");
     expect(result).toMatchObject({ state: "previewed", noWrites: true });
-    expect(result.preview.document).toMatchObject({ proposedDocumentNumber: "INV-702877", partySourceId: "xero-customer", total: 550, lineItems: [expect.objectContaining({ itemCode: "SER9", description: "Loaded Container from Origin to Destination" })] });
+    expect(result.preview.document).toMatchObject({ proposedDocumentNumber: "INV-702877", partySourceId: "xero-customer", total: 550, issueDate: new Date("2026-10-12T00:00:00.000Z"), dueDate: new Date("2026-10-14T00:00:00.000Z"), lineItems: [expect.objectContaining({ itemCode: "SER9", description: "Loaded Container from Origin to Destination" })] });
     expect(recordPreview).toHaveBeenCalledWith(expect.objectContaining({ status: "previewed", proposedInvoiceNumber: "INV-702877" }));
   });
 
@@ -69,10 +85,37 @@ describe("Main Customer Invoice current-source evidence", () => {
     expect(recordPreview).toHaveBeenCalledWith(expect.objectContaining({ status: "held" }));
   });
 
+  it.each(["missing", "ambiguous"])("holds %s Full Container Pickup DATE metadata rather than guessing an API alias", async (mode) => {
+    const metadata = currentMetadata();
+    if (mode === "missing") metadata.fields = metadata.fields.filter((field) => field.name !== "cf_potentials_fullcontainercollectiondate");
+    if (mode === "ambiguous") metadata.fields.push({ ...metadata.fields[0]!, name: "cf_other_pickup_date" });
+    mocks.describe.mockResolvedValue(metadata);
+
+    expect(resolveMainCustomerInvoiceSourceMappings(metadata).holdReason).toMatch(/Full Container Pickup DATE.*missing or ambiguous/);
+    const result = await previewMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ state: "held", noWrites: true, holdReason: expect.stringContaining("Full Container Pickup DATE") });
+    expect(result.facts.mappingEvidence).not.toHaveProperty("fullContainerPickupDate");
+    expect(retrieve.mock.calls).toEqual([["5x77"]]);
+    expect(preflight).not.toHaveBeenCalled();
+  });
+
+  it("holds an invalid current pickup date before Quote, customer, or Xero reads", async () => {
+    retrieve.mockImplementation(async (id: string) => id === "5x77"
+      ? { id, potential_no: "D702877", cf_potentials_fullcontainercollectiondate: "2026-02-30", cf_potentials_depositstatus: "PENDING", modifiedtime: "2026-10-11T01:00:00Z" }
+      : { id });
+
+    const result = await previewMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ state: "held", noWrites: true, holdReason: expect.stringContaining("valid YYYY-MM-DD") });
+    expect(retrieve.mock.calls).toEqual([["5x77"]]);
+    expect(preflight).not.toHaveBeenCalled();
+  });
+
   it("uses only verified 20/40 Hire items and accounts while retaining current Quote service descriptions", async () => {
     retrieve.mockImplementation(async (id: string) => {
       const records: Record<string, Record<string, unknown>> = {
-        "5x88": { id: "5x88", potential_no: "D702988", cf_potentials_quotereference: "20x88", related_to: "4x2", cf_potentials_containersituationselectone: "HIRED", modifiedtime: "2026-10-18T01:00:00Z" },
+        "5x88": { id: "5x88", potential_no: "D702988", cf_potentials_quotereference: "20x88", related_to: "4x2", cf_potentials_containersituationselectone: "HIRED", cf_potentials_fullcontainercollectiondate: "2026-10-18", cf_potentials_depositstatus: "PENDING", modifiedtime: "2026-10-18T01:00:00Z" },
         "20x88": { id: "20x88", quote_no: "Q-702988", LineItems: { 1: { productid: "14x20", quantity: "1", listprice: "209.25" }, 2: { productid: "14x40", quantity: "2", listprice: "309.25" } }, modifiedtime: "2026-10-18T01:00:00Z" },
         "4x2": { id: "4x2", accountname: "Customer Pty Ltd" },
         "14x20": { id: "14x20", servicename: "20 Foot Standard Height Container Hire per 30 days" },

@@ -6,7 +6,12 @@ export const FINAL_WEIGHT_FIELD_LABELS = {
   dealNumber: ["Deal ID"], dealName: ["Container number"], organisation: ["Organization Name"], contact: ["Contact Name"],
   customerPO: ["Customer PO"],
   estimatedWeight: ["Estimated Weight (TONS)"], actualWeight: ["Actual Weight (Tons)"], perExtraTonne: ["Per Extra Tonne"],
-  requiredDueDate: ["Full Container Pickup DATE"], modifiedTime: ["Modified Time"],
+  collectionDate: ["Full Container Pickup DATE"], depositStatus: ["Deposit Status"], modifiedTime: ["Modified Time"],
+} as const;
+/** Approved Potentials API names; labels are still runtime-verified exactly below. */
+const FINAL_WEIGHT_API_FIELD_NAMES = {
+  collectionDate: "cf_potentials_fullcontainercollectiondate",
+  depositStatus: "cf_potentials_depositstatus",
 } as const;
 type Metadata = Awaited<ReturnType<typeof describeVtigerFinancialModuleFields>>;
 const text = (value: unknown) => typeof value === "string" ? value.trim() : typeof value === "number" && Number.isFinite(value) ? String(value) : "";
@@ -24,8 +29,7 @@ export function resolveFinalWeightSourceMappings(metadata: Metadata, direction: 
   const mappingEvidence: Record<string, string> = {}; const holds: string[] = [];
   if (metadata.name !== "Potentials") holds.push("Metadata must describe Potentials exactly.");
   const required = Object.keys(FINAL_WEIGHT_FIELD_LABELS).filter(key =>
-    (key !== "requiredDueDate" || direction === "underweight") &&
-    (key !== "customerPO" || direction === "overweight"));
+    key !== "customerPO" || direction === "overweight");
   for (const key of required) {
     const labels = FINAL_WEIGHT_FIELD_LABELS[key as keyof typeof FINAL_WEIGHT_FIELD_LABELS] as readonly string[];
     // Exact label text, not fuzzy aliases or presumed custom API names.
@@ -37,7 +41,10 @@ export function resolveFinalWeightSourceMappings(metadata: Metadata, direction: 
     if ((key === "customerPO" && field.type.name !== "string") ||
       (key === "organisation" && !(field.type.refersTo as string[] | undefined)?.includes("Accounts")) ||
       (key === "contact" && !(field.type.refersTo as string[] | undefined)?.includes("Contacts")) ||
-      (key === "requiredDueDate" && field.type.name !== "date")) holds.push(`Source mapping ${field.label} has an unverified field type.`);
+      (key === "collectionDate" && field.type.name !== "date") ||
+      (key === "depositStatus" && field.type.name !== "picklist")) holds.push(`Source mapping ${field.label} has an unverified field type.`);
+    const requiredApiName = FINAL_WEIGHT_API_FIELD_NAMES[key as keyof typeof FINAL_WEIGHT_API_FIELD_NAMES];
+    if (requiredApiName && field.name !== requiredApiName) holds.push(`Source mapping ${field.label} must use verified API field ${requiredApiName}.`);
     mappingEvidence[key] = field.name;
   }
   if (new Set(Object.values(mappingEvidence)).size !== Object.values(mappingEvidence).length) holds.push("A source field resolves to more than one final-weight fact.");
@@ -71,8 +78,10 @@ export async function readFinalWeightFacts(dealId: string, direction: FinalWeigh
   const dealNumber = text(field("dealNumber")); const dealName = text(field("dealName"));
   const customerPO = direction === "overweight" ? text(field("customerPO")) : "";
   const estimatedWeight = numeric(field("estimatedWeight")); const actualWeight = numeric(field("actualWeight")); const perExtraTonne = numeric(field("perExtraTonne"));
-  const requiredDueDate = direction === "underweight" ? finalWeightDate(field("requiredDueDate")) : null;
+  const collectionDate = finalWeightDate(field("collectionDate"));
+  const depositStatusValue = field("depositStatus");
+  const depositStatus = typeof depositStatusValue === "string" ? depositStatusValue.trim() || null : null;
   const sourceRefreshedAt = timestamp(field("modifiedTime"));
-  return { dealId, dealNumber, dealName, customerPO, customerVtigerId, customerName, customerKind, estimatedWeight, actualWeight, perExtraTonne, requiredDueDate,
+  return { dealId, dealNumber, dealName, customerPO, customerVtigerId, customerName, customerKind, estimatedWeight, actualWeight, perExtraTonne, collectionDate, depositStatus,
     sourceRefreshedAt, customerRefreshedAt: customer ? timestamp(customer.modifiedtime) : null, mappingEvidence: mapping.mappingEvidence, sourceHoldReason: holds.length ? holds.join(" ") : null };
 }
