@@ -3,6 +3,11 @@ import { financialSha256 } from "./financialProposalIntegrity";
 /** The exact writer-verification error that creates a no-transport Xero-drift hold. */
 export const FINAL_WEIGHT_XERO_DRIFT_HOLD_REASON = "Exact Draft/contact/full-line Xero evidence changed since reservation";
 const FINAL_WEIGHT_XERO_DRIFT_RECONCILIATION_HOLD_REASON = `${FINAL_WEIGHT_XERO_DRIFT_HOLD_REASON}; reconciliation required.`;
+/**
+ * The one local verifier failure remediated by the D702941 recovery attempt.
+ * This is intentionally an equality check, not a searchable error fragment.
+ */
+export const FINAL_WEIGHT_RECONCILIATION_VERIFIER_DEFECT_HOLD_REASON = "Final Weight reconciliation Xero evidence changed.";
 
 export type FinalWeightReconciliationOriginal = {
   id: number;
@@ -31,6 +36,11 @@ export type FinalWeightReconciliationOrigin = "legacy_404" | "xero_drift";
  */
 export function isExactFinalWeightXeroDriftHoldReason(value: unknown): boolean {
   return value === FINAL_WEIGHT_XERO_DRIFT_HOLD_REASON || value === FINAL_WEIGHT_XERO_DRIFT_RECONCILIATION_HOLD_REASON;
+}
+
+/** No arbitrary reconciliation hold can enter the verifier-defect remediation. */
+export function isFinalWeightReconciliationVerifierDefectHoldReason(value: unknown): boolean {
+  return value === FINAL_WEIGHT_RECONCILIATION_VERIFIER_DEFECT_HOLD_REASON;
 }
 
 /** Immutable subset bound into every separate recovery receipt. */

@@ -95,7 +95,9 @@ export async function verifyFinalWeightReconciliationWriteAccess(input: { eventI
   if (!facts.sourceRefreshedAt || Date.parse(facts.sourceRefreshedAt) < Date.parse(policy.effectiveFrom!) || sourceSnapshotHash({ ...facts, direction: event.direction, rulesVersion: FINAL_WEIGHT_RULES_VERSION }) !== event.sourceSnapshotHash) {
     throw new Error("Final Weight reconciliation source is stale or changed.");
   }
-  const xero = await readFinalWeightXeroEvidence(event.invoiceNumber, facts.customerName, event.direction);
+  // Existing Draft ContactID is authoritative for an amendment. A renamed
+  // current VTiger contact must not trigger a separate Xero customer lookup.
+  const xero = await readFinalWeightXeroEvidence(event.invoiceNumber, facts.customerName, event.direction, { skipCustomerMatch: true });
   if (financialSha256(xero) !== event.xeroPreflightHash) throw new Error("Final Weight reconciliation Xero evidence changed.");
   const preview = buildFinalWeightAdjustment(facts, event.direction, xero);
   if (!preview.eligible || !preview.originalDraft || !preview.expectedDraft || financialSha256(preview.originalDraft) !== event.originalDraftHash ||

@@ -28,6 +28,7 @@ import { verifyDepositInvoiceReconciliationWriteAccess } from "./financialDeposi
 import { verifyDepositMainDeductionWriteAccess } from "./financialDepositMainDeductionDb";
 import { verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
 import { verifyFinalWeightReconciliationWriteAccess } from "./financialFinalWeightReconciliationDb";
+import { verifyFinalWeightReconciliationRemediationWriteAccess } from "./financialFinalWeightReconciliationRemediationDb";
 import type { PlannedFinancialPostSuccessAction } from "./financialPostSuccessPlan";
 import { verifyExtraHireAutomaticWriteAccess } from "./financialExtraHireInvoiceDb";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
@@ -91,6 +92,15 @@ export async function executeGuardedFinancialWriterCommand(
       financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedFinalWeightDraft])) throw new Error("Final-weight execution permits only its exact existing Draft amendment, retained readback evidence and no CRM action.");
     await verifyFinalWeightAutomaticWriteAccess({ eventId: command.authorisation.finalWeightAutomaticEventId, direction: command.authorisation.finalWeightDirection!,
       releaseKey: command.authorisation.finalWeightReleaseKey!, payload: command.payload, preparedBy: command.preparedBy });
+  } else if (command.authorisation.finalWeightReconciliationRemediationEventId !== undefined) {
+    if (command.workflowType !== "final_weight_reconciliation_remediation" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
+      command.preparedBy !== command.authorisation.finalWeightReconciliationRemediationApprovedBy || !command.expectedFinalWeightDraft || command.expectedDraftDocument ||
+      financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedFinalWeightDraft])) {
+      throw new Error("Final-weight verifier-defect remediation permits only its exact existing Draft POST recovery and no CRM action.");
+    }
+    await verifyFinalWeightReconciliationRemediationWriteAccess({ eventId: command.authorisation.finalWeightReconciliationRemediationEventId,
+      token: command.authorisation.finalWeightReconciliationRemediationToken!, releaseKey: command.authorisation.finalWeightReconciliationRemediationReleaseKey!,
+      payload: command.payload, preparedBy: command.preparedBy });
   } else if (command.authorisation.finalWeightReconciliationEventId !== undefined) {
     if (command.workflowType !== "final_weight_reconciliation" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
       command.preparedBy !== command.authorisation.finalWeightReconciliationApprovedBy || !command.expectedFinalWeightDraft || command.expectedDraftDocument ||

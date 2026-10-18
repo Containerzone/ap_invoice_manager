@@ -16,6 +16,7 @@ import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvo
 import { consumeDepositInvoiceReconciliationPayload, verifyDepositInvoiceReconciliationWriteAccess } from "./financialDepositInvoiceReconciliationDb";
 import { consumeFinalWeightPayload, verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
 import { consumeFinalWeightReconciliationPayload, verifyFinalWeightReconciliationWriteAccess } from "./financialFinalWeightReconciliationDb";
+import { consumeFinalWeightReconciliationRemediationPayload, verifyFinalWeightReconciliationRemediationWriteAccess } from "./financialFinalWeightReconciliationRemediationDb";
 import type { FinalWeightDirection } from "./financialFinalWeightAdjustmentRules";
 import { consumeExtraHirePayload, verifyExtraHireAutomaticWriteAccess } from "./financialExtraHireInvoiceDb";
 
@@ -106,6 +107,11 @@ export type FinancialWriteAuthorisation = {
   finalWeightReconciliationToken?: string;
   finalWeightReconciliationReleaseKey?: string;
   finalWeightReconciliationApprovedBy?: number;
+  /** One separately auditable no-execution verifier-defect remediation; never a generic reopening. */
+  finalWeightReconciliationRemediationEventId?: number;
+  finalWeightReconciliationRemediationToken?: string;
+  finalWeightReconciliationRemediationReleaseKey?: string;
+  finalWeightReconciliationRemediationApprovedBy?: number;
   /** Independent current-source Extra Hire claim; never available to a generic bridge. */
   extraHireAutomaticEventId?: number;
   extraHireReleaseKey?: string;
@@ -304,7 +310,7 @@ export function assertFinancialDraftWriteAuthorised(
       !Number.isInteger(context.depositInvoiceReconciliationApprovedBy) || Number(context.depositInvoiceReconciliationApprovedBy) <= 0 ||
       context.approvalReference !== context.depositInvoiceReconciliationReleaseKey || !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
       [context.depositInvoiceAutomaticEventId, context.depositMainDeductionAutomaticEventId, context.depositDraftCorrectionKind,
-        context.finalWeightAutomaticEventId, context.finalWeightReconciliationEventId, context.mainCustomerInvoiceAutomaticEventId,
+        context.finalWeightAutomaticEventId, context.finalWeightReconciliationEventId, context.finalWeightReconciliationRemediationEventId, context.mainCustomerInvoiceAutomaticEventId,
         context.assetPurchaseAutomaticEventId, context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId,
         context.storageAutomaticEventId, context.storagePilotEventId, context.extraHireAutomaticEventId].some(value => value !== undefined)) {
       throw new FinancialWriteDisabledError("Deposit Invoice reconciliation requires its separate one-time recovery gate and exact reservation.");
@@ -318,7 +324,7 @@ export function assertFinancialDraftWriteAuthorised(
       !context.finalWeightReconciliationToken || !context.finalWeightReconciliationReleaseKey ||
       !Number.isInteger(context.finalWeightReconciliationApprovedBy) || Number(context.finalWeightReconciliationApprovedBy) <= 0 ||
       context.approvalReference !== context.finalWeightReconciliationReleaseKey || !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
-      [context.finalWeightAutomaticEventId, context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId,
+      [context.finalWeightAutomaticEventId, context.finalWeightReconciliationRemediationEventId, context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId,
         context.assetPurchaseAutomaticEventId, context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId,
         context.storageAutomaticEventId, context.storagePilotEventId].some(value => value !== undefined)) {
       throw new FinancialWriteDisabledError("Final Weight reconciliation requires its separate one-time recovery gate and exact reservation.");
@@ -326,12 +332,27 @@ export function assertFinancialDraftWriteAuthorised(
     if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) throw new FinancialWriteDisabledError("Final Weight reconciliation execution ledger is required.");
     return;
   }
+  if (context.workflowType === "final_weight_reconciliation_remediation" || context.finalWeightReconciliationRemediationEventId !== undefined) {
+    if (process.env.FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED !== "true" || context.workflowType !== "final_weight_reconciliation_remediation" ||
+      !Number.isInteger(context.finalWeightReconciliationRemediationEventId) || Number(context.finalWeightReconciliationRemediationEventId) <= 0 ||
+      !context.finalWeightReconciliationRemediationToken || !context.finalWeightReconciliationRemediationReleaseKey ||
+      !Number.isInteger(context.finalWeightReconciliationRemediationApprovedBy) || Number(context.finalWeightReconciliationRemediationApprovedBy) <= 0 ||
+      context.approvalReference !== context.finalWeightReconciliationRemediationReleaseKey || !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
+      [context.finalWeightAutomaticEventId, context.finalWeightReconciliationEventId, context.depositInvoiceAutomaticEventId,
+        context.depositMainDeductionAutomaticEventId, context.depositDraftCorrectionKind, context.extraHireAutomaticEventId,
+        context.mainCustomerInvoiceAutomaticEventId, context.assetPurchaseAutomaticEventId, context.customerSalePurchaseAutomaticEventId,
+        context.forHireAutomaticEventId, context.storageAutomaticEventId, context.storagePilotEventId].some(value => value !== undefined)) {
+      throw new FinancialWriteDisabledError("Final Weight verifier-defect remediation requires its separate one-time recovery gate and exact reservation.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) throw new FinancialWriteDisabledError("Final Weight verifier-defect remediation execution ledger is required.");
+    return;
+  }
   if (context.workflowType === "deposit_main_deduction" || context.depositMainDeductionAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "deposit_main_deduction" ||
       !Number.isInteger(context.depositMainDeductionAutomaticEventId) || Number(context.depositMainDeductionAutomaticEventId) <= 0 || !context.depositMainDeductionReleaseKey ||
       !Number.isInteger(context.depositMainDeductionApprovedBy) || Number(context.depositMainDeductionApprovedBy) <= 0 || !context.depositMainDeductionToken || context.approvalReference !== context.depositMainDeductionReleaseKey ||
       !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
-      [context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId, context.finalWeightAutomaticEventId, context.assetPurchaseAutomaticEventId,
+      [context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId, context.finalWeightAutomaticEventId, context.finalWeightReconciliationEventId, context.finalWeightReconciliationRemediationEventId, context.assetPurchaseAutomaticEventId,
         context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId, context.storageAutomaticEventId, context.storagePilotEventId].some(value => value !== undefined)) {
       throw new FinancialWriteDisabledError("Deposit-to-main independent Draft amendment gate is invalid; Deposit creation or another family cannot enable it.");
     }
@@ -343,7 +364,7 @@ export function assertFinancialDraftWriteAuthorised(
       !Number.isInteger(context.extraHireAutomaticEventId) || Number(context.extraHireAutomaticEventId) <= 0 || !context.extraHireReleaseKey ||
       !Number.isInteger(context.extraHireApprovedBy) || Number(context.extraHireApprovedBy) <= 0 || context.approvalReference !== context.extraHireReleaseKey ||
       !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
-      [context.finalWeightAutomaticEventId, context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId,
+      [context.finalWeightAutomaticEventId, context.finalWeightReconciliationEventId, context.finalWeightReconciliationRemediationEventId, context.depositInvoiceAutomaticEventId, context.mainCustomerInvoiceAutomaticEventId,
         context.assetPurchaseAutomaticEventId, context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId,
         context.storageAutomaticEventId, context.storagePilotEventId].some(value => value !== undefined)) {
       throw new FinancialWriteDisabledError("Extra Hire independent Draft gate is invalid; global/storage/other invoice gates cannot enable it.");
@@ -530,6 +551,19 @@ export async function executeFinancialDraftWrite(
     const input = { eventId: context.finalWeightReconciliationEventId, token: context.finalWeightReconciliationToken!, releaseKey: context.finalWeightReconciliationReleaseKey!, preparedBy: context.finalWeightReconciliationApprovedBy!, payload };
     await verifyFinalWeightReconciliationWriteAccess(input);
     await consumeFinalWeightReconciliationPayload({ eventId: input.eventId, token: input.token }, context.executionId!);
+  }
+  if (context.finalWeightReconciliationRemediationEventId !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (payload.method !== "POST" || !payload.expectedXeroDocumentId || payload.endpoint !== `/Invoices/${encodeURIComponent(payload.expectedXeroDocumentId)}` ||
+      payload.documentFamily !== "customer_invoice" || !/^INV-\d{1,12}$/.test(payload.documentNumber) || Object.keys(payload.body).length !== 1 ||
+      !row || row.InvoiceID !== payload.expectedXeroDocumentId || row.InvoiceNumber !== payload.documentNumber || row.Status !== "DRAFT" || row.Type !== "ACCREC" ||
+      row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" || !row.Contact?.ContactID || !row.Date || !row.DueDate || !Array.isArray(row.LineItems) || !row.LineItems.length) {
+      throw new FinancialWriteDisabledError("Final Weight verifier-defect remediation permits only one exact existing AUD Exclusive Draft POST recovery.");
+    }
+    const input = { eventId: context.finalWeightReconciliationRemediationEventId, token: context.finalWeightReconciliationRemediationToken!, releaseKey: context.finalWeightReconciliationRemediationReleaseKey!, preparedBy: context.finalWeightReconciliationRemediationApprovedBy!, payload };
+    await verifyFinalWeightReconciliationRemediationWriteAccess(input);
+    await consumeFinalWeightReconciliationRemediationPayload({ eventId: input.eventId, token: input.token }, context.executionId!);
   }
   if (context.depositInvoiceReconciliationEventId !== undefined) {
     const rows = payload.body.Invoices;
