@@ -10,6 +10,7 @@ import { completeInvoice, writableDraft } from "./financialDepositDraftCorrectio
 import type { FinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
 import { bindDepositMainDeductionPayload, completeDepositMainDeduction, holdDepositMainDeduction, reserveDepositMainDeduction, verifyDepositMainDeductionWriteAccess } from "./financialDepositMainDeductionDb";
+import { runXeroRequest } from "./xeroRequestManager";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const DEPOSIT_ITEM_CODE = "Deposit Required";
@@ -29,11 +30,19 @@ const cents = (value: unknown) => {
 const currency = (centsValue: number) => Math.round(centsValue) / 100;
 function date(value: unknown): string | null { const raw = text(value); const ms = raw.match(/^\/Date\((\d+)(?:[+-]\d+)?\)\/$/); const parsed = ms ? new Date(Number(ms[1])) : new Date(raw); return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null; }
 async function xeroInvoice(id: string, auth: { token: string; tenantId: string }) {
-  const response = await axios.get(`${XERO_API_BASE}/Invoices/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${auth.token}`, "Xero-tenant-id": auth.tenantId, Accept: "application/json" } });
+  const response = await runXeroRequest(
+    auth,
+    `GET financial-read:deposit-main-deduction:invoice-id:${id}`,
+    () => axios.get(`${XERO_API_BASE}/Invoices/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${auth.token}`, "Xero-tenant-id": auth.tenantId, Accept: "application/json" } }),
+  );
   return response.data?.Invoices?.[0] ?? null;
 }
 async function exactInvoiceByNumber(number: string, auth: { token: string; tenantId: string }) {
-  const response = await axios.get(`${XERO_API_BASE}/Invoices`, { headers: { Authorization: `Bearer ${auth.token}`, "Xero-tenant-id": auth.tenantId, Accept: "application/json" }, params: { InvoiceNumbers: number } });
+  const response = await runXeroRequest(
+    auth,
+    `GET financial-read:deposit-main-deduction:invoice-number:${number}`,
+    () => axios.get(`${XERO_API_BASE}/Invoices`, { headers: { Authorization: `Bearer ${auth.token}`, "Xero-tenant-id": auth.tenantId, Accept: "application/json" }, params: { InvoiceNumbers: number } }),
+  );
   const matches = (Array.isArray(response.data?.Invoices) ? response.data.Invoices : []).filter((row: any) => text(row?.Type) === "ACCREC" && text(row?.InvoiceNumber).toUpperCase() === number.toUpperCase());
   if (matches.length !== 1 || !text(matches[0]?.InvoiceID)) return null;
   return xeroInvoice(text(matches[0].InvoiceID), auth);

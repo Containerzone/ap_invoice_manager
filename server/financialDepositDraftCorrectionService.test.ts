@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ get: vi.fn(), facts: vi.fn(), preflight: vi.fn(), item: vi.fn(), auth: vi.fn() }));
+const m = vi.hoisted(() => ({ get: vi.fn(), queue: vi.fn(), facts: vi.fn(), preflight: vi.fn(), item: vi.fn(), auth: vi.fn() }));
 vi.mock("axios", () => ({ default: { get: m.get } }));
+vi.mock("./xeroRequestManager", () => ({ runXeroRequest: m.queue }));
 vi.mock("./financialMainCustomerInvoiceService", () => ({ readMainCustomerInvoiceFacts: m.facts }));
 vi.mock("./financialReadOnlyXeroService", () => ({ preflightFinancialXeroIntents: m.preflight, readDepositInvoiceXeroItemConfiguration: m.item }));
 vi.mock("./xeroService", () => ({ getXeroReadAuthWithRefresh: m.auth }));
@@ -28,6 +29,7 @@ beforeEach(() => {
   ]);
   m.auth.mockResolvedValue({ token: "token", tenantId: "tenant" });
   m.item.mockResolvedValue({ itemCode: "Deposit Required", accountCode: "200", taxType: "OUTPUT" });
+  m.queue.mockImplementation(async (_auth: unknown, _operation: string, request: () => Promise<unknown>) => request());
   m.get.mockImplementation((url: string) => {
     if (url.endsWith("/Invoices/main-id")) return Promise.resolve({ data: { Invoices: [main] } });
     if (url.endsWith("/Invoices/deposit-id")) return Promise.resolve({ data: { Invoices: [deposit] } });
@@ -50,6 +52,12 @@ describe("Deposit Draft correction preview", () => {
     expect(mainUpdate.LineItems[0]).toEqual(main.LineItems[0]);
     expect(mainUpdate.LineItems[1]).toMatchObject({ Description: "Deposit deduction — INV-702933-D", Quantity: 1, UnitAmount: -454.55, AccountCode: "200", TaxType: "OUTPUT" });
     expect(m.preflight).toHaveBeenCalledWith(expect.any(Array), { skipContactCheck: true });
+    expect(m.queue).toHaveBeenCalledTimes(3);
+    expect(m.queue.mock.calls.map(([, operation]) => operation)).toEqual(expect.arrayContaining([
+      "GET financial-read:deposit-draft-correction:/Invoices/main-id",
+      "GET financial-read:deposit-draft-correction:/Invoices/deposit-id",
+      "GET financial-read:deposit-draft-correction:/Items/Deposit%20Required",
+    ]));
   });
 
   it("holds if the Deposit item description is not the approved native template", async () => {

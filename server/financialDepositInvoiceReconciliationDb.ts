@@ -2,8 +2,10 @@ import { and, eq, isNull, or } from "drizzle-orm";
 import {
   financialDepositInvoiceEvents as depositEvents,
   financialDepositInvoiceReconciliationEvents as recoveryEvents,
+  financialWriterExecutions,
   type FinancialDepositInvoiceEvent,
   type FinancialDepositInvoiceReconciliationEvent,
+  type FinancialWriterExecution,
 } from "../drizzle/schema";
 import { getDb } from "./db";
 import { financialSha256, sourceSnapshotHash } from "./financialProposalIntegrity";
@@ -34,6 +36,20 @@ export const DEPOSIT_INVOICE_RECONCILIATION_SCOPE = {
   originalEventId: 180001,
   dealNumber: "D702941",
   invoiceNumber: "INV-702941-D",
+} as const;
+
+/**
+ * This is a second named, no-transport recovery origin—not a general 429
+ * replay policy. Both ledger IDs, the business keys and the original failure
+ * text are deliberately fixed so a later 429, altered receipt or retry cannot
+ * enter this one-shot manual path.
+ */
+export const DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE = {
+  originalEventId: 210001,
+  writerExecutionId: 990001,
+  dealNumber: "D702944",
+  invoiceNumber: "INV-702944-D",
+  holdReason: "Request failed with status code 429",
 } as const;
 
 const affected = (result: any) =>
@@ -88,30 +104,162 @@ export function depositInvoiceReconciliationOriginalHash(event: FinancialDeposit
   });
 }
 
-/**
- * Original Deposit claims are never released, replayed or written. A recovery
- * is possible only for the one named historical receipt that was left in a
- * reconciliation state before an Xero execution or invoice identifier existed.
- */
-export function assertDepositInvoiceReconciliationOriginal(
+/** The existing named receipt keeps its exact historical eligibility unchanged. */
+function isLegacyDepositInvoiceReconciliationOriginal(
   original: FinancialDepositInvoiceEvent | null,
   originalEventId: number,
-): asserts original is FinancialDepositInvoiceEvent {
+): boolean {
+  return originalEventId === DEPOSIT_INVOICE_RECONCILIATION_SCOPE.originalEventId &&
+    !!original &&
+    original.id === originalEventId &&
+    original.status === "reconciliation_required" &&
+    original.dealNumber.toUpperCase() === DEPOSIT_INVOICE_RECONCILIATION_SCOPE.dealNumber &&
+    original.proposedInvoiceNumber.toUpperCase() === DEPOSIT_INVOICE_RECONCILIATION_SCOPE.invoiceNumber &&
+    original.xeroInvoiceId === null &&
+    original.executionId === null &&
+    original.processingToken === null &&
+    original.claimedDealId === original.dealId &&
+    original.claimedInvoiceNumber?.toUpperCase() === original.proposedInvoiceNumber.toUpperCase();
+}
+
+type StoredAuthorisedDepositPayload = {
+  hash: string;
+  number: string;
+  payload: FinancialDraftPayload;
+};
+
+const exactWriterPayloadFingerprint = (payload: FinancialDraftPayload) =>
+  `${payload.idempotencyKey.slice(0, 24)}:${payload.method}:${payload.endpoint}`;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * The original authorisation must retain a recorded hash and a complete Deposit
+ * Draft—not merely an object with a matching invoice number. Historic MySQL
+ * JSON persistence omits undefined properties, so recomputing the prior
+ * in-memory payload hash from this stored JSON is not a valid integrity test.
+ * Instead, the immutable original-event hash, full structural payload evidence
+ * and exact writer idempotency/fingerprint bind this named one-off origin;
+ * current evidence and the newly bound recovery payload are still hashed again
+ * immediately before any transport.
+ */
+function originalAuthorisedDepositPayload(
+  original: FinancialDepositInvoiceEvent,
+): StoredAuthorisedDepositPayload | null {
+  const authorised = original.authorisedPayload;
+  if (!isRecord(authorised) || typeof authorised.hash !== "string" ||
+    typeof authorised.number !== "string" || !isRecord(authorised.payload)) return null;
+  const payload = authorised.payload as unknown as FinancialDraftPayload;
+  const invoice = payload.body && isRecord(payload.body) && Array.isArray(payload.body.Invoices)
+    ? payload.body.Invoices[0]
+    : null;
+  const lineItems = isRecord(invoice) && Array.isArray(invoice.LineItems) ? invoice.LineItems : null;
+  const contact = isRecord(invoice) && isRecord(invoice.Contact) ? invoice.Contact : null;
   if (
-    originalEventId !== DEPOSIT_INVOICE_RECONCILIATION_SCOPE.originalEventId ||
-    !original ||
-    original.id !== originalEventId ||
-    original.status !== "reconciliation_required" ||
-    original.dealNumber.toUpperCase() !== DEPOSIT_INVOICE_RECONCILIATION_SCOPE.dealNumber ||
-    original.proposedInvoiceNumber.toUpperCase() !== DEPOSIT_INVOICE_RECONCILIATION_SCOPE.invoiceNumber ||
-    original.xeroInvoiceId !== null ||
-    original.executionId !== null ||
-    original.processingToken !== null ||
-    original.claimedDealId !== original.dealId ||
-    original.claimedInvoiceNumber?.toUpperCase() !== original.proposedInvoiceNumber.toUpperCase()
-  ) {
-    throw new Error("Only the immutable scoped Deposit reconciliation receipt without Xero execution may be considered for recovery.");
+    !/^[a-f0-9]{64}$/i.test(authorised.hash) ||
+    authorised.number !== original.proposedInvoiceNumber ||
+    payload.method !== "POST" ||
+    payload.endpoint !== "/Invoices" ||
+    payload.documentFamily !== "customer_invoice" ||
+    payload.documentNumber !== original.proposedInvoiceNumber ||
+    payload.expectedXeroDocumentId !== null ||
+    !/^[a-f0-9]{64}$/i.test(payload.idempotencyKey) ||
+    !isRecord(payload.body) || Object.keys(payload.body).length !== 1 ||
+    !isRecord(invoice) ||
+    invoice.InvoiceID ||
+    invoice.InvoiceNumber !== original.proposedInvoiceNumber ||
+    invoice.Type !== "ACCREC" ||
+    invoice.Status !== "DRAFT" ||
+    invoice.CurrencyCode !== "AUD" ||
+    invoice.LineAmountTypes !== "Inclusive" ||
+    typeof contact?.ContactID !== "string" || !contact.ContactID.trim() ||
+    !lineItems || lineItems.length !== 1 || !isRecord(lineItems[0]) ||
+    lineItems[0].ItemCode !== "Deposit Required" ||
+    lineItems[0].TaxType !== "OUTPUT" ||
+    lineItems[0].AccountCode !== "200" ||
+    !/^Deposit for .+ from INV-\d{1,12}$/.test(String(lineItems[0].Description ?? "")) ||
+    lineItems[0].Quantity !== 1 ||
+    typeof lineItems[0].UnitAmount !== "number" || !Number.isFinite(lineItems[0].UnitAmount) || lineItems[0].UnitAmount <= 0
+  ) return null;
+  return { hash: authorised.hash, number: authorised.number, payload };
+}
+
+function isExactRateLimitOriginal(
+  original: FinancialDepositInvoiceEvent | null,
+  originalEventId: number,
+): original is FinancialDepositInvoiceEvent {
+  return originalEventId === DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE.originalEventId &&
+    !!original &&
+    original.id === originalEventId &&
+    original.status === "reconciliation_required" &&
+    original.dealNumber === DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE.dealNumber &&
+    original.proposedInvoiceNumber === DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE.invoiceNumber &&
+    original.executionId === null &&
+    original.xeroInvoiceId === null &&
+    original.processingToken === null &&
+    original.claimedDealId === original.dealId &&
+    original.claimedInvoiceNumber === original.proposedInvoiceNumber &&
+    original.holdReason === DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE.holdReason;
+}
+
+function isExactRateLimitWriterEvidence(
+  execution: FinancialWriterExecution,
+  payload: FinancialDraftPayload,
+): boolean {
+  return execution.id === DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE.writerExecutionId &&
+    execution.workflowType === "deposit_invoice" &&
+    execution.documentFamily === "customer_invoice" &&
+    execution.proposedAction === "create_draft" &&
+    execution.proposedDocumentNumber === DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE.invoiceNumber &&
+    execution.targetXeroDocumentId === null &&
+    execution.method === "POST" &&
+    execution.endpoint === "/Invoices" &&
+    execution.idempotencyKey === payload.idempotencyKey &&
+    execution.payloadFingerprint === exactWriterPayloadFingerprint(payload) &&
+    execution.status === "failed" &&
+    execution.xeroDocumentId === null &&
+    execution.submittedAt !== null &&
+    execution.errorMessage === DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE.holdReason;
+}
+
+export type DepositInvoiceReconciliationOrigin =
+  | { kind: "legacy"; dealNumber: string; invoiceNumber: string }
+  | { kind: "rate_limit_429"; dealNumber: string; invoiceNumber: string };
+
+/**
+ * Classifies the only two recovery origins before any source/Xero read. The
+ * 429 path is deliberately definitive: it proves a failed local writer record
+ * and no Xero identifier, rather than treating a rate limit as retryable.
+ */
+export async function classifyDepositInvoiceReconciliationOrigin(
+  original: FinancialDepositInvoiceEvent | null,
+  originalEventId: number,
+): Promise<DepositInvoiceReconciliationOrigin> {
+  if (original && isLegacyDepositInvoiceReconciliationOriginal(original, originalEventId)) {
+    return {
+      kind: "legacy",
+      dealNumber: original.dealNumber,
+      invoiceNumber: original.proposedInvoiceNumber,
+    };
   }
+  if (!isExactRateLimitOriginal(original, originalEventId)) {
+    throw new Error("Only the immutable scoped Deposit recovery receipt or the exact D702944 definitive 429 no-transport receipt may be considered for recovery.");
+  }
+  const authorised = originalAuthorisedDepositPayload(original);
+  if (!authorised) {
+    throw new Error("D702944 reconciliation requires its original complete hash-bound AUD inclusive Deposit Draft authorisation.");
+  }
+  const evidence = await getDepositInvoiceReconciliationWriterEvidence(authorised.payload.idempotencyKey);
+  if (evidence.length !== 1 || !isExactRateLimitWriterEvidence(evidence[0]!, authorised.payload)) {
+    throw new Error("D702944 reconciliation requires exactly one immutable failed 429 writer evidence record with no Xero receipt.");
+  }
+  return {
+    kind: "rate_limit_429",
+    dealNumber: original.dealNumber,
+    invoiceNumber: original.proposedInvoiceNumber,
+  };
 }
 
 export async function getDepositInvoiceReconciliationEvent(
@@ -124,6 +272,14 @@ export async function getDepositInvoiceReconciliationOriginal(
   originalEventId: number,
 ): Promise<FinancialDepositInvoiceEvent | null> {
   return (await (await database()).select().from(depositEvents).where(eq(depositEvents.id, originalEventId)).limit(1))[0] ?? null;
+}
+
+/** At most two rows are needed: one is exact evidence; a second proves ambiguity. */
+export async function getDepositInvoiceReconciliationWriterEvidence(
+  idempotencyKey: string,
+): Promise<FinancialWriterExecution[]> {
+  return (await (await database()).select().from(financialWriterExecutions)
+    .where(eq(financialWriterExecutions.idempotencyKey, idempotencyKey)).limit(2));
 }
 
 /** Reserves a new independent receipt. It never touches the original Deposit event or claim keys. */
@@ -248,12 +404,17 @@ export async function verifyDepositInvoiceReconciliationWriteAccess(input: {
   const original = event
     ? await getDepositInvoiceReconciliationOriginal(event.originalEventId)
     : null;
+  const origin = event && original
+    ? await classifyDepositInvoiceReconciliationOrigin(original, event.originalEventId)
+    : null;
   const authorised = event?.authorisedPayload as { hash?: string; number?: string } | null;
   if (
     !event ||
-    event.originalEventId !== DEPOSIT_INVOICE_RECONCILIATION_SCOPE.originalEventId ||
-    event.dealNumber.toUpperCase() !== DEPOSIT_INVOICE_RECONCILIATION_SCOPE.dealNumber ||
-    event.invoiceNumber.toUpperCase() !== DEPOSIT_INVOICE_RECONCILIATION_SCOPE.invoiceNumber ||
+    !original ||
+    !origin ||
+    event.dealId !== original.dealId ||
+    event.dealNumber.toUpperCase() !== origin.dealNumber.toUpperCase() ||
+    event.invoiceNumber.toUpperCase() !== origin.invoiceNumber.toUpperCase() ||
     event.status !== "reserved" ||
     event.processingToken !== input.token ||
     event.releaseKey !== input.releaseKey ||
@@ -270,7 +431,6 @@ export async function verifyDepositInvoiceReconciliationWriteAccess(input: {
   ) {
     throw new Error("Deposit reconciliation requires its separate one-time exact-payload reservation.");
   }
-  assertDepositInvoiceReconciliationOriginal(original, event.originalEventId);
   if (depositInvoiceReconciliationOriginalHash(original) !== event.originalEventHash) {
     throw new Error("Deposit reconciliation original immutable receipt changed.");
   }

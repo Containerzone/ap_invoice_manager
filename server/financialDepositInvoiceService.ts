@@ -377,7 +377,9 @@ export async function processAutomaticDepositInvoice(dealId: string) {
     await holdDepositInvoiceExecution(
       event.id,
       error instanceof Error
-        ? error.message
+        ? error.message === "Request failed with status code 429"
+          ? "Xero rate limit rejected the Draft before a receipt; use exact current reconciliation, no blind retry."
+          : error.message
         : "Deposit execution failed; reconcile before retry."
     );
     throw error;

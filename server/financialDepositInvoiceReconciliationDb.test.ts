@@ -27,6 +27,7 @@ vi.mock("./financialReadOnlyXeroService", () => ({
 
 import {
   bindDepositInvoiceReconciliationPayload,
+  classifyDepositInvoiceReconciliationOrigin,
   reserveDepositInvoiceReconciliation,
 } from "./financialDepositInvoiceReconciliationDb";
 import { financialSha256 } from "./financialProposalIntegrity";
@@ -52,6 +53,57 @@ const payload = () => ({
   idempotencyKey: "a".repeat(64),
   body: { Invoices: [{ InvoiceNumber: "INV-702941-D", Type: "ACCREC", Status: "DRAFT" }] },
 });
+
+const rateLimitPayload = () => ({
+  ...payload(),
+  documentNumber: "INV-702944-D",
+  body: {
+    Invoices: [{
+      InvoiceNumber: "INV-702944-D", Type: "ACCREC", Status: "DRAFT",
+      CurrencyCode: "AUD", LineAmountTypes: "Inclusive", Contact: { ContactID: "exact-contact" },
+      LineItems: [{ ItemCode: "Deposit Required", Description: "Deposit for Q1 from INV-702944", TaxType: "OUTPUT", AccountCode: "200", Quantity: 1, UnitAmount: 110 }],
+    }],
+  },
+});
+
+const rateLimitOriginal = (patch: Record<string, unknown> = {}) => {
+  const authorised = rateLimitPayload();
+  return {
+    id: 210001,
+    dealId: "5x2944",
+    dealNumber: "D702944",
+    proposedInvoiceNumber: "INV-702944-D",
+    status: "reconciliation_required",
+    executionId: null,
+    xeroInvoiceId: null,
+    processingToken: null,
+    claimedDealId: "5x2944",
+    claimedInvoiceNumber: "INV-702944-D",
+    holdReason: "Request failed with status code 429",
+    // Stored JSON can omit prior undefined fields, so the original in-memory
+    // hash need not equal a rehash of this persisted payload.
+    authorisedPayload: { hash: "a".repeat(64), number: "INV-702944-D", payload: authorised },
+    ...patch,
+  } as any;
+};
+
+const rateLimitExecution = (payload = rateLimitPayload(), patch: Record<string, unknown> = {}) => ({
+  id: 990001,
+  workflowType: "deposit_invoice",
+  documentFamily: "customer_invoice",
+  proposedAction: "create_draft",
+  proposedDocumentNumber: "INV-702944-D",
+  targetXeroDocumentId: null,
+  method: "POST",
+  endpoint: "/Invoices",
+  idempotencyKey: payload.idempotencyKey,
+  payloadFingerprint: `${payload.idempotencyKey.slice(0, 24)}:POST:/Invoices`,
+  status: "failed",
+  xeroDocumentId: null,
+  submittedAt: new Date(),
+  errorMessage: "Request failed with status code 429",
+  ...patch,
+} as any);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -101,5 +153,42 @@ describe("Deposit recovery independent immutable reservation", () => {
       releaseKey: "DEPOSIT-test",
       authorisedPayload: expect.objectContaining({ number: "INV-702941-D" }),
     }));
+  });
+});
+
+describe("Deposit D702944 definitive 429 no-transport origin classifier", () => {
+  it("keeps the named D702941 legacy receipt eligible without any writer evidence query", async () => {
+    const legacy = {
+      id: 180001, dealId: "5x2941", dealNumber: "D702941", proposedInvoiceNumber: "INV-702941-D",
+      status: "reconciliation_required", executionId: null, xeroInvoiceId: null, processingToken: null,
+      claimedDealId: "5x2941", claimedInvoiceNumber: "INV-702941-D",
+    } as any;
+    await expect(classifyDepositInvoiceReconciliationOrigin(legacy, 180001))
+      .resolves.toEqual({ kind: "legacy", dealNumber: "D702941", invoiceNumber: "INV-702941-D" });
+    expect(m.select).not.toHaveBeenCalled();
+  });
+
+  it("allows only the exact D702944 failed 429 original plus one matching immutable writer record", async () => {
+    const original = rateLimitOriginal();
+    m.selectRows.push([rateLimitExecution(original.authorisedPayload.payload)]);
+    await expect(classifyDepositInvoiceReconciliationOrigin(original, 210001))
+      .resolves.toEqual({ kind: "rate_limit_429", dealNumber: "D702944", invoiceNumber: "INV-702944-D" });
+    expect(m.select).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["arbitrary event", rateLimitOriginal({ id: 210002 }), []],
+    ["altered original hold text", rateLimitOriginal({ holdReason: "Request failed with status code 429; retry later" }), []],
+    ["altered writer hold text", rateLimitOriginal(), [rateLimitExecution(rateLimitPayload(), { errorMessage: "Request failed with status code 429; retry later" })]],
+    ["mismatched writer idempotency", rateLimitOriginal(), [rateLimitExecution(rateLimitPayload(), { idempotencyKey: "b".repeat(64) })]],
+    ["missing writer evidence", rateLimitOriginal(), []],
+    ["duplicate writer evidence", rateLimitOriginal(), [rateLimitExecution(), rateLimitExecution(rateLimitPayload(), { id: 990002 })]],
+  ])("rejects %s before any source/Xero read or local recovery write", async (_name, original, executions) => {
+    if (original.id === 210001) m.selectRows.push(executions);
+    await expect(classifyDepositInvoiceReconciliationOrigin(original, 210001)).rejects.toThrow(/D702944|Only the immutable/);
+    expect(m.insert).not.toHaveBeenCalled();
+    expect(m.update).not.toHaveBeenCalled();
+    expect(m.preflight).not.toHaveBeenCalled();
+    expect(m.current).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const m = vi.hoisted(() => ({
   original: vi.fn(),
+  classify: vi.fn(),
   policy: vi.fn(),
   preview: vi.fn(),
   reserve: vi.fn(),
@@ -14,6 +15,7 @@ const m = vi.hoisted(() => ({
 vi.mock("./financialDepositInvoiceReconciliationDb", async original => ({
   ...(await original<any>()),
   getDepositInvoiceReconciliationOriginal: m.original,
+  classifyDepositInvoiceReconciliationOrigin: m.classify,
   reserveDepositInvoiceReconciliation: m.reserve,
   bindDepositInvoiceReconciliationPayload: m.bind,
   completeDepositInvoiceReconciliation: m.complete,
@@ -123,6 +125,7 @@ beforeEach(() => {
   vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_RECONCILIATION_ENABLED", "true");
   vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "false");
   m.original.mockResolvedValue(originalEvent());
+  m.classify.mockResolvedValue({ kind: "legacy", dealNumber: "D702941", invoiceNumber: "INV-702941-D" });
   m.policy.mockResolvedValue(policy());
   m.preview.mockResolvedValue(currentPreview());
   m.reserve.mockResolvedValue({ state: "reserved", event: { id: 88 } });
@@ -149,6 +152,28 @@ describe("scoped Deposit immutable-claim reconciliation", () => {
     expect(m.writer).not.toHaveBeenCalled();
   });
 
+  it("makes D702944 a GET-only preview only after strict definitive 429 classification", async () => {
+    m.original.mockResolvedValue(originalEvent({
+      id: 210001, dealId: "5x2944", dealNumber: "D702944", proposedInvoiceNumber: "INV-702944-D",
+      claimedDealId: "5x2944", claimedInvoiceNumber: "INV-702944-D", holdReason: "Request failed with status code 429",
+    }));
+    m.classify.mockResolvedValue({ kind: "rate_limit_429", dealNumber: "D702944", invoiceNumber: "INV-702944-D" });
+    const document = proposal();
+    document.proposedDocumentNumber = "INV-702944-D";
+    document.reference = "D702944";
+    document.sourceRecordId = "5x2944";
+    m.preview.mockResolvedValue({
+      ...currentPreview(), facts: { dealId: "5x2944", dealNumber: "D702944" },
+      preview: { eligible: true, proposedInvoiceNumber: "INV-702944-D", document },
+    });
+    const result = await previewDepositInvoiceReconciliation(210001);
+    expect(result).toMatchObject({ originalEventId: 210001, dealNumber: "D702944", invoiceNumber: "INV-702944-D", noWrites: true });
+    expect(m.classify).toHaveBeenCalledWith(expect.objectContaining({ id: 210001 }), 210001);
+    expect(m.preview).toHaveBeenCalledWith("5x2944", "D702944");
+    expect(m.reserve).not.toHaveBeenCalled();
+    expect(m.writer).not.toHaveBeenCalled();
+  });
+
   it.each([
     { id: 180002 },
     { status: "held" },
@@ -158,8 +183,17 @@ describe("scoped Deposit immutable-claim reconciliation", () => {
     { proposedInvoiceNumber: "INV-702942-D" },
   ])("rejects an ineligible immutable original %#", async patch => {
     m.original.mockResolvedValue(originalEvent(patch));
+    m.classify.mockRejectedValue(new Error("Only the immutable scoped Deposit recovery receipt may be considered for recovery."));
     await expect(previewDepositInvoiceReconciliation(180001)).rejects.toThrow(/Only the immutable scoped Deposit/);
     expect(m.preview).not.toHaveBeenCalled();
+  });
+
+  it("rejects failed D702944 evidence before any current source or Xero preflight", async () => {
+    m.classify.mockRejectedValue(new Error("D702944 reconciliation requires exactly one immutable failed 429 writer evidence record with no Xero receipt."));
+    await expect(previewDepositInvoiceReconciliation(210001)).rejects.toThrow(/exactly one immutable failed 429/);
+    expect(m.preview).not.toHaveBeenCalled();
+    expect(m.reserve).not.toHaveBeenCalled();
+    expect(m.writer).not.toHaveBeenCalled();
   });
 
   it("rejects a changed/held current exact source or preflight before reserving", async () => {

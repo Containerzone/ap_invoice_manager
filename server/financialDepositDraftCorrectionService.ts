@@ -6,6 +6,7 @@ import { readMainCustomerInvoiceFacts } from "./financialMainCustomerInvoiceServ
 import { getXeroReadAuthWithRefresh } from "./xeroService";
 import type { FinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
+import { runXeroRequest } from "./xeroRequestManager";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const DEPOSIT_ITEM_CODE = "Deposit Required";
@@ -39,9 +40,13 @@ function date(value: unknown): string | null {
 function presentString(value: unknown): string { return String(value ?? "").trim(); }
 
 async function xeroGet(path: string, auth: { token: string; tenantId: string }) {
-  return axios.get(`${XERO_API_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${auth.token}`, "Xero-tenant-id": auth.tenantId, Accept: "application/json" },
-  });
+  return runXeroRequest(
+    auth,
+    `GET financial-read:deposit-draft-correction:${path}`,
+    () => axios.get(`${XERO_API_BASE}${path}`, {
+      headers: { Authorization: `Bearer ${auth.token}`, "Xero-tenant-id": auth.tenantId, Accept: "application/json" },
+    }),
+  );
 }
 
 export function completeInvoice(invoice: XeroInvoice, expectedNumber: string): XeroInvoice {

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ get: vi.fn(), policy: vi.fn(), assertRelease: vi.fn(), facts: vi.fn(), depositFacts: vi.fn(), mainEvent: vi.fn(), auth: vi.fn(), reserve: vi.fn(), bind: vi.fn(), complete: vi.fn(), hold: vi.fn(), execute: vi.fn() }));
+const m = vi.hoisted(() => ({ get: vi.fn(), queue: vi.fn(), policy: vi.fn(), assertRelease: vi.fn(), facts: vi.fn(), depositFacts: vi.fn(), mainEvent: vi.fn(), auth: vi.fn(), reserve: vi.fn(), bind: vi.fn(), complete: vi.fn(), hold: vi.fn(), execute: vi.fn() }));
 vi.mock("axios", () => ({ default: { get: m.get } }));
+vi.mock("./xeroRequestManager", () => ({ runXeroRequest: m.queue }));
 vi.mock("./financialDepositInvoiceRelease", () => ({ getDepositInvoiceReleasePolicy: m.policy, assertDepositMainDeductionRelease: m.assertRelease }));
 vi.mock("./financialMainCustomerInvoiceService", () => ({ readMainCustomerInvoiceFacts: m.facts }));
 vi.mock("./financialDepositInvoiceSource", () => ({ readDepositInvoiceFacts: m.depositFacts }));
@@ -26,6 +27,7 @@ beforeEach(() => {
   m.reserve.mockResolvedValue({ state: "reserved", event: { id: 91 } });
   m.bind.mockResolvedValue(undefined); m.complete.mockResolvedValue(undefined); m.hold.mockResolvedValue(undefined);
   m.execute.mockResolvedValue({ outcome: "succeeded", executionId: 92, result: { xeroDocumentId: "main-id", documentNumber: "INV-702990", status: "DRAFT" } });
+  m.queue.mockImplementation(async (_auth: unknown, _operation: string, request: () => Promise<unknown>) => request());
   m.get.mockImplementation((url: string, config?: any) => {
     const number = config?.params?.InvoiceNumbers;
     if (number === "INV-702990") return Promise.resolve({ data: { Invoices: [main] } });
@@ -53,6 +55,13 @@ describe("automatic Deposit-to-main Draft deduction", () => {
     expect(row.LineItems[0]).toEqual(main.LineItems[0]);
     expect(row.LineItems[1]).toMatchObject({ Description: "Less deposit invoice INV-702990-D", Quantity: 1, UnitAmount: -454.55, LineAmount: -454.55, TaxAmount: -45.45, AccountCode: "200", TaxType: "OUTPUT" });
     expect(command.expectedExactDraft).toEqual(row);
+    expect(m.queue).toHaveBeenCalledTimes(4);
+    expect(m.queue.mock.calls.map(([, operation]) => operation)).toEqual(expect.arrayContaining([
+      "GET financial-read:deposit-main-deduction:invoice-number:INV-702990",
+      "GET financial-read:deposit-main-deduction:invoice-number:INV-702990-D",
+      "GET financial-read:deposit-main-deduction:invoice-id:main-id",
+      "GET financial-read:deposit-main-deduction:invoice-id:deposit-id",
+    ]));
   });
 
   it("never amends a main Draft that is not an AP-owned main-invoice receipt", async () => {

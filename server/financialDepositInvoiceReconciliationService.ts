@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { financialSha256 } from "./financialProposalIntegrity";
 import {
-  DEPOSIT_INVOICE_RECONCILIATION_SCOPE,
-  assertDepositInvoiceReconciliationOriginal,
   bindDepositInvoiceReconciliationPayload,
+  classifyDepositInvoiceReconciliationOrigin,
   completeDepositInvoiceReconciliation,
   depositInvoiceReconciliationOriginalHash,
   getDepositInvoiceReconciliationOriginal,
@@ -28,18 +27,22 @@ export type DepositInvoiceReconciliationPreview = {
 };
 
 /**
- * GET-only recovery preview for a precisely scoped legacy Deposit claim. It
- * does not call generic claim APIs and never alters the original event or its
- * unique Deal/-D-number claim.
+ * GET-only recovery preview for a precisely classified immutable Deposit
+ * origin. It does not call generic claim APIs and never alters the original
+ * event or its unique Deal/-D-number claim. A 429 means Xero rejected the
+ * Draft before a receipt: use exact current reconciliation, never a blind retry.
  */
 export async function previewDepositInvoiceReconciliation(
   originalEventId: number,
 ): Promise<DepositInvoiceReconciliationPreview> {
   const original = await getDepositInvoiceReconciliationOriginal(originalEventId);
-  assertDepositInvoiceReconciliationOriginal(original, originalEventId);
+  if (!original) {
+    throw new Error("Only the immutable scoped Deposit recovery receipt or the exact D702944 definitive 429 no-transport receipt may be considered for recovery.");
+  }
+  const origin = await classifyDepositInvoiceReconciliationOrigin(original, originalEventId);
   const current = await previewDepositInvoice(
     original.dealId,
-    DEPOSIT_INVOICE_RECONCILIATION_SCOPE.dealNumber,
+    origin.dealNumber,
   );
   if (
     current.state !== "previewed" ||
@@ -47,10 +50,10 @@ export async function previewDepositInvoiceReconciliation(
     !current.preview.document ||
     !current.preflight ||
     !current.xeroPreflightHash ||
-    current.facts.dealNumber.toUpperCase() !== DEPOSIT_INVOICE_RECONCILIATION_SCOPE.dealNumber ||
+    current.facts.dealNumber.toUpperCase() !== origin.dealNumber.toUpperCase() ||
     !current.preview.proposedInvoiceNumber ||
-    current.preview.proposedInvoiceNumber.toUpperCase() !== DEPOSIT_INVOICE_RECONCILIATION_SCOPE.invoiceNumber ||
-    current.preview.document.proposedDocumentNumber?.toUpperCase() !== DEPOSIT_INVOICE_RECONCILIATION_SCOPE.invoiceNumber
+    current.preview.proposedInvoiceNumber.toUpperCase() !== origin.invoiceNumber.toUpperCase() ||
+    current.preview.document.proposedDocumentNumber?.toUpperCase() !== origin.invoiceNumber.toUpperCase()
   ) {
     throw new Error("Current scoped Deposit source/Xero Draft is not eligible for exact recovery.");
   }
