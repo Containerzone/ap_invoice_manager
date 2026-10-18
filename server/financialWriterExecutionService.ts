@@ -24,6 +24,7 @@ import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchas
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
+import { verifyDepositInvoiceReconciliationWriteAccess } from "./financialDepositInvoiceReconciliationDb";
 import { verifyDepositMainDeductionWriteAccess } from "./financialDepositMainDeductionDb";
 import { verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
 import { verifyFinalWeightReconciliationWriteAccess } from "./financialFinalWeightReconciliationDb";
@@ -100,6 +101,25 @@ export async function executeGuardedFinancialWriterCommand(
       token: command.authorisation.finalWeightReconciliationToken!, releaseKey: command.authorisation.finalWeightReconciliationReleaseKey!,
       payload: command.payload, preparedBy: command.preparedBy });
   } else if (command.expectedFinalWeightDraft) throw new Error("Final-weight readback evidence requires its independent amendment release.");
+  if (command.authorisation.depositInvoiceReconciliationEventId !== undefined) {
+    if (command.workflowType !== "deposit_invoice_reconciliation" || command.proposedAction !== "create_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
+      command.preparedBy !== command.authorisation.depositInvoiceReconciliationApprovedBy || !command.expectedDraftDocument ||
+      command.expectedDraftDocument.sourceWorkflow !== "deposit_invoice" || command.expectedFinalWeightDraft || command.expectedExactDraft) {
+      throw new Error("Deposit reconciliation permits only its exact current Draft POST recovery and no CRM or Deposit-to-main action.");
+    }
+    const expectedPayload = prepareFinancialDraftPayload(command.expectedDraftDocument, "deposit-reconciliation-readback-binding");
+    (expectedPayload.body.Invoices as any[])[0].CurrencyCode = "AUD";
+    if (financialSha256(expectedPayload.body) !== financialSha256(command.payload.body)) {
+      throw new Error("Deposit reconciliation exact readback proposal must match the immutable authorized POST body.");
+    }
+    await verifyDepositInvoiceReconciliationWriteAccess({
+      eventId: command.authorisation.depositInvoiceReconciliationEventId,
+      token: command.authorisation.depositInvoiceReconciliationToken!,
+      releaseKey: command.authorisation.depositInvoiceReconciliationReleaseKey!,
+      payload: command.payload,
+      preparedBy: command.preparedBy,
+    });
+  }
   if (command.authorisation.depositDraftCorrectionKind !== undefined) {
     if (command.workflowType !== "deposit_draft_correction" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
       command.preparedBy !== command.authorisation.depositDraftCorrectionApprovedBy || !command.expectedExactDraft || command.expectedDraftDocument || command.expectedFinalWeightDraft ||
@@ -115,7 +135,7 @@ export async function executeGuardedFinancialWriterCommand(
     }
     await verifyDepositMainDeductionWriteAccess({ eventId: command.authorisation.depositMainDeductionAutomaticEventId, token: command.authorisation.depositMainDeductionToken!, releaseKey: command.authorisation.depositMainDeductionReleaseKey!, payload: command.payload, preparedBy: command.preparedBy });
   }
-  if ((command.workflowType === "deposit_invoice" || /^INV-\d+-D$/i.test(command.payload.documentNumber)) && command.authorisation.depositInvoiceAutomaticEventId === undefined && command.authorisation.depositDraftCorrectionKind === undefined) {
+  if ((command.workflowType === "deposit_invoice" || /^INV-\d+-D$/i.test(command.payload.documentNumber)) && command.authorisation.depositInvoiceAutomaticEventId === undefined && command.authorisation.depositInvoiceReconciliationEventId === undefined && command.authorisation.depositDraftCorrectionKind === undefined) {
     throw new Error("Deposit commands and exact -D documents require the independent Deposit event, not a generic or other-family approval.");
   }
   if (command.authorisation.depositInvoiceAutomaticEventId !== undefined) {

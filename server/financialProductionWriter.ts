@@ -13,6 +13,7 @@ import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchas
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
+import { consumeDepositInvoiceReconciliationPayload, verifyDepositInvoiceReconciliationWriteAccess } from "./financialDepositInvoiceReconciliationDb";
 import { consumeFinalWeightPayload, verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
 import { consumeFinalWeightReconciliationPayload, verifyFinalWeightReconciliationWriteAccess } from "./financialFinalWeightReconciliationDb";
 import type { FinalWeightDirection } from "./financialFinalWeightAdjustmentRules";
@@ -90,6 +91,11 @@ export type FinancialWriteAuthorisation = {
   depositInvoiceAutomaticEventId?: number;
   depositInvoiceReleaseKey?: string;
   depositInvoiceApprovedBy?: number;
+  /** One individually approved historical Deposit recovery; never a webhook/browser or generic Deposit claim. */
+  depositInvoiceReconciliationEventId?: number;
+  depositInvoiceReconciliationToken?: string;
+  depositInvoiceReconciliationReleaseKey?: string;
+  depositInvoiceReconciliationApprovedBy?: number;
   /** Dedicated existing-main-Draft amendment only; never a Main Invoice create release. */
   finalWeightAutomaticEventId?: number;
   finalWeightDirection?: FinalWeightDirection;
@@ -291,6 +297,21 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.workflowType === "deposit_invoice_reconciliation" || context.depositInvoiceReconciliationEventId !== undefined) {
+    if (process.env.FINANCIAL_DEPOSIT_INVOICE_RECONCILIATION_ENABLED !== "true" || context.workflowType !== "deposit_invoice_reconciliation" ||
+      !Number.isInteger(context.depositInvoiceReconciliationEventId) || Number(context.depositInvoiceReconciliationEventId) <= 0 ||
+      !context.depositInvoiceReconciliationToken || !context.depositInvoiceReconciliationReleaseKey ||
+      !Number.isInteger(context.depositInvoiceReconciliationApprovedBy) || Number(context.depositInvoiceReconciliationApprovedBy) <= 0 ||
+      context.approvalReference !== context.depositInvoiceReconciliationReleaseKey || !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
+      [context.depositInvoiceAutomaticEventId, context.depositMainDeductionAutomaticEventId, context.depositDraftCorrectionKind,
+        context.finalWeightAutomaticEventId, context.finalWeightReconciliationEventId, context.mainCustomerInvoiceAutomaticEventId,
+        context.assetPurchaseAutomaticEventId, context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId,
+        context.storageAutomaticEventId, context.storagePilotEventId, context.extraHireAutomaticEventId].some(value => value !== undefined)) {
+      throw new FinancialWriteDisabledError("Deposit Invoice reconciliation requires its separate one-time recovery gate and exact reservation.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) throw new FinancialWriteDisabledError("Deposit Invoice reconciliation execution ledger is required.");
+    return;
+  }
   if (context.workflowType === "final_weight_reconciliation" || context.finalWeightReconciliationEventId !== undefined) {
     if (process.env.FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED !== "true" || context.workflowType !== "final_weight_reconciliation" ||
       !Number.isInteger(context.finalWeightReconciliationEventId) || Number(context.finalWeightReconciliationEventId) <= 0 ||
@@ -510,7 +531,22 @@ export async function executeFinancialDraftWrite(
     await verifyFinalWeightReconciliationWriteAccess(input);
     await consumeFinalWeightReconciliationPayload({ eventId: input.eventId, token: input.token }, context.executionId!);
   }
-  if (/^INV-\d+-D$/i.test(payload.documentNumber) && context.depositInvoiceAutomaticEventId === undefined && context.depositDraftCorrectionKind === undefined) {
+  if (context.depositInvoiceReconciliationEventId !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    const line = row && Array.isArray(row.LineItems) && row.LineItems.length === 1 ? row.LineItems[0] : null;
+    if (payload.method !== "POST" || payload.endpoint !== "/Invoices" || payload.documentFamily !== "customer_invoice" || payload.expectedXeroDocumentId ||
+      !/^INV-\d{1,12}-D$/.test(payload.documentNumber) || Object.keys(payload.body).length !== 1 || !row || row.InvoiceID || row.InvoiceNumber !== payload.documentNumber ||
+      row.Type !== "ACCREC" || row.Status !== "DRAFT" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Inclusive" || !row.Contact?.ContactID ||
+      !line || line.ItemCode !== "Deposit Required" || line.Quantity !== 1 || typeof line.UnitAmount !== "number" || !Number.isFinite(line.UnitAmount) || line.UnitAmount <= 0 ||
+      String(line.AccountCode ?? "") !== "200" || line.TaxType !== "OUTPUT" || !/^Deposit for .+ from INV-\d{1,12}$/.test(String(line.Description ?? ""))) {
+      throw new FinancialWriteDisabledError("Deposit reconciliation permits only one exact current AUD Inclusive Draft ACCREC -D POST; amendments and Deposit-to-main deductions are excluded.");
+    }
+    const input = { eventId: context.depositInvoiceReconciliationEventId, token: context.depositInvoiceReconciliationToken!, releaseKey: context.depositInvoiceReconciliationReleaseKey!, preparedBy: context.depositInvoiceReconciliationApprovedBy!, payload };
+    await verifyDepositInvoiceReconciliationWriteAccess(input);
+    await consumeDepositInvoiceReconciliationPayload({ eventId: input.eventId, token: input.token }, context.executionId!);
+  }
+  if (/^INV-\d+-D$/i.test(payload.documentNumber) && context.depositInvoiceAutomaticEventId === undefined && context.depositInvoiceReconciliationEventId === undefined && context.depositDraftCorrectionKind === undefined) {
     throw new FinancialWriteDisabledError("Exact Deposit -D invoices require their independent Deposit release; another family cannot create or amend them.");
   }
   if (context.depositInvoiceAutomaticEventId !== undefined) {

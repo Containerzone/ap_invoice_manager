@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ verify: vi.fn(), auth: vi.fn() }));
+const m = vi.hoisted(() => ({ verify: vi.fn(), recoveryVerify: vi.fn(), recoveryConsume: vi.fn(), auth: vi.fn() }));
 vi.mock("./financialDepositInvoiceDb", () => ({
   verifyDepositInvoiceAutomaticWriteAccess: m.verify,
+}));
+vi.mock("./financialDepositInvoiceReconciliationDb", () => ({
+  verifyDepositInvoiceReconciliationWriteAccess: m.recoveryVerify,
+  consumeDepositInvoiceReconciliationPayload: m.recoveryConsume,
 }));
 vi.mock("./xeroService", () => ({
   EXPECTED_AP_XERO_TENANT_LABEL: "CONTAINERZONE",
@@ -21,6 +25,7 @@ beforeEach(() => {
   // The production Deposit gate can legitimately be enabled. Each unit test
   // must still establish the intended gate itself rather than inheriting it.
   vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "false");
+  vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_RECONCILIATION_ENABLED", "false");
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -38,6 +43,20 @@ const context = () => ({
   depositInvoiceAutomaticEventId: 61,
   depositInvoiceReleaseKey: "DEPOSIT-test",
   depositInvoiceApprovedBy: 7,
+});
+const reconciliationContext = () => ({
+  workflowType: "deposit_invoice_reconciliation",
+  approvalReference: "DEPOSIT-recovery-test",
+  globalShadowMode: false,
+  familyLiveEnabled: true,
+  releaseManifestApproved: true,
+  cutoverPackApproved: true,
+  currentDocumentPreflightPassed: true,
+  legacyWriterHandoffComplete: true,
+  depositInvoiceReconciliationEventId: 88,
+  depositInvoiceReconciliationToken: "recovery-token",
+  depositInvoiceReconciliationReleaseKey: "DEPOSIT-recovery-test",
+  depositInvoiceReconciliationApprovedBy: 7,
 });
 const payload = (): FinancialDraftPayload => ({
   method: "POST",
@@ -161,6 +180,28 @@ describe("Deposit independent writer gate", () => {
         preparedBy: 7,
       })
     );
+    expect(m.auth).not.toHaveBeenCalled();
+  });
+  it("requires the separate recovery gate and exact independent reservation before any Xero authentication", async () => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    expect(() => assertFinancialDraftWriteAuthorised(reconciliationContext(), { requireExecutionId: false }))
+      .toThrow(/reconciliation requires/);
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_RECONCILIATION_ENABLED", "true");
+    expect(() => assertFinancialDraftWriteAuthorised(reconciliationContext(), { requireExecutionId: false })).not.toThrow();
+    expect(() => assertFinancialDraftWriteAuthorised({
+      ...reconciliationContext(),
+      depositInvoiceAutomaticEventId: 61,
+      depositInvoiceReleaseKey: "DEPOSIT-test",
+      depositInvoiceApprovedBy: 7,
+    }, { requireExecutionId: false })).toThrow(/reconciliation requires/);
+    m.recoveryVerify.mockRejectedValue(new Error("Recovery payload changed"));
+    await expect(executeFinancialDraftWrite(payload(), {
+      ...reconciliationContext(), executionId: 1,
+    })).rejects.toThrow(/Recovery payload changed/);
+    expect(m.recoveryVerify).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 88, token: "recovery-token", releaseKey: "DEPOSIT-recovery-test", preparedBy: 7,
+    }));
+    expect(m.recoveryConsume).not.toHaveBeenCalled();
     expect(m.auth).not.toHaveBeenCalled();
   });
   it("resolves missing policy default-off and requires all explicit new-events-only attestations", () => {

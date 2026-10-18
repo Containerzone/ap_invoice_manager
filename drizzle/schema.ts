@@ -952,6 +952,39 @@ export const financialDepositInvoiceEvents = mysqlTable("financial_deposit_invoi
 }));
 export type FinancialDepositInvoiceEvent = typeof financialDepositInvoiceEvents.$inferSelect;
 
+// An exceptional historical Deposit receipt remains permanently claimed in the
+// original ledger. This separate one-shot recovery receipt has its own token
+// and proof bundle; it never clears, updates or reuses that original claim.
+export const financialDepositInvoiceReconciliationEvents = mysqlTable("financial_deposit_invoice_reconciliation_events", {
+  id: int("id").autoincrement().primaryKey(),
+  originalEventId: int("originalEventId").notNull(),
+  recoveryKey: varchar("recoveryKey", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  invoiceNumber: varchar("invoiceNumber", { length: 128 }).notNull(),
+  originalEventHash: varchar("originalEventHash", { length: 64 }).notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }).notNull(),
+  sourceSnapshot: json("sourceSnapshot").notNull(),
+  proposal: json("proposal").notNull(),
+  xeroPreflight: json("xeroPreflight").notNull(),
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["previewed", "reserved", "submitted", "drafts_created", "reconciliation_required"] as const).default("previewed").notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  submittedAt: timestamp("submittedAt"),
+  readbackEvidence: json("readbackEvidence"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => ({
+  originalEventUnique: uniqueIndex("financial_deposit_invoice_reconcile_original_unique").on(table.originalEventId),
+  recoveryKeyUnique: uniqueIndex("financial_deposit_invoice_reconcile_key_unique").on(table.recoveryKey),
+  invoiceUnique: uniqueIndex("financial_deposit_invoice_reconcile_invoice_unique").on(table.invoiceNumber),
+}));
+export type FinancialDepositInvoiceReconciliationEvent = typeof financialDepositInvoiceReconciliationEvents.$inferSelect;
+
 // ─── Deposit → Main Draft deduction lifecycle ─────────────────────────────
 //
 // This separate receipt owns only the optional, post-creation Draft amendment.
