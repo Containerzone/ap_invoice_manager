@@ -112,3 +112,10 @@ After the owner reported a Xero limit upgrade, a bounded direct Accounting `GET 
 - `INV-702934` is `ACCREC` **AUTHORISED**. Its historical Underweight recovery likewise remains outside the Draft-only automation.
 
 Both legacy 404 recovery claims remain immutable and the separate `FINANCIAL_FINAL_WEIGHT_RECONCILIATION_ENABLED` gate remains **false**. No reconciliation receipt, writer execution, Xero write or VTiger change was created. The current-event Final Weight routes remain live for independently eligible new Draft events only.
+
+
+### 2026-10-18 — Source-bound date terms published
+
+Final Weight is published and policy-bound under rules hash `1e3403e0e0663d520edd920b043cdb9faabb85bccc4af9530cd2ec3e0927d025`, retaining the original 12 October 2026 new-events-only cutover. Both Overweight and Underweight exact-Draft amendments derive `Date` from current VTiger Full Container Pickup DATE and `DueDate` as Sydney calendar +2 days, or +14 days when Deposit Status is `ON ACCOUNT`. The Overweight Customer PO → Container number Reference rule remains independently intact. Public authenticated nonexistent-D-number checks safely held with no Final Weight ledger/Xero writes. A bounded D702937 GET-only preview attempt encountered a VTiger `ECONNRESET` before any source or Xero read; no write occurred.
+
+D702937 Overweight was then re-previewed GET-only after VTiger recovered: exact Deal `5x489259`, current Full Container Pickup DATE `2026-10-18`, Deposit Status `PENDING`, expected Xero Date `2026-10-18`, expected DueDate `2026-10-20` and Customer PO Reference `Q527106-Test`. The result was `previewed` with zero Xero/VTiger writes and is the verified next post-cutover functional-test candidate.

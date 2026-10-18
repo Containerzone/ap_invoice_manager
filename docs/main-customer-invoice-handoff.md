@@ -54,3 +54,8 @@
 - Migration: `0041_curly_molecule_man.sql`.
 - Regression coverage: source/Quote/Service evidence, collision holds, default-off policy, protected disabled receiver and isolated writer authorisation.
 - The release flag is enabled only for Main Customer Invoice automatic Draft creation. Other financial family flags and all invoice approval/send/payment/void/delete operations remain outside this release.
+
+
+### 2026-10-18 — Source-bound date terms published
+
+The Main Invoice date-term rule is published and policy-bound under rules hash `4145ab2acd5d5b9736a9637f6c404be09869fa7f1ec76f6c8a539f1ff3de7a5c`, retaining the existing 13 October 2026 new-events-only cutover. At runtime, the sole exact VTiger **Full Container Pickup DATE** field supplies Xero `Date`; `ON ACCOUNT` Deposit Status yields Sydney calendar +14 days for `DueDate`, otherwise +2 days. Missing or invalid source fields hold before any Xero write. Public authenticated nonexistent-D-number checks returned safe holds with no ledger/Xero writes. A current D702941 GET-only preview held because its source collection date is absent; it did not modify the existing Draft.
