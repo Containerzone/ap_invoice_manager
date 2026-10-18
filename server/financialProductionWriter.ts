@@ -653,7 +653,15 @@ export async function executeFinancialDraftWrite(
   }
   const auth = await getXeroReadAuthWithRefresh();
   const operation = `${payload.method} financial-draft:${payload.documentFamily}:${payload.documentNumber}`;
-  const response = await runXeroRequest<any>(auth, operation, () => {
+  const response = await runXeroRequest<any>(auth, operation, async () => {
+    if (process.env.FINANCIAL_BILLING_PARTY_SYNC_ENABLED === "true" &&
+      payload.documentFamily === "customer_invoice" && payload.expectedXeroDocumentId) {
+      const { getBillingPartySyncPendingInvoiceLock } = await import("./financialBillingPartySyncDb");
+      const pending = await getBillingPartySyncPendingInvoiceLock(payload.expectedXeroDocumentId);
+      if (pending) throw new FinancialWriteDisabledError(
+        "Exact invoice has a pending or uncertain billing-party update; reconcile its read-back before another Draft amendment."
+      );
+    }
     const headers = {
       Authorization: `Bearer ${auth.token}`,
       "Xero-tenant-id": auth.tenantId,

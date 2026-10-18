@@ -6,6 +6,9 @@ import { assertFinalWeightRelease, getFinalWeightReleasePolicy } from "./financi
 import { buildFinalWeightAdjustment, finalWeightSourceHold, prepareFinalWeightPayload, FINAL_WEIGHT_PATHS, FINAL_WEIGHT_RULES_HASH, FINAL_WEIGHT_RULES_VERSION, type FinalWeightDirection, type FinalWeightXeroEvidence } from "./financialFinalWeightAdjustmentRules";
 import { bindFinalWeightPayload, claimFinalWeightEvent, completeFinalWeightEvent, getFinalWeightClaim, holdFinalWeightEvent, recordFinalWeightEvidence } from "./financialFinalWeightAdjustmentDb";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
+import { processAutomaticBillingPartySync } from "./financialBillingPartySyncService";
+import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
+import { previewCustomerContactResolution } from "./financialCustomerContactServiceV2";
 
 /** Administrator preview is entirely non-persistent: no ledger/execution/policy mutation. */
 export async function previewFinalWeightAdjustment(dealId: string, direction: FinalWeightDirection, expectedDealNumber?: string) {
@@ -30,16 +33,40 @@ export function finalWeightClaimHold(claim: { direction: string; status: string 
 /** Dedicated dual-direction receivers only; gate asserts before source or any evidence write. */
 export async function processAutomaticFinalWeightAdjustment(dealId: string, direction: FinalWeightDirection) {
   const policy = await getFinalWeightReleasePolicy(); assertFinalWeightRelease(policy, direction);
-  const result = await previewFinalWeightAdjustment(dealId, direction);
+  let result = await previewFinalWeightAdjustment(dealId, direction);
+  let billingWrites = 0;
   let holdReason = result.holdReason;
   if (!holdReason && (!result.facts.sourceRefreshedAt || Date.parse(result.facts.sourceRefreshedAt) < Date.parse(policy.effectiveFrom!))) holdReason = "Current Deal final-weight source predates approved new-events-only cutover; reconcile historical events separately.";
   if (!holdReason && result.preview.invoiceId && result.preview.invoiceNumber) {
     holdReason = finalWeightClaimHold(await getFinalWeightClaim(dealId, result.preview.invoiceId, result.preview.invoiceNumber), direction);
   }
+  // Billing changes are a separate exact-current Draft-only action. Historical,
+  // non-Draft and already claimed final-weight events cannot use this hook.
+  if (!holdReason && process.env.FINANCIAL_BILLING_PARTY_SYNC_ENABLED === "true") {
+    const billing = await processAutomaticBillingPartySync(dealId, "main_invoice_finalisation");
+    billingWrites = billing.xeroWritesAttempted;
+    if (!["unchanged", "updated"].includes(billing.status)) {
+      holdReason = "warning" in billing && billing.warning ? billing.warning : `Current Deal billing-party sync is ${billing.status}; main finalisation is held.`;
+    } else {
+      result = await previewFinalWeightAdjustment(dealId, direction);
+      holdReason = result.holdReason;
+      if (!holdReason && (!result.facts.sourceRefreshedAt || Date.parse(result.facts.sourceRefreshedAt) < Date.parse(policy.effectiveFrom!))) holdReason = "Current Deal changed outside the final-weight cutover during billing refresh.";
+      if (!holdReason && result.preview.invoiceId && result.preview.invoiceNumber) holdReason = finalWeightClaimHold(await getFinalWeightClaim(dealId, result.preview.invoiceId, result.preview.invoiceNumber), direction);
+      if (!holdReason) {
+        const currentParty = await readCurrentCustomerContactResolution(dealId);
+        const currentPlan = await previewCustomerContactResolution(currentParty);
+        if (!billing.contactId || !billing.sourceSnapshotHash || currentParty.sourceSnapshotHash !== billing.sourceSnapshotHash ||
+          currentPlan.status !== "matched" || currentPlan.contactId !== billing.contactId ||
+          result.xero?.invoice?.Contact?.ContactID !== billing.contactId) {
+          holdReason = "Current Deal billing party changed again during main finalisation; no stale-party amendment will be sent.";
+        }
+      }
+    }
+  }
   const event = await recordFinalWeightEvidence({ ...result, holdReason });
-  if (holdReason || !result.preview.eligible || !result.xeroPreflightHash) return { ok: false, status: "held" as const, eventId: event.id, recordId: dealId, direction, warning: holdReason ?? "Current final-weight evidence held.", xeroWritesAttempted: 0 };
+  if (holdReason || !result.preview.eligible || !result.xeroPreflightHash) return { ok: false, status: "held" as const, eventId: event.id, recordId: dealId, direction, warning: holdReason ?? "Current final-weight evidence held.", xeroWritesAttempted: billingWrites };
   const token = randomUUID();
-  if (!await claimFinalWeightEvent(event.id, token, result.sourceSnapshotHash, result.xeroPreflightHash)) return { ok: false, status: "held" as const, eventId: event.id, recordId: dealId, direction, warning: "Per-document final-weight reservation collision or stale immutable evidence; no write.", xeroWritesAttempted: 0 };
+  if (!await claimFinalWeightEvent(event.id, token, result.sourceSnapshotHash, result.xeroPreflightHash)) return { ok: false, status: "held" as const, eventId: event.id, recordId: dealId, direction, warning: "Per-document final-weight reservation collision or stale immutable evidence; no further write.", xeroWritesAttempted: billingWrites };
   try {
     const payload = prepareFinalWeightPayload(result.preview, result.sourceSnapshotHash);
     await bindFinalWeightPayload(event.id, token, policy.releaseKey, payload);
@@ -53,7 +80,7 @@ export async function processAutomaticFinalWeightAdjustment(dealId: string, dire
       return { ok: false, status: "reconciliation_required" as const, recordId: dealId, eventId: event.id, direction, warning: "Inspect immutable execution evidence before reconciliation; no automatic retry." };
     }
     await completeFinalWeightEvent(event.id, token, outcome.executionId, { ...outcome.result, expectedDraftHash: financialSha256(result.preview.expectedDraft), exactReadbackVerified: true });
-    return { ok: true, status: "draft_updated" as const, recordId: dealId, eventId: event.id, direction, invoiceNumber: outcome.result.documentNumber, invoiceId: outcome.result.xeroDocumentId, xeroWritesAttempted: 1 };
+    return { ok: true, status: "draft_updated" as const, recordId: dealId, eventId: event.id, direction, invoiceNumber: outcome.result.documentNumber, invoiceId: outcome.result.xeroDocumentId, xeroWritesAttempted: billingWrites + 1 };
   } catch (error) {
     await holdFinalWeightEvent(event.id, token, error instanceof Error ? error.message : "Final-weight amendment held for reconciliation.");
     throw error;

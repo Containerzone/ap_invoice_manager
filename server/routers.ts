@@ -90,6 +90,7 @@ import { getMainCustomerInvoiceReadiness, previewMainCustomerInvoice } from "./f
 import { getFinancialCustomerContactEvents } from "./financialCustomerContactDb";
 import { getDepositInvoiceEvents } from "./financialDepositInvoiceDb";
 import { getDepositInvoiceReadiness, previewDepositInvoice } from "./financialDepositInvoiceService";
+import { getBillingPartySyncReadiness, getBillingPartySyncEvents, previewBillingPartySync } from "./financialBillingPartySyncService";
 import { getFinalWeightEvents } from "./financialFinalWeightAdjustmentDb";
 import { getFinalWeightReadiness, previewFinalWeightAdjustment } from "./financialFinalWeightAdjustmentService";
 import { getExtraHireEvents } from "./financialExtraHireInvoiceDb";
@@ -640,6 +641,20 @@ export const appRouter = router({
       .query(({ input }) => previewWarrantyAviso(input.exactDealId)),
     depositInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getDepositInvoiceEvents(input?.limit ?? 100)),
+    billingPartySyncReadiness: adminProcedure.query(() => getBillingPartySyncReadiness()),
+    billingPartySyncEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+      .query(({ input }) => getBillingPartySyncEvents(input?.limit ?? 100)),
+    previewBillingPartySync: adminProcedure.input(z.object({ exactDeal: z.string().trim().regex(/^(?:D\d{1,12}|\d+x\d{1,12})$/i) }))
+      .query(async ({ input }) => {
+        let recordId = input.exactDeal;
+        const expected = /^D\d+$/i.test(recordId) ? recordId.toUpperCase() : undefined;
+        if (expected) {
+          const lookup = await findExactFinancialCandidate({ sourceCategory: "deal", businessNumber: expected });
+          if (lookup.outcome !== "found" || lookup.candidates.length !== 1) throw new TRPCError({ code: "PRECONDITION_FAILED", message: lookup.message });
+          recordId = lookup.candidates[0]!.recordId;
+        }
+        return previewBillingPartySync(recordId, expected);
+      }),
     extraHireInvoiceEvents: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
       .query(({ input }) => getExtraHireEvents(input?.limit ?? 100)),
     extraHireInvoiceReadiness: adminProcedure.query(() => getExtraHireReadiness()),

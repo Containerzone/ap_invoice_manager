@@ -40,6 +40,7 @@ import { resolveOrCreateAutomaticCustomerContact } from "./financialCustomerCont
 import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
 import { executeCustomerContactCreationV2, previewCustomerContactResolution, type CustomerContactPlan } from "./financialCustomerContactServiceV2";
 import { processAutomaticDepositMainDeduction } from "./financialDepositMainDeductionService";
+import { processAutomaticBillingPartySync } from "./financialBillingPartySyncService";
 
 export const DEPOSIT_INVOICE_WEBHOOK_PATH =
   "/api/webhooks/vtiger/deposit-invoice" as const;
@@ -111,7 +112,10 @@ export async function previewDepositInvoice(
       facts.customerName,
       preflight
     );
-    const reason = customerContactPlan?.status === "held"
+    const documentCollision = preflight && (preflight.error ||
+      preflight.duplicateState !== "not_found" || preflight.xeroDocumentId || preflight.status);
+    const reason = documentCollision ? baseReason
+      : customerContactPlan?.status === "held"
       ? customerContactPlan.holdReason ?? "Xero customer-contact resolution is held."
       : customerContactPlan?.status === "would_create"
         ? "Xero customer contact is absent; preview proposes one guarded contact creation and no Draft write."
@@ -143,7 +147,6 @@ export async function processAutomaticDepositInvoice(dealId: string) {
   let evidence = await previewDepositInvoice(dealId);
   let reason = evidence.holdReason;
   if (
-    !reason &&
     (!evidence.facts.sourceRefreshedAt ||
       Date.parse(evidence.facts.sourceRefreshedAt) <
         Date.parse(policy.effectiveFrom!))
@@ -172,7 +175,8 @@ export async function processAutomaticDepositInvoice(dealId: string) {
     };
   }
   const contactOnlyHold = reason === "Exact current Deal Xero customer is missing or ambiguous."
-    || evidence.customerContactPlan?.status === "would_create";
+    || (reason === "Xero customer contact is absent; preview proposes one guarded contact creation and no Draft write."
+      && evidence.customerContactPlan?.status === "would_create");
   if (reason && !contactOnlyHold) {
     const event = await recordDepositInvoicePreview({
       facts: evidence.facts, sourceHash: evidence.sourceSnapshotHash, proposal: evidence.preview.document,
@@ -231,6 +235,32 @@ export async function processAutomaticDepositInvoice(dealId: string) {
   customerContactWrites = contact.contactWritesAttempted;
   }
   if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true") reason = evidence.holdReason;
+  if (!reason && (!evidence.facts.sourceRefreshedAt ||
+    Date.parse(evidence.facts.sourceRefreshedAt) < Date.parse(policy.effectiveFrom!))) {
+    reason = "Current Deposit source changed outside the approved cutover after contact resolution; no historical Draft will be created.";
+  }
+  let billingSync: Awaited<ReturnType<typeof processAutomaticBillingPartySync>> | null = null;
+  let billingWrites = 0;
+  if (!reason && process.env.FINANCIAL_BILLING_PARTY_SYNC_ENABLED === "true") {
+    // Refresh and resolve any changed billing party BEFORE claiming a Deposit
+    // number. Never clear/replay an existing reservation or uncertain transport.
+    billingSync = await processAutomaticBillingPartySync(dealId, "deposit_invoice");
+    billingWrites = billingSync.xeroWritesAttempted;
+    if (!["unchanged", "updated", "not_found"].includes(billingSync.status)) {
+      reason = "warning" in billingSync && billingSync.warning ? billingSync.warning : `Current Deal billing-party sync is ${billingSync.status}; Deposit is held.`;
+    } else {
+      evidence = await previewDepositInvoice(dealId);
+      reason = evidence.holdReason;
+      if (!reason && (!evidence.facts.sourceRefreshedAt || Date.parse(evidence.facts.sourceRefreshedAt) < Date.parse(policy.effectiveFrom!))) reason = "Current Deposit source changed outside the approved cutover during billing refresh.";
+      // The latest Deposit customer must be the exact party independently bound
+      // by the sync. A further mid-event identity change safely stops here.
+      if (!reason && (!billingSync.contactId || !billingSync.sourceSnapshotHash ||
+        evidence.preflight?.contactCheck.contactId !== billingSync.contactId ||
+        evidence.customerContactPlan?.source.sourceSnapshotHash !== billingSync.sourceSnapshotHash)) {
+        reason = "Current Deal billing party changed again during Deposit preparation; no stale-customer Draft will be sent.";
+      }
+    }
+  }
   const event = await recordDepositInvoicePreview({
     facts: evidence.facts,
     sourceHash: evidence.sourceSnapshotHash,
@@ -247,7 +277,8 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       recordId: dealId,
       eventId: event.id,
       warning: reason ?? "Deposit evidence is held.",
-      xeroWritesAttempted: customerContactWrites,
+      xeroWritesAttempted: customerContactWrites + billingWrites,
+      billingSync,
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
   const token = randomUUID();
@@ -266,7 +297,8 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       eventId: event.id,
         warning:
           "Deposit exact evidence or number is already claimed; no duplicate creation.",
-        xeroWritesAttempted: customerContactWrites,
+        xeroWritesAttempted: customerContactWrites + billingWrites,
+      billingSync,
       postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
     };
   try {
@@ -317,7 +349,8 @@ export async function processAutomaticDepositInvoice(dealId: string) {
         warning:
           "Reconcile the exact Deposit invoice before any further action.",
         xeroWritesAttempted:
-          customerContactWrites + (outcome.outcome === "reconciliation_required" ? 1 : 0),
+          customerContactWrites + billingWrites + (outcome.outcome === "reconciliation_required" ? 1 : 0),
+        billingSync,
         postconditionHold: DEPOSIT_MAIN_DEDUCTION_HOLD,
       };
     }
@@ -335,7 +368,8 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       eventId: event.id,
       invoiceNumber: outcome.result.documentNumber,
       xeroInvoiceId: outcome.result.xeroDocumentId,
-      xeroWritesAttempted: customerContactWrites + 1 + deduction.xeroWritesAttempted,
+      xeroWritesAttempted: customerContactWrites + billingWrites + 1 + deduction.xeroWritesAttempted,
+      billingSync,
       mainDeduction: deduction,
       postconditionHold: deduction.status === "deducted" ? null : DEPOSIT_MAIN_DEDUCTION_HOLD,
     };

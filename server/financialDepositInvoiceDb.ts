@@ -19,7 +19,10 @@ import {
   buildDepositInvoice,
   type DepositInvoiceFacts,
 } from "./financialDepositInvoiceDrafts";
-import { readDepositInvoiceFacts } from "./financialDepositInvoiceSource";
+import {
+  DEPOSIT_V2_CUSTOMER_SNAPSHOT_MAPPING_KEY,
+  readDepositInvoiceFacts,
+} from "./financialDepositInvoiceSource";
 import {
   preflightFinancialXeroIntents,
   readDepositInvoiceXeroItemConfiguration,
@@ -29,6 +32,8 @@ import {
   prepareFinancialDraftPayload,
   type FinancialDraftPayload,
 } from "./financialProductionWriter";
+import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
+import { previewCustomerContactResolution } from "./financialCustomerContactServiceV2";
 
 export const depositInvoicePayloadHash = (payload: FinancialDraftPayload) =>
   financialSha256(payload);
@@ -241,6 +246,28 @@ export function depositPreflightHold(
   return null;
 }
 
+function storedDepositContactId(event: FinancialDepositInvoiceEvent): string | null {
+  const proposal = event.proposal as { partySourceId?: unknown } | null;
+  const id = typeof proposal?.partySourceId === "string"
+    ? proposal.partySourceId.trim()
+    : "";
+  return id || null;
+}
+
+function sameDepositV2Source(input: {
+  facts: DepositInvoiceFacts;
+  source: Awaited<ReturnType<typeof readCurrentCustomerContactResolution>>;
+}): boolean {
+  const { facts, source } = input;
+  return source.dealId === facts.dealId &&
+    source.customerVtigerId === facts.customerVtigerId &&
+    source.name === facts.customerName &&
+    (source.billingKind === "organisation" ? "organisation" : "contact") === facts.customerKind &&
+    source.resolvedAt === facts.customerRefreshedAt &&
+    facts.mappingEvidence[DEPOSIT_V2_CUSTOMER_SNAPSHOT_MAPPING_KEY] ===
+      source.sourceSnapshotHash;
+}
+
 /** Independently revalidates the exact current Deal, Xero collision/contact/item/account and immutable payload before transport. */
 export async function verifyDepositInvoiceAutomaticWriteAccess(input: {
   eventId: number;
@@ -309,6 +336,34 @@ export async function verifyDepositInvoiceAutomaticWriteAccess(input: {
   const preview = buildDepositInvoice(facts, new Date(stored?.issueDate));
   if (!preview.eligible || !preview.document)
     throw new Error(preview.holdReason ?? "Current Deposit source is held.");
+  const storedContactId = storedDepositContactId(event);
+  if (!storedContactId)
+    throw new Error(
+      "Deposit reservation is missing its exact bound Xero ContactID."
+    );
+  // Verify uses the same current v2 Deal -> Xero name/email plan used by the
+  // automatic path, but deliberately never reaches its creation executor.
+  // The resulting ContactID must be the one already bound to the reservation;
+  // an email match may legitimately retain a Xero Name different from VTiger.
+  if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true") {
+    const currentSource = await readCurrentCustomerContactResolution(event.dealId);
+    if (!sameDepositV2Source({ facts, source: currentSource }))
+      throw new Error(
+        "Current Deposit billing identity metadata changed after reservation."
+      );
+    const currentPlan = await previewCustomerContactResolution(currentSource);
+    if (
+      currentPlan.status !== "matched" ||
+      !currentPlan.contactId ||
+      currentPlan.contactId !== storedContactId
+    )
+      throw new Error(
+        "Current Deposit v2 customer match no longer resolves to the reserved exact Xero ContactID."
+      );
+  }
+  // Assign before GET-only preflight. This forces /Contacts/{ContactID}
+  // evidence instead of falling back to an unsafe name-only contact search.
+  preview.document.partySourceId = storedContactId;
   const [preflight] = await preflightFinancialXeroIntents([preview.document]);
   const reason = depositPreflightHold(
     event.proposedInvoiceNumber,
@@ -322,7 +377,10 @@ export async function verifyDepositInvoiceAutomaticWriteAccess(input: {
       "Deposit Xero evidence changed since reservation; separate reconciliation is required."
     );
   const item = await readDepositInvoiceXeroItemConfiguration();
-  preview.document.partySourceId = preflight.contactCheck.contactId;
+  if (preflight.contactCheck.contactId !== storedContactId)
+    throw new Error(
+      "Current Deposit Xero ContactID differs from the reserved exact customer."
+    );
   preview.document.accountCode = item.accountCode;
   preview.document.lineItems[0]!.accountCode = item.accountCode;
   if (financialSha256(preview.document) !== financialSha256(event.proposal))

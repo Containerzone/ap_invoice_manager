@@ -13,10 +13,14 @@ const m = vi.hoisted(() => ({
   preflight: vi.fn(),
   item: vi.fn(),
   policy: vi.fn(),
+  v2Source: vi.fn(),
+  v2Plan: vi.fn(),
 }));
 vi.mock("./db", () => ({ getDb: m.db }));
 vi.mock("./financialDepositInvoiceSource", () => ({
   readDepositInvoiceFacts: m.current,
+  DEPOSIT_V2_CUSTOMER_SNAPSHOT_MAPPING_KEY:
+    "customerIdentityV2SourceSnapshotHash",
 }));
 vi.mock("./financialReadOnlyXeroService", () => ({
   preflightFinancialXeroIntents: m.preflight,
@@ -25,6 +29,12 @@ vi.mock("./financialReadOnlyXeroService", () => ({
 vi.mock("./financialDepositInvoiceRelease", async original => ({
   ...(await original<any>()),
   getDepositInvoiceReleasePolicy: m.policy,
+}));
+vi.mock("./financialCustomerContactSourceV2", () => ({
+  readCurrentCustomerContactResolution: m.v2Source,
+}));
+vi.mock("./financialCustomerContactServiceV2", () => ({
+  previewCustomerContactResolution: m.v2Plan,
 }));
 vi.mock("./financialProductionWriter", () => ({
   prepareFinancialDraftPayload: vi.fn(document => ({
@@ -150,6 +160,54 @@ function readyEvent() {
     },
   };
 }
+function v2ReadyEvent(contactId = "customer") {
+  const source = {
+    ...facts(),
+    customerRefreshedAt: "2026-10-11T01:00:00.000Z",
+    mappingEvidence: {
+      customerIdentityV2SourceSnapshotHash: "v".repeat(64),
+    },
+  };
+  const event = readyEvent();
+  const sourceHash = sourceSnapshotHash({
+    ...source,
+    rulesVersion: DEPOSIT_INVOICE_RULES_VERSION,
+  });
+  const proposal = buildDepositInvoice(
+    source,
+    new Date("2026-10-11T00:00:00Z")
+  ).document!;
+  proposal.partySourceId = contactId;
+  proposal.accountCode = "200";
+  proposal.lineItems[0]!.accountCode = "200";
+  const payload = prepareFinancialDraftPayload(
+    proposal,
+    `${source.dealId}:deposit_invoice:${sourceHash}`
+  );
+  (payload.body.Invoices as any[])[0].CurrencyCode = "AUD";
+  const currentPreflight = {
+    ...preflight(),
+    contactCheck: {
+      found: true,
+      count: 1,
+      contactId,
+      partyName: source.customerName,
+    },
+  };
+  return {
+    ...event,
+    sourceSnapshot: source,
+    sourceSnapshotHash: sourceHash,
+    proposal: JSON.parse(JSON.stringify(proposal)),
+    xeroPreflight: currentPreflight,
+    xeroPreflightHash: financialSha256(currentPreflight),
+    authorisedPayload: {
+      number: payload.documentNumber,
+      hash: depositInvoicePayloadHash(payload),
+      payload,
+    },
+  };
+}
 beforeEach(() => {
   vi.clearAllMocks();
   m.selectRows = [];
@@ -189,7 +247,27 @@ beforeEach(() => {
     isolatedDraftOnlyApproved: true,
     migrationScope: "new_events_only",
   });
+  m.v2Source.mockResolvedValue({
+    dealId: "5x77",
+    billingKind: "organisation",
+    customerVtigerId: "4x2",
+    organisationName: "Customer Pty Ltd",
+    contactName: "Customer Person",
+    name: "Customer Pty Ltd",
+    email: "customer@example.test",
+    linkedAccountId: "4x2",
+    linkedContactId: "4x3",
+    sourceFieldsUsed: ["Deal.organizationname"],
+    resolvedAt: "2026-10-11T01:00:00.000Z",
+    sourceSnapshotHash: "v".repeat(64),
+  });
+  m.v2Plan.mockResolvedValue({
+    status: "matched",
+    contactId: "customer",
+    contactName: "Customer Pty Ltd",
+  });
   vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+  vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "false");
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("Deposit immutable event/payload ledger", () => {
@@ -276,6 +354,90 @@ describe("Deposit immutable event/payload ledger", () => {
     expect(m.preflight).toHaveBeenCalledTimes(1);
     expect(m.item).toHaveBeenCalledTimes(1);
     expect(m.update).not.toHaveBeenCalled();
+  });
+  it("uses the reserved v2 email-match ContactID before preflight even when Xero has a different display name", async () => {
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const event = v2ReadyEvent("email-target");
+    m.selectRows.push([event]);
+    m.current.mockResolvedValue(event.sourceSnapshot);
+    m.v2Plan.mockResolvedValue({
+      status: "matched",
+      contactId: "email-target",
+      contactName: "Legacy Xero Trading Name",
+      outcome: "email_match_name_not_exact",
+    });
+    m.preflight.mockImplementation(async ([document]) => {
+      expect(document.partySourceId).toBe("email-target");
+      return [event.xeroPreflight];
+    });
+
+    await verifyDepositInvoiceAutomaticWriteAccess({
+      eventId: 61,
+      releaseKey: "DEPOSIT-test",
+      preparedBy: 7,
+      payload: event.authorisedPayload.payload,
+    });
+
+    expect(m.v2Source).toHaveBeenCalledWith("5x77");
+    expect(m.v2Plan).toHaveBeenCalledTimes(1);
+    expect(m.preflight).toHaveBeenCalledTimes(1);
+  });
+  it("holds a changed v2 target ID or source before preflight and current invoice/item changes before transport", async () => {
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const changedTarget = v2ReadyEvent();
+    m.selectRows.push([changedTarget]);
+    m.current.mockResolvedValue(changedTarget.sourceSnapshot);
+    m.v2Plan.mockResolvedValueOnce({ status: "matched", contactId: "other-target" });
+    await expect(verifyDepositInvoiceAutomaticWriteAccess({
+      eventId: 61, releaseKey: "DEPOSIT-test", preparedBy: 7,
+      payload: changedTarget.authorisedPayload.payload,
+    })).rejects.toThrow(/reserved exact Xero ContactID/);
+    expect(m.preflight).not.toHaveBeenCalled();
+
+    const changedSource = v2ReadyEvent();
+    m.selectRows.push([changedSource]);
+    m.current.mockResolvedValue(changedSource.sourceSnapshot);
+    m.v2Source.mockResolvedValueOnce({
+      ...(await m.v2Source()),
+      name: "Changed Customer Pty Ltd",
+    });
+    await expect(verifyDepositInvoiceAutomaticWriteAccess({
+      eventId: 61, releaseKey: "DEPOSIT-test", preparedBy: 7,
+      payload: changedSource.authorisedPayload.payload,
+    })).rejects.toThrow(/billing identity metadata changed/);
+    expect(m.preflight).not.toHaveBeenCalled();
+
+    const changedInvoice = v2ReadyEvent();
+    m.selectRows.push([changedInvoice]);
+    m.current.mockResolvedValue(changedInvoice.sourceSnapshot);
+    m.v2Plan.mockResolvedValueOnce({ status: "matched", contactId: "customer" });
+    m.preflight.mockResolvedValueOnce([{
+      ...changedInvoice.xeroPreflight,
+      duplicateState: "found",
+      xeroDocumentId: "existing",
+      status: "DRAFT",
+    }]);
+    await expect(verifyDepositInvoiceAutomaticWriteAccess({
+      eventId: 61, releaseKey: "DEPOSIT-test", preparedBy: 7,
+      payload: changedInvoice.authorisedPayload.payload,
+    })).rejects.toThrow(/Exact Xero invoice/);
+
+    const changedItem = v2ReadyEvent();
+    m.selectRows.push([changedItem]);
+    m.current.mockResolvedValue(changedItem.sourceSnapshot);
+    m.v2Plan.mockResolvedValueOnce({ status: "matched", contactId: "customer" });
+    m.preflight.mockResolvedValueOnce([changedItem.xeroPreflight]);
+    m.item.mockResolvedValueOnce({
+      itemCode: "Deposit Required", accountCode: "201", taxType: "OUTPUT",
+    });
+    await expect(verifyDepositInvoiceAutomaticWriteAccess({
+      eventId: 61, releaseKey: "DEPOSIT-test", preparedBy: 7,
+      payload: changedItem.authorisedPayload.payload,
+    })).rejects.toThrow(/proposal no longer matches/);
+  });
+  it("does not attribute matching preflight hashes to JSON key order", () => {
+    expect(financialSha256({ b: { z: 1, a: 2 }, a: [3, { y: 4, x: 5 }] }))
+      .toBe(financialSha256({ a: [3, { x: 5, y: 4 }], b: { a: 2, z: 1 } }));
   });
   it("holds tampered payload before upstream reads, and changed source or deleted collision before transport", async () => {
     const event = readyEvent();

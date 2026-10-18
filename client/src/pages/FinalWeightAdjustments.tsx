@@ -1,4 +1,5 @@
 import { BusinessText } from "@/components/BusinessReferenceDisplay";
+import { BillingPartySyncPanel } from "@/components/BillingPartySyncPanel";
 import { useState } from "react";
 import { FileSearch, FileText, LockKeyhole } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +30,7 @@ export default function FinalWeightAdjustments() {
           return <Card key={branch}><CardHeader><CardTitle className="text-base"><BusinessText value={branch === "overweight" ? "Overweight — SER70 update" : "Underweight — due-date update"} /></CardTitle></CardHeader><CardContent className="space-y-2 text-sm"><Badge variant="outline"><BusinessText value={status?.writerEnabled ? "Approved dedicated gate" : "Disabled / unverified"} /></Badge><p className="break-all font-mono text-xs"><BusinessText value={status?.webhookPath ?? `/api/webhooks/vtiger/final-weight-${branch}`} /></p><p><BusinessText value={branch === "overweight" ? "Actual > Estimated · positive Per Extra Tonne · exactly one SER70." : "Actual < Estimated · exact mapped pickup date · unchanged line items."} /></p><p className="text-xs text-amber-900"><BusinessText value={status?.releaseHoldReason ?? (readiness.error ? "Readiness unavailable; treat as unreleased." : "Loading release evidence…")} /></p></CardContent></Card>;
         })}
       </div>
+      <BillingPartySyncPanel />
       <Card><CardHeader><CardTitle className="flex items-center gap-2 text-base"><FileSearch className="h-4 w-4" />Read-only exact named Deal preview</CardTitle></CardHeader><CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">One exact D-number or webservice ID only. Current metadata, Deal, linked customer and exact Xero full invoice lines are re-read. No preview evidence is saved; no Xero/VTiger record is written.</p>
         <div className="flex flex-col gap-2 sm:flex-row"><Input aria-label="Exact final-weight Deal" placeholder="D702877" value={deal} onChange={event => { setDeal(event.target.value); setSelected(""); }} className="font-mono" /><select aria-label="Final weight direction" className="rounded-md border bg-background p-2 text-sm" value={direction} onChange={event => { setDirection(event.target.value as Direction); setSelected(""); }}><option value="overweight">Overweight</option><option value="underweight">Underweight</option></select><Button disabled={!/^(D\d{1,12}|\d+x\d{1,12})$/i.test(deal.trim()) || preview.isFetching} onClick={() => { const value = deal.trim().replace(/^d/i, "D"); if (value === selected) void preview.refetch(); else setSelected(value); }}><BusinessText value={preview.isFetching ? "Reading…" : "Preview evidence"} /></Button></div>

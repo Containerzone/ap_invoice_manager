@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
   contactV2Source: vi.fn(),
   contactV2Preview: vi.fn(),
   contactV2Execute: vi.fn(),
+  billingSync: vi.fn(),
 }));
 vi.mock("./vtigerFinancialReadService", () => ({
   retrieveCurrentVtigerFinancialRecord: m.retrieve,
@@ -51,6 +52,7 @@ vi.mock("./financialCustomerContactService", () => ({
 }));
 vi.mock("./financialCustomerContactSourceV2", () => ({ readCurrentCustomerContactResolution: m.contactV2Source }));
 vi.mock("./financialCustomerContactServiceV2", () => ({ previewCustomerContactResolution: m.contactV2Preview, executeCustomerContactCreationV2: m.contactV2Execute }));
+vi.mock("./financialBillingPartySyncService", () => ({ processAutomaticBillingPartySync: m.billingSync }));
 import { readDepositInvoiceFacts } from "./financialDepositInvoiceSource";
 import {
   previewDepositInvoice,
@@ -100,6 +102,8 @@ const ready = () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "false");
+  vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "false");
+  m.billingSync.mockResolvedValue({ status: "unchanged", contactId: "xero-customer", xeroWritesAttempted: 0 });
   m.retrieve.mockImplementation(async (id: string) =>
     id === "5x77"
       ? deal()
@@ -148,6 +152,7 @@ beforeEach(() => {
   m.contactResolution.mockResolvedValue({ status: "matched", contactId: "xero-customer", contactEventId: null, reason: null, contactWritesAttempted: 0 });
   m.contactV2Source.mockResolvedValue({ dealId: "5x77", billingKind: "organisation", customerVtigerId: "4x2", organisationName: "Customer Pty Ltd", contactName: "Jane Customer", name: "Customer Pty Ltd", email: "customer@example.test", linkedAccountId: "4x2", linkedContactId: "12x3", sourceFieldsUsed: ["Accounts.accountname"], resolvedAt: "2026-10-11T01:00:00.000Z", sourceSnapshotHash: "v".repeat(64) });
   m.contactV2Preview.mockReset();
+  m.contactV2Preview.mockResolvedValue({ source: { sourceSnapshotHash: "v".repeat(64) }, status: "matched", contactId: "xero-customer", holdReason: null });
   m.contactV2Execute.mockReset();
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -365,6 +370,18 @@ describe("Deposit isolated automatic path", () => {
     );
     expect(m.writer).not.toHaveBeenCalled();
   });
+  it("a contact-only hold never bypasses the Deposit source cutover", async () => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    m.retrieve.mockImplementation(async id => id === "5x77"
+      ? deal({ modifiedtime: "2026-09-01T00:00:00Z" })
+      : { id, quote_no: "Q-702877" });
+    m.contactV2Preview.mockResolvedValue({ source: await m.contactV2Source(), status: "would_create", contactId: null, holdReason: null });
+    m.preflight.mockResolvedValue([{ ...ready(), contactCheck: { found: false, count: 0, contactId: null, partyName: "Customer Pty Ltd" } }]);
+    expect(await processAutomaticDepositInvoice("5x77")).toMatchObject({ status: "held", warning: expect.stringContaining("predates"), xeroWritesAttempted: 0 });
+    expect(m.contactV2Execute).not.toHaveBeenCalled(); expect(m.contactResolution).not.toHaveBeenCalled();
+    expect(m.billingSync).not.toHaveBeenCalled(); expect(m.claim).not.toHaveBeenCalled(); expect(m.writer).not.toHaveBeenCalled();
+  });
   it("holds an existing AP reservation and uncertain results instead of retrying", async () => {
     vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
     m.previous.mockResolvedValue({ id: 1, status: "reconciliation_required" });
@@ -377,5 +394,40 @@ describe("Deposit isolated automatic path", () => {
     );
     expect(m.hold).toHaveBeenCalled();
     expect(m.complete).not.toHaveBeenCalled();
+  });
+  it("syncs current main billing before a Deposit claim and then rereads the complete Deposit preflight", async () => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    m.billingSync.mockResolvedValue({ status: "updated", contactId: "xero-customer", sourceSnapshotHash: "v".repeat(64), xeroWritesAttempted: 1 });
+    const result = await processAutomaticDepositInvoice("5x77");
+    expect(result).toMatchObject({ status: "drafts_created", xeroWritesAttempted: 2, billingSync: { status: "updated" } });
+    expect(m.billingSync).toHaveBeenCalledWith("5x77", "deposit_invoice");
+    expect(m.preflight).toHaveBeenCalledTimes(2);
+    expect(m.claim.mock.invocationCallOrder[0]).toBeGreaterThan(m.billingSync.mock.invocationCallOrder[0]!);
+    expect(m.writer.mock.invocationCallOrder[0]).toBeGreaterThan(m.preflight.mock.invocationCallOrder[1]!);
+  });
+  it("holds a billing sync failure without reserving or sending the Deposit", async () => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "true");
+    m.billingSync.mockResolvedValue({ status: "held", warning: "Main is AUTHORISED with another billing party", xeroWritesAttempted: 0 });
+    expect(await processAutomaticDepositInvoice("5x77")).toMatchObject({ status: "held", warning: expect.stringMatching(/AUTHORISED/), xeroWritesAttempted: 0 });
+    expect(m.claim).not.toHaveBeenCalled();
+    expect(m.writer).not.toHaveBeenCalled();
+  });
+  it("refuses a further billing-party change between sync and Deposit preparation", async () => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "true");
+    m.billingSync.mockResolvedValue({ status: "updated", contactId: "other-contact", xeroWritesAttempted: 1 });
+    expect(await processAutomaticDepositInvoice("5x77")).toMatchObject({ status: "held", warning: expect.stringMatching(/changed again/), xeroWritesAttempted: 1 });
+    expect(m.claim).not.toHaveBeenCalled();
+    expect(m.writer).not.toHaveBeenCalled();
+  });
+  it("never syncs an existing consumed Deposit claim or a pre-cutover source", async () => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "true");
+    m.previous.mockResolvedValue({ id: 1, status: "reconciliation_required" });
+    expect((await processAutomaticDepositInvoice("5x77")).status).toBe("held");
+    expect(m.billingSync).not.toHaveBeenCalled();
   });
 });

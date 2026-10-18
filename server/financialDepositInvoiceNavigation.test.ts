@@ -16,6 +16,11 @@ describe("Deposit administrator workspace", () => {
     expect(page).not.toContain("useMutation");
     expect(page).toContain("strictly read-only");
     expect(page).toContain("never marks Deposit Status paid");
-    expect(page).toContain("Main-invoice negative deposit deductions remain a separate held");
+    expect(page).toContain("Deposit-to-main deductions and billing-party synchronization are");
+    expect(page).toContain("separate Draft-only policies");
+    const billing = source("client/src/components/BillingPartySyncPanel.tsx");
+    expect(billing).toContain("previewBillingPartySync.useQuery");
+    expect(billing).toContain("billingPartySyncEvents.useQuery");
+    expect(billing).not.toContain("useMutation");
   });
 });

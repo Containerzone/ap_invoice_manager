@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ verify: vi.fn(), consume: vi.fn(), auth: vi.fn(), put: vi.fn(), post: vi.fn(), request: vi.fn() }));
+const m = vi.hoisted(() => ({ verify: vi.fn(), consume: vi.fn(), auth: vi.fn(), put: vi.fn(), post: vi.fn(), request: vi.fn(), billingLock: vi.fn() }));
 vi.mock("./financialFinalWeightAdjustmentDb", () => ({ verifyFinalWeightAutomaticWriteAccess: m.verify, consumeFinalWeightPayload: m.consume }));
+vi.mock("./financialBillingPartySyncDb", () => ({ getBillingPartySyncPendingInvoiceLock: m.billingLock }));
 vi.mock("axios", () => ({ default: { put: m.put, post: m.post } }));
 vi.mock("./xeroService", () => ({ EXPECTED_AP_XERO_TENANT_LABEL: "CONTAINERZONE", getXeroReadAuthWithRefresh: m.auth }));
 vi.mock("./xeroRequestManager", () => ({ runXeroRequest: m.request }));
@@ -9,7 +10,7 @@ import { buildFinalWeightAdjustment, prepareFinalWeightPayload } from "./financi
 import { facts, policy, xero } from "./_test/finalWeightFixtures";
 const context = (patch: Partial<FinancialWriteAuthorisation> = {}): FinancialWriteAuthorisation => ({ executionId: 9, workflowType: "final_weight_adjustment", approvalReference: policy().releaseKey, globalShadowMode: false, familyLiveEnabled: true, releaseManifestApproved: true, cutoverPackApproved: true, currentDocumentPreflightPassed: true, legacyWriterHandoffComplete: true, finalWeightAutomaticEventId: 1, finalWeightDirection: "overweight", finalWeightReleaseKey: policy().releaseKey, finalWeightApprovedBy: 7, ...patch });
 const payload = () => prepareFinalWeightPayload(buildFinalWeightAdjustment(facts(), "overweight", xero()), "source-hash");
-beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED", "true"); m.verify.mockResolvedValue(undefined); m.consume.mockResolvedValue(undefined); m.auth.mockResolvedValue({ token: "test-token", tenantId: "test-tenant" }); m.request.mockImplementation(async (_auth, _name, operation) => operation()); m.post.mockResolvedValue({ data: { Invoices: [{ InvoiceID: "invoice-exact", InvoiceNumber: "INV-702877", Status: "DRAFT" }] } }); });
+beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED", "true"); vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "false"); m.billingLock.mockResolvedValue(null); m.verify.mockResolvedValue(undefined); m.consume.mockResolvedValue(undefined); m.auth.mockResolvedValue({ token: "test-token", tenantId: "test-tenant" }); m.request.mockImplementation(async (_auth, _name, operation) => operation()); m.post.mockResolvedValue({ data: { Invoices: [{ InvoiceID: "invoice-exact", InvoiceNumber: "INV-702877", Status: "DRAFT" }] } }); });
 afterEach(() => vi.unstubAllEnvs());
 describe("Final-weight narrowly isolated production amendment writer", () => {
   it("requires independent default-off env even if global/Main/Deposit enabled", () => {
@@ -52,6 +53,25 @@ describe("Final-weight narrowly isolated production amendment writer", () => {
     expect(m.put).not.toHaveBeenCalled(); expect(m.request.mock.calls[0]![3]).toEqual({ retryTransientGatewayFailures: false });
     expect(m.verify.mock.invocationCallOrder[0]).toBeLessThan(m.consume.mock.invocationCallOrder[0]!);
     expect(m.consume.mock.invocationCallOrder[0]).toBeLessThan(m.auth.mock.invocationCallOrder[0]!);
+  });
+  it.each(["reserved", "submitted", "reconciliation_required"])("blocks transport while billing sync is %s, even after the rate limiter delay", async state => {
+    vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "true");
+    m.request.mockImplementation(async (_auth, _operation, operation) => {
+      m.billingLock.mockResolvedValue({ id: 3, state, xeroInvoiceId: "invoice-exact" });
+      return operation();
+    });
+    await expect(executeFinancialDraftWrite(payload(), context())).rejects.toThrow(/pending or uncertain billing-party update/);
+    expect(m.billingLock).toHaveBeenCalledWith("invoice-exact");
+    expect(m.post).not.toHaveBeenCalled(); expect(m.put).not.toHaveBeenCalled();
+  });
+  it("allows a fully verified billing transition and does not read locks when sync is disabled", async () => {
+    await executeFinancialDraftWrite(payload(), context());
+    expect(m.billingLock).not.toHaveBeenCalled();
+    vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "true");
+    m.billingLock.mockResolvedValue(null);
+    await executeFinancialDraftWrite(payload(), context());
+    expect(m.billingLock).toHaveBeenCalledWith("invoice-exact");
+    expect(m.post).toHaveBeenCalledTimes(2);
   });
   it("holds a wrong/non-Draft transport response for reconciliation", async () => {
     m.post.mockResolvedValue({ data: { Invoices: [{ InvoiceID: "wrong", InvoiceNumber: "INV-702877", Status: "AUTHORISED" }] } });

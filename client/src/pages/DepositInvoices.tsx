@@ -1,4 +1,5 @@
 import { BusinessText } from "@/components/BusinessReferenceDisplay";
+import { BillingPartySyncPanel } from "@/components/BillingPartySyncPanel";
 import { useState } from "react";
 import { FileSearch, FileText, LockKeyhole } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -65,10 +66,10 @@ export default function DepositInvoices() {
             held. AP never adopts or suffixes it.
           </p>
           <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900">
-            Main-invoice negative deposit deductions remain a separate held
-            postcondition. This family never changes a main invoice (Draft or
-            otherwise), never marks Deposit Status paid, and never queues a CRM
-            update.
+            Deposit-to-main deductions and billing-party synchronization are
+            separate Draft-only policies. The Deposit writer itself creates
+            only its exact Deposit Draft. It never marks Deposit Status paid,
+            approves or sends an invoice, or queues a CRM update.
           </p>
         </CardContent>
       </Card>
@@ -122,6 +123,7 @@ export default function DepositInvoices() {
           ) : null}
         </CardContent>
       </Card>
+      <BillingPartySyncPanel />
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">

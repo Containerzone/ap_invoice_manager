@@ -351,6 +351,13 @@
       "when": 1791850274565,
       "tag": "0049_safe_synch",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "5",
+      "when": 1792295289094,
+      "tag": "0050_broad_yellow_claw",
+      "breakpoints": true
     }
   ]
 }

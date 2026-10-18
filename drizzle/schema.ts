@@ -1635,3 +1635,73 @@ export const financialWarrantyAvisoEvents = mysqlTable("financial_warranty_aviso
   dealClaimUnique: uniqueIndex("financial_warranty_aviso_claim_unique").on(table.claimKey),
 }));
 export type FinancialWarrantyAvisoEvent = typeof financialWarrantyAvisoEvents.$inferSelect;
+
+// ─── Future Billing-party Sync — Immutable Evidence and Invoice Lock ─────────
+//
+// This independent, default-off family may only amend the ContactID on an
+// AP-owned current Xero customer-invoice Draft. Evidence and audit rows are
+// append-only. The separate one-row-per-Xero-invoice lock prevents concurrent
+// A→B / B→C contact changes and permanently blocks automatic replay after a
+// submitted or uncertain transport until an explicit future reconciliation.
+
+export const financialBillingPartySyncEvents = mysqlTable("financial_billing_party_sync_events", {
+  id: int("id").autoincrement().primaryKey(),
+  /** SHA-256 of exact invoice ID + tenant + current source snapshot + target ContactID. */
+  eventFingerprint: varchar("eventFingerprint", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  trigger: mysqlEnum("trigger", ["deposit_invoice", "main_invoice_finalisation"] as const).notNull(),
+  tenantIdHash: varchar("tenantIdHash", { length: 64 }).notNull(),
+  xeroInvoiceId: varchar("xeroInvoiceId", { length: 128 }).notNull(),
+  invoiceNumber: varchar("invoiceNumber", { length: 128 }).notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  targetContactId: varchar("targetContactId", { length: 128 }).notNull(),
+  originalContactId: varchar("originalContactId", { length: 128 }).notNull(),
+  originalInvoiceFingerprint: varchar("originalInvoiceFingerprint", { length: 64 }).notNull(),
+  payloadFingerprint: varchar("payloadFingerprint", { length: 64 }).notNull(),
+  rulesSnapshotHash: varchar("rulesSnapshotHash", { length: 64 }).notNull(),
+  sourceSnapshot: json("sourceSnapshot").notNull(),
+  originalInvoiceSnapshot: json("originalInvoiceSnapshot").notNull(),
+  targetContactEvidence: json("targetContactEvidence").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  exactInvoiceSourceTargetUnique: uniqueIndex("financial_billing_party_sync_exact_unique")
+    .on(table.eventFingerprint),
+}));
+
+export type FinancialBillingPartySyncEvent = typeof financialBillingPartySyncEvents.$inferSelect;
+
+/** Mutable lock only; all factual evidence/outcomes are written to append-only audit rows. */
+export const financialBillingPartySyncLocks = mysqlTable("financial_billing_party_sync_locks", {
+  id: int("id").autoincrement().primaryKey(),
+  xeroInvoiceId: varchar("xeroInvoiceId", { length: 128 }).notNull(),
+  eventFingerprint: varchar("eventFingerprint", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  targetContactId: varchar("targetContactId", { length: 128 }).notNull(),
+  state: mysqlEnum("state", ["reserved", "submitted", "updated", "held", "reconciliation_required"] as const)
+    .default("reserved")
+    .notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  invoiceLockUnique: uniqueIndex("financial_billing_party_sync_invoice_lock_unique")
+    .on(table.xeroInvoiceId),
+}));
+
+export type FinancialBillingPartySyncLock = typeof financialBillingPartySyncLocks.$inferSelect;
+
+/** Immutable append-only operational audit. No application path UPDATEs or DELETEs this table. */
+export const financialBillingPartySyncAudits = mysqlTable("financial_billing_party_sync_audits", {
+  id: int("id").autoincrement().primaryKey(),
+  auditKey: varchar("auditKey", { length: 96 }).notNull(),
+  eventFingerprint: varchar("eventFingerprint", { length: 64 }),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  xeroInvoiceId: varchar("xeroInvoiceId", { length: 128 }),
+  action: mysqlEnum("action", ["preview", "reserved", "submitted", "outcome"] as const).notNull(),
+  outcome: mysqlEnum("outcome", ["updated", "unchanged", "not_found", "held", "reconciliation_required", "disabled"] as const).notNull(),
+  details: json("details"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  auditKeyUnique: uniqueIndex("financial_billing_party_sync_audit_key_unique").on(table.auditKey),
+}));
+
+export type FinancialBillingPartySyncAudit = typeof financialBillingPartySyncAudits.$inferSelect;

@@ -108,6 +108,13 @@ vi.mock("./financialDepositInvoiceService", () => ({
   previewDepositInvoice: vi.fn().mockResolvedValue({ state: "held", noWrites: true, holdReason: "Mapping needs confirmation" }),
 }));
 
+vi.mock("./financialBillingPartySyncService", () => ({
+  getBillingPartySyncReadiness: vi.fn().mockResolvedValue({ writerEnabled: false, noWrites: true }),
+  getBillingPartySyncEvents: vi.fn().mockResolvedValue([]),
+  previewBillingPartySync: vi.fn().mockResolvedValue({ state: "previewed", noWrites: true }),
+  processAutomaticBillingPartySync: vi.fn(),
+}));
+
 vi.mock("./financialForHireService", () => ({
   getForHireReadiness: vi.fn().mockResolvedValue({ routeRegistered: false, heartbeatRegistered: false, writerEnabled: false, noWrites: true }),
   previewInitialForHirePo: vi.fn().mockResolvedValue({ facts: { controlNumber: "C1860" }, kind: "initial", noWrites: true }),
@@ -132,6 +139,25 @@ function context(role: "admin" | "user"): TrpcContext {
 
 describe("financial operations tRPC safeguards", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("keeps billing sync administrator-only and read-only, with no process/activation mutation", async () => {
+    const { appRouter } = await import("./routers");
+    const { previewBillingPartySync, processAutomaticBillingPartySync } = await import("./financialBillingPartySyncService");
+    const staff = appRouter.createCaller(context("user")).financialOperations;
+    await expect(staff.billingPartySyncReadiness()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(staff.billingPartySyncEvents()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(staff.previewBillingPartySync({ exactDeal: "D702903" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const admin = appRouter.createCaller(context("admin")).financialOperations;
+    await expect(admin.previewBillingPartySync({ exactDeal: "D%" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(await admin.billingPartySyncReadiness()).toMatchObject({ writerEnabled: false, noWrites: true });
+    expect(await admin.previewBillingPartySync({ exactDeal: "D702903" })).toMatchObject({ noWrites: true });
+    expect(previewBillingPartySync).toHaveBeenCalledWith("4x702903", "D702903");
+    expect(processAutomaticBillingPartySync).not.toHaveBeenCalled();
+    const procedures = appRouter._def.procedures as any;
+    const names = Object.keys(procedures).filter(key => /billingPartySync/i.test(key));
+    expect(names).toHaveLength(3);
+    for (const name of names) expect(procedures[name]._def.type).toBe("query");
+  });
 
   it("keeps all Deposit procedures administrator-only queries with no browser write/release endpoint", async () => {
     const { appRouter } = await import("./routers");

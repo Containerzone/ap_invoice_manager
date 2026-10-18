@@ -4,6 +4,7 @@ import {
   retrieveCurrentVtigerFinancialRecord,
 } from "./vtigerFinancialReadService";
 import type { DepositInvoiceFacts } from "./financialDepositInvoiceDrafts";
+import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
 
 export const DEPOSIT_INVOICE_VTIGER_MODULE = "Potentials" as const;
 export const DEPOSIT_FIELD_LABELS = {
@@ -12,6 +13,9 @@ export const DEPOSIT_FIELD_LABELS = {
   emptyContainerSupplyDate: "Empty Container Supply Date",
   fullContainerCollectionDate: "Full Container Collection Date",
 } as const;
+/** Immutable v2 party evidence is included in the Deposit source snapshot. */
+export const DEPOSIT_V2_CUSTOMER_SNAPSHOT_MAPPING_KEY =
+  "customerIdentityV2SourceSnapshotHash" as const;
 const REQUIRED_DEPOSIT_FIELD_KEYS = [
   "depositStatus",
   "depositAmountRequired",
@@ -128,31 +132,55 @@ export async function readDepositInvoiceFacts(
   }
   const quoteResolution = await resolveQuote(quoteReference(deal.cf_potentials_quotereference ?? deal.quote_reference));
   if (quoteResolution.hold) holds.push(quoteResolution.hold);
-  // Organisation on the linked Quote takes precedence, then the current Deal.
+  // Legacy Deposit routing retained the Operations Quote's account/contact
+  // references. Under the v2 gate, the shared resolver is authoritative: it
+  // reads the current Deal and selects its organisation before its contact.
+  // Keep the legacy source unchanged while the gate is off so this is a
+  // bounded migration rather than a silent identity-precedence change.
+  const v2Customer = process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true"
+    ? await readCurrentCustomerContactResolution(dealId)
+    : null;
+  if (v2Customer) {
+    // sourceSnapshotHash covers the Deal-selected billing kind/name/email,
+    // linked IDs, field provenance and current timestamp. Including it in the
+    // Deposit fact snapshot makes a later v2-plan change a source change.
+    mappingEvidence[DEPOSIT_V2_CUSTOMER_SNAPSHOT_MAPPING_KEY] =
+      v2Customer.sourceSnapshotHash;
+  }
+  // Organisation on the linked Quote takes precedence, then the current Deal,
+  // only for the legacy customer-contact branch.
   const organisationRaw = text(quoteResolution.quote?.account_id ?? deal.related_to ?? deal.relatedto);
   const contactRaw = text(quoteResolution.quote?.contact_id ?? deal.contact_id);
-  if (organisationRaw && !id(organisationRaw))
+  if (!v2Customer && organisationRaw && !id(organisationRaw))
     holds.push(
       "Current Deal organisation reference is not an exact VTiger ID; contact fallback cannot bypass it."
     );
-  if (!organisationRaw && contactRaw && !id(contactRaw))
+  if (!v2Customer && !organisationRaw && contactRaw && !id(contactRaw))
     holds.push("Current Deal contact reference is not an exact VTiger ID.");
-  const customerKind = organisationRaw ? "organisation" : "contact";
-  const customerVtigerId = id(organisationRaw || contactRaw);
-  const customer = customerVtigerId
-    ? await exactRecord(customerVtigerId, `Deal customer ${customerKind}`)
+  const legacyCustomerKind = organisationRaw ? "organisation" : "contact";
+  const legacyCustomerVtigerId = id(organisationRaw || contactRaw);
+  const legacyCustomer = !v2Customer && legacyCustomerVtigerId
+    ? await exactRecord(
+        legacyCustomerVtigerId,
+        `Deal customer ${legacyCustomerKind}`
+      )
     : null;
-  const customerName = customer
-    ? customerKind === "organisation"
-      ? text(customer.accountname ?? customer.organizationname ?? customer.name)
-      : [text(customer.firstname), text(customer.lastname)]
+  const legacyCustomerName = legacyCustomer
+    ? legacyCustomerKind === "organisation"
+      ? text(legacyCustomer.accountname ?? legacyCustomer.organizationname ?? legacyCustomer.name)
+      : [text(legacyCustomer.firstname), text(legacyCustomer.lastname)]
           .filter(Boolean)
           .join(" ")
     : "";
-  if (customer && !customerName)
+  if (legacyCustomer && !legacyCustomerName)
     holds.push(
-      `Exact Deal customer ${customerKind} has no schema-confirmed usable name.`
+      `Exact Deal customer ${legacyCustomerKind} has no schema-confirmed usable name.`
     );
+  const customerKind = v2Customer
+    ? v2Customer.billingKind === "organisation" ? "organisation" : "contact"
+    : legacyCustomerKind;
+  const customerVtigerId = v2Customer?.customerVtigerId ?? legacyCustomerVtigerId;
+  const customerName = v2Customer?.name ?? legacyCustomerName;
   const field = (key: keyof typeof DEPOSIT_FIELD_LABELS) =>
     mappingEvidence[key] ? deal[mappingEvidence[key]!] : undefined;
   const dealNumber = text(deal.potential_no);
@@ -174,7 +202,11 @@ export async function readDepositInvoiceFacts(
     fullContainerCollectionDate: text(field("fullContainerCollectionDate")),
     // New-events-only checks the Deal itself; a customer change cannot make an old Deal new.
     sourceRefreshedAt: timestamp(deal.modifiedtime),
-    customerRefreshedAt: customer ? timestamp(customer.modifiedtime) : null,
+    // The v2 resolver's evidence is bound to the current Deal timestamp. The
+    // legacy branch retains the linked Account/Contact timestamp exactly.
+    customerRefreshedAt: v2Customer
+      ? v2Customer.resolvedAt
+      : legacyCustomer ? timestamp(legacyCustomer.modifiedtime) : null,
     mappingEvidence,
     sourceHoldReason: holds.length ? holds.join(" ") : null,
   };
