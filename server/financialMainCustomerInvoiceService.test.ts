@@ -69,6 +69,37 @@ describe("Main Customer Invoice current-source evidence", () => {
     expect(recordPreview).toHaveBeenCalledWith(expect.objectContaining({ status: "held" }));
   });
 
+  it("uses only verified 20/40 Hire items and accounts while retaining current Quote service descriptions", async () => {
+    retrieve.mockImplementation(async (id: string) => {
+      const records: Record<string, Record<string, unknown>> = {
+        "5x88": { id: "5x88", potential_no: "D702988", cf_potentials_quotereference: "20x88", related_to: "4x2", cf_potentials_containersituationselectone: "HIRED", modifiedtime: "2026-10-18T01:00:00Z" },
+        "20x88": { id: "20x88", quote_no: "Q-702988", LineItems: { 1: { productid: "14x20", quantity: "1", listprice: "209.25" }, 2: { productid: "14x40", quantity: "2", listprice: "309.25" } }, modifiedtime: "2026-10-18T01:00:00Z" },
+        "4x2": { id: "4x2", accountname: "Customer Pty Ltd" },
+        "14x20": { id: "14x20", servicename: "20 Foot Standard Height Container Hire per 30 days" },
+        "14x40": { id: "14x40", servicename: "40 Foot Standard Height Container Hire per 30 days" },
+      };
+      return records[id] ?? { id };
+    });
+    const preflightResult = [{
+      duplicateState: "not_found", status: null,
+      contactCheck: { found: true, contactId: "xero-customer", count: 1, partyName: "Customer Pty Ltd" },
+      itemChecks: [
+        { itemCode: "20' Hire", found: true, isSold: true, salesAccountCode: "210", salesTaxType: "OUTPUT", nativeDescription: "{Container Type} Container Hire per 30 days" },
+        { itemCode: "40' Hire", found: true, isSold: true, salesAccountCode: "210", salesTaxType: "OUTPUT", nativeDescription: "{Container Type} Container Hire per 30 days" },
+      ],
+    }];
+    preflight.mockResolvedValue(preflightResult);
+
+    const result = await previewMainCustomerInvoice("5x88");
+
+    expect(result).toMatchObject({ state: "previewed", noWrites: true });
+    expect(result.preview.document?.lineItems).toEqual([
+      expect.objectContaining({ itemCode: "20' Hire", description: "20 Foot Standard Height Container Hire per 30 days", quantity: 1, unitAmount: 209.25, accountCode: "210" }),
+      expect.objectContaining({ itemCode: "40' Hire", description: "40 Foot Standard Height Container Hire per 30 days", quantity: 2, unitAmount: 309.25, accountCode: "210" }),
+    ]);
+    expect(preflight).toHaveBeenCalledTimes(2);
+  });
+
   it("creates a contact only for a contact-only preflight hold, refreshes evidence, then writes the Draft", async () => {
     preflight.mockResolvedValueOnce(readyPreflight())
       .mockResolvedValueOnce([{ ...readyPreflight()[0], contactCheck: { found: false, contactId: null, count: 0, partyName: "Customer Pty Ltd" } }])

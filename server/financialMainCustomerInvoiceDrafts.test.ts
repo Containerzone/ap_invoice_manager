@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { applyMainCustomerInvoiceXeroTransportDescription, buildMainCustomerInvoice, mainCustomerInvoiceNumber, mainCustomerInvoiceTransportItemCode } from "./financialMainCustomerInvoiceDrafts";
+import { applyMainCustomerInvoiceXeroTransportDescription, buildMainCustomerInvoice, mainCustomerInvoiceContainerHireItemCode, mainCustomerInvoiceNumber, mainCustomerInvoiceTransportItemCode } from "./financialMainCustomerInvoiceDrafts";
 import { assertMainCustomerInvoiceRelease, resolveMainCustomerInvoiceRelease } from "./financialMainCustomerInvoiceRelease";
 
 const facts = (overrides: Record<string, unknown> = {}) => ({
@@ -48,7 +48,7 @@ describe("Main Customer Invoice rules", () => {
     expect(applyMainCustomerInvoiceXeroTransportDescription({ document: proposal, nativeDescription: "Wrong template", originSuburb: "Port", destinationSuburb: "Depot" })).toBeNull();
   });
 
-  it("retains every non-transport Quote line, including a container-hire service, without inferring a Sale or transport item", () => {
+  it("uses the verified 20/40 Hire items while preserving exact hire Quote descriptions", () => {
     const proposal = buildMainCustomerInvoice(facts({
       dealNumber: "D702941",
       quoteNumber: "Q531794",
@@ -57,6 +57,7 @@ describe("Main Customer Invoice rules", () => {
       destinationSuburb: "MORPHETT VALE, 5162, SA",
       serviceLines: [
         { serviceVtigerId: "25x7217", description: "20 Foot Standard Height Container Hire per 30 days", quantity: 1, unitAmount: 209.25 },
+        { serviceVtigerId: "25x7218", description: "40 Foot Standard Height Container Hire per 30 days", quantity: 2, unitAmount: 309.25 },
         { serviceVtigerId: "25x258945", description: "Transport - Empty & Loaded Container", quantity: 1, unitAmount: 4251.83 },
       ],
     })).document!;
@@ -69,9 +70,14 @@ describe("Main Customer Invoice rules", () => {
     });
 
     expect(rendered?.lineItems).toEqual([
-      expect.objectContaining({ itemCode: "", description: "20 Foot Standard Height Container Hire per 30 days", quantity: 1, unitAmount: 209.25, accountCode: "200" }),
+      expect.objectContaining({ itemCode: "20' Hire", description: "20 Foot Standard Height Container Hire per 30 days", quantity: 1, unitAmount: 209.25, accountCode: "200" }),
+      expect.objectContaining({ itemCode: "40' Hire", description: "40 Foot Standard Height Container Hire per 30 days", quantity: 2, unitAmount: 309.25, accountCode: "200" }),
       expect.objectContaining({ itemCode: "SER60", description: "Empty & Loaded Container from BRENDALE, 4500, QLD to MORPHETT VALE, 5162, SA", quantity: 1, unitAmount: 4251.83, accountCode: "200" }),
     ]);
+    expect(mainCustomerInvoiceContainerHireItemCode("20 Foot Standard Height Container Hire per 30 days")).toBe("20' Hire");
+    expect(mainCustomerInvoiceContainerHireItemCode("40 Foot Standard Height Container Hire per 30 days")).toBe("40' Hire");
+    expect(mainCustomerInvoiceContainerHireItemCode("20 Foot Standard Height Container - Cargoworthy Grade")).toBeNull();
+    expect(mainCustomerInvoiceContainerHireItemCode("20 Foot High Cube Container Hire per 30 days")).toBe("20' Hire");
   });
 
   it("holds rather than inferring customer, Quote or malformed service evidence", () => {

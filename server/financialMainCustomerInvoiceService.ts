@@ -125,9 +125,9 @@ function bindVerifiedMainTransportDescription(input: {
   if (transportCodes.length > 1) {
     return { document: null, reason: "Main Invoice contains conflicting current Xero transport item selections." };
   }
-  const saleCodes = Array.from(new Set(input.document.lineItems
+  const quoteItemCodes = Array.from(new Set(input.document.lineItems
     .map((line) => line.itemCode.trim())
-    .filter((itemCode) => ["20' Sale", "40' Sale"].includes(itemCode))));
+    .filter((itemCode) => ["20' Sale", "40' Sale", "20' Hire", "40' Hire"].includes(itemCode))));
   const checks = new Map((input.preflight?.itemChecks ?? []).map((check) => [check.itemCode.trim().toUpperCase(), check]));
 
   let document = input.document;
@@ -147,12 +147,12 @@ function bindVerifiedMainTransportDescription(input: {
     document = rendered;
   }
 
-  for (const itemCode of saleCodes) {
+  for (const itemCode of quoteItemCodes) {
     const item = checks.get(itemCode.toUpperCase());
     if (!item?.found || item.isSold !== true || !item.salesAccountCode || item.salesTaxType !== "OUTPUT") {
       return { document: null, reason: `Current Xero sales item ${itemCode} must be active for sale with an OUTPUT GST sales account.` };
     }
-    // The exact current Quote service name remains the container-sale line
+    // The exact current Quote service name remains the container-sale/hire line
     // description. Only its verified native sales account is taken from Xero.
     document = {
       ...document,

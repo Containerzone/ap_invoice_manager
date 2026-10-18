@@ -11,7 +11,7 @@
 | Number | `INV-<Deal digits>`. | Example: `D702877` → `INV-702877`. |
 | Document | One Xero customer invoice, initially `ACCREC` + `DRAFT`. | Create-only Draft POST; never authorise, send, pay, void, delete or replace. |
 | Customer priority | Organisation before contact. | Exact current Account is preferred; fallback exact Contact only when no organisation exists. |
-| Quote lines | Service name, quantity and list price. | Preserve each billable Quote quantity and list price; do not synthesize prices from the webhook. Only an explicitly transport-named Service receives the approved transport item and native route description. A 20/40-foot container product receives the matching current Sale item and retains its exact Quote Service name. A container-hire Service and every other non-transport Service retain their exact current Quote name without a guessed Xero item. |
+| Quote lines | Service name, quantity and list price. | Preserve each billable Quote quantity and list price; do not synthesize prices from the webhook. Only an explicitly transport-named Service receives the approved transport item and native route description. A 20/40-foot container product receives the matching current Sale item and retains its exact Quote Service name. A 20/40-foot container-hire Service receives the verified current Hire item and retains its exact Quote Service name. Other non-transport Services retain their exact current Quote name without a guessed Xero item. |
 | Collision/idempotency | Do not create `INV-…` where it already exists. | Exact Xero number collision is held (including non-Draft/deleted/voided history) and never adopted or suffix-bypassed. |
 | Warranty | A supported Added Services warranty may be appended by the main-invoice/warranty workflow and may create a matching Aviso PO. | Excluded from the first Main Invoice release: main invoice itself only; warranty remains its independently gated family. |
 
@@ -44,6 +44,17 @@ The current Xero items were independently read with GET-only evidence before imp
 | `IMPORT`, blank or any unrecognised value | none | **Hold** — AP never guesses or treats it as Purchased/Hired. |
 
 Both verified transport items are active for sale with account 200 and OUTPUT GST. Immediately before write AP must replace only the two placeholders **on explicit transport lines** using the freshly re-read Deal suburbs, then perform a new full invoice collision/contact/item preflight. This changes transport presentation/item classification only; the current Quote quantity and list-price calculation remains the financial source. A container-product Quote line is never overwritten with this route description.
+
+## Verified Main Invoice hire-item presentation
+
+A GET-only Xero item audit on 18 October 2026 confirmed the current active sales items below. AP uses the item code and verified account/tax configuration only; it continues to use the exact linked Quote Service name as the invoice-line description and the Quote quantity/list price as the financial source.
+
+| Quote Service classification | Xero item code | Current Xero item name | Verified sales account / tax |
+|---|---|---|---|
+| Explicit 20-foot container hire | `20' Hire` | `20 Foot Hire` | `210` / `OUTPUT` |
+| Explicit 40-foot container hire | `40' Hire` | `40 foot hire` | `210` / `OUTPUT` |
+
+Any non-hire, non-sale or unrecognised Quote Service remains itemless rather than being mapped by inference. These mappings never alter existing Xero Drafts.
 
 ## Release boundary
 

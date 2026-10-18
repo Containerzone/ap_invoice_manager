@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export const MAIN_CUSTOMER_INVOICE_ACCOUNT_CODE = "200" as const;
-export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v4-nontransport-quote-lines-preserved" as const;
+export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v5-hire-items-quote-descriptions-preserved" as const;
 export const MAIN_CUSTOMER_INVOICE_RULES_HASH = createHash("sha256").update(MAIN_CUSTOMER_INVOICE_RULES_VERSION).digest("hex");
 
 export type MainCustomerInvoiceServiceLineFacts = {
@@ -39,6 +39,7 @@ export type MainCustomerInvoicePreview = {
 
 export type MainCustomerInvoiceTransportItemCode = "SER9" | "SER60";
 export type MainCustomerInvoiceContainerSaleItemCode = "20' Sale" | "40' Sale";
+export type MainCustomerInvoiceContainerHireItemCode = "20' Hire" | "40' Hire";
 
 function money(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -86,6 +87,20 @@ export function mainCustomerInvoiceContainerSaleItemCode(description: string): M
   return null;
 }
 
+/**
+ * Current Xero evidence confirms these active sales items: 20' Hire (name
+ * "20 Foot Hire") and 40' Hire (name "40 foot hire"). Only a Quote Service
+ * that explicitly describes a 20/40-foot container hire can select either
+ * item. The service description remains the financial-document description.
+ */
+export function mainCustomerInvoiceContainerHireItemCode(description: string): MainCustomerInvoiceContainerHireItemCode | null {
+  const value = upper(description);
+  if (!value.includes("CONTAINER") || !/\bHIRE(?:D)?\b/.test(value)) return null;
+  if (/(?:^|\s)20(?:\s*FOOT|\s*')/.test(value)) return "20' Hire";
+  if (/(?:^|\s)40(?:\s*FOOT|\s*')/.test(value)) return "40' Hire";
+  return null;
+}
+
 function validServiceLine(line: MainCustomerInvoiceServiceLineFacts): boolean {
   return /^\d+x\d+$/i.test(line.serviceVtigerId)
     && Boolean(normal(line.description))
@@ -118,7 +133,9 @@ export function renderMainCustomerInvoiceRouteDescription(input: {
 
 function toFinancialLine(line: MainCustomerInvoiceServiceLineFacts, transportItemCode: MainCustomerInvoiceTransportItemCode | null): FinancialLineItem {
   const isTransport = isMainCustomerInvoiceTransportService(line.description);
-  const itemCode = isTransport ? transportItemCode : mainCustomerInvoiceContainerSaleItemCode(line.description);
+  const itemCode = isTransport
+    ? transportItemCode
+    : mainCustomerInvoiceContainerHireItemCode(line.description) ?? mainCustomerInvoiceContainerSaleItemCode(line.description);
   return {
     // Only a transport description is temporary: it is rendered from the
     // current native Xero route template before writing. Other lines retain the
