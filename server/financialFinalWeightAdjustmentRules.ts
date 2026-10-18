@@ -131,14 +131,42 @@ export function assertFinalWeightReadback(actual: Record<string, any>, expected:
   if (Number(actual.AmountPaid ?? 0) !== 0 || Number(actual.AmountCredited ?? 0) !== 0 ||
     ["Payments", "CreditNotes", "Prepayments", "Overpayments"].some(key => actual[key]?.length)) throw new Error("Final-weight readback is no longer an unallocated unpaid Draft.");
   if (!Array.isArray(actual.LineItems) || actual.LineItems.length !== expected.LineItems.length) throw new Error("Final-weight readback line count differs.");
-  expected.LineItems.forEach((line: Record<string, any>, index: number) => {
-    const received = actual.LineItems[index];
+  // Xero is permitted to reorder a Draft's lines after a POST. Retained source
+  // lines carry immutable LineItemIDs, while a newly appended amendment line
+  // has no ID before Xero creates it. Match both forms explicitly so a correct
+  // Xero response is not misclassified as an uncertain write merely by order.
+  const unmatched = new Set(actual.LineItems.map((_: unknown, index: number) => index));
+  const matchLine = (line: Record<string, any>): Record<string, any> => {
+    const sourceId = typeof line.LineItemID === "string" ? line.LineItemID.trim() : "";
+    const expectedLineAmount = Number(line.LineAmount ?? Number(line.Quantity) * Number(line.UnitAmount));
+    const expectedTaxAmount = Number(line.TaxAmount ?? (line.ItemCode === "SER70" ? Math.round(expectedLineAmount * 0.1 * 100) / 100 : 0));
+    const candidates = Array.from(unmatched).filter(index => {
+      const received = actual.LineItems[index];
+      if (sourceId) return received?.LineItemID === sourceId;
+      return received?.Description === line.Description &&
+        Number(received?.Quantity) === Number(line.Quantity) &&
+        Number(received?.UnitAmount) === Number(line.UnitAmount) &&
+        Number(received?.LineAmount) === expectedLineAmount &&
+        Number(received?.TaxAmount) === expectedTaxAmount &&
+        String(received?.AccountCode ?? "") === String(line.AccountCode ?? "") &&
+        String(received?.TaxType ?? "") === String(line.TaxType ?? "") &&
+        (line.ItemCode === undefined || String(received?.ItemCode ?? "") === String(line.ItemCode));
+    });
+    if (candidates.length !== 1) throw new Error(sourceId
+      ? `Final-weight readback cannot match retained line ID ${sourceId}.`
+      : "Final-weight readback cannot match exactly one new amendment line.");
+    const index = candidates[0]!;
+    unmatched.delete(index);
+    return actual.LineItems[index]!;
+  };
+  expected.LineItems.forEach((line: Record<string, any>, expectedIndex: number) => {
+    const received = matchLine(line);
     for (const [key, value] of Object.entries(line)) {
-      if (financialSha256(received?.[key]) !== financialSha256(value)) throw new Error(`Final-weight readback changed line ${index + 1} ${key}.`);
+      if (financialSha256(received?.[key]) !== financialSha256(value)) throw new Error(`Final-weight readback changed line ${expectedIndex + 1} ${key}.`);
     }
     for (const key of ["DiscountRate", "DiscountAmount", "Tracking", "ItemCode"]) {
       if (line[key] === undefined && received?.[key] !== undefined && received[key] !== null && received[key] !== "" && received[key] !== 0 &&
-        !(Array.isArray(received[key]) && received[key].length === 0)) throw new Error(`Final-weight readback added unexpected line ${index + 1} ${key}.`);
+        !(Array.isArray(received[key]) && received[key].length === 0)) throw new Error(`Final-weight readback added unexpected line ${expectedIndex + 1} ${key}.`);
     }
     // Only a newly built/replaced SER70 lacks derived tax/amount evidence. A
     // retained underweight SER70 is compared verbatim above, never recalculated.
@@ -150,6 +178,7 @@ export function assertFinalWeightReadback(actual: Record<string, any>, expected:
         Math.abs(Number(received.LineAmount) - net) > 0.001 || Math.abs(Number(received.TaxAmount) - tax) > 0.001) throw new Error("Final-weight SER70 readback differs from the positive GST-exclusive excess line.");
     }
   });
+  if (unmatched.size !== 0) throw new Error("Final-weight readback contains an unexpected unmatched line.");
   const lineTotal = actual.LineItems.reduce((sum: number, line: Record<string, any>) => sum + Number(line.LineAmount), 0);
   const tax = actual.LineItems.reduce((sum: number, line: Record<string, any>) => sum + Number(line.TaxAmount), 0);
   const subtotal = Number(actual.SubTotal);

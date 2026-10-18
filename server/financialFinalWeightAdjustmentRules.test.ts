@@ -34,6 +34,20 @@ describe("Final weight isolated pure Draft amendment rules", () => {
     expect(() => assertFinalWeightReadback(readback, result.expectedDraft!)).not.toThrow();
     expect(() => assertFinalWeightReadback({ ...readback, Reference: "wrong" }, result.expectedDraft!)).toThrow(/Reference/);
   });
+  it("accepts an exact Xero Draft amendment when Xero reorders its retained and new lines", () => {
+    const result = buildFinalWeightAdjustment(facts({ customerPO: "PO-42" }), "overweight", xero());
+    const readback = invoice({
+      Reference: "PO-42",
+      LineItems: [
+        { ...result.expectedDraft!.LineItems[1], LineItemID: "new-ser70", LineAmount: 250, TaxAmount: 25 },
+        baseLine(),
+      ],
+      SubTotal: 340,
+      TotalTax: 34,
+      Total: 374,
+    });
+    expect(() => assertFinalWeightReadback(readback, result.expectedDraft!)).not.toThrow();
+  });
   it("overweight falls back only to the current Deal Container number when Customer PO is blank", () => {
     const result = buildFinalWeightAdjustment(facts({ customerPO: "  ", dealName: "Container 8" }), "overweight", xero());
     expect(result).toMatchObject({ eligible: true, expectedDraft: { Reference: "Container 8" } });
