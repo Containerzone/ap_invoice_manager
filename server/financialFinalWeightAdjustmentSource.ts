@@ -4,6 +4,7 @@ import { finalWeightDate, type FinalWeightDirection, type FinalWeightFacts } fro
 /** Labels verified by Potentials describe only on 2026-10-11; runtime revalidation is mandatory. */
 export const FINAL_WEIGHT_FIELD_LABELS = {
   dealNumber: ["Deal ID"], dealName: ["Container number"], organisation: ["Organization Name"], contact: ["Contact Name"],
+  customerPO: ["Customer PO"],
   estimatedWeight: ["Estimated Weight (TONS)"], actualWeight: ["Actual Weight (Tons)"], perExtraTonne: ["Per Extra Tonne"],
   requiredDueDate: ["Full Container Pickup DATE"], modifiedTime: ["Modified Time"],
 } as const;
@@ -22,7 +23,9 @@ const timestamp = (value: unknown) => {
 export function resolveFinalWeightSourceMappings(metadata: Metadata, direction: FinalWeightDirection) {
   const mappingEvidence: Record<string, string> = {}; const holds: string[] = [];
   if (metadata.name !== "Potentials") holds.push("Metadata must describe Potentials exactly.");
-  const required = Object.keys(FINAL_WEIGHT_FIELD_LABELS).filter(key => key !== "requiredDueDate" || direction === "underweight");
+  const required = Object.keys(FINAL_WEIGHT_FIELD_LABELS).filter(key =>
+    (key !== "requiredDueDate" || direction === "underweight") &&
+    (key !== "customerPO" || direction === "overweight"));
   for (const key of required) {
     const labels = FINAL_WEIGHT_FIELD_LABELS[key as keyof typeof FINAL_WEIGHT_FIELD_LABELS] as readonly string[];
     // Exact label text, not fuzzy aliases or presumed custom API names.
@@ -31,7 +34,8 @@ export function resolveFinalWeightSourceMappings(metadata: Metadata, direction: 
       holds.push(`Source mapping ${labels.join(" / ")} is missing or ambiguous.`); continue;
     }
     const field = fields[0]!;
-    if ((key === "organisation" && !(field.type.refersTo as string[] | undefined)?.includes("Accounts")) ||
+    if ((key === "customerPO" && field.type.name !== "string") ||
+      (key === "organisation" && !(field.type.refersTo as string[] | undefined)?.includes("Accounts")) ||
       (key === "contact" && !(field.type.refersTo as string[] | undefined)?.includes("Contacts")) ||
       (key === "requiredDueDate" && field.type.name !== "date")) holds.push(`Source mapping ${field.label} has an unverified field type.`);
     mappingEvidence[key] = field.name;
@@ -65,9 +69,10 @@ export async function readFinalWeightFacts(dealId: string, direction: FinalWeigh
   const customer = !mapping.holdReason && customerVtigerId ? await exactRecord(customerVtigerId) : null;
   const customerName = customer ? customerKind === "organisation" ? text(customer.accountname) : [text(customer.firstname), text(customer.lastname)].filter(Boolean).join(" ") : "";
   const dealNumber = text(field("dealNumber")); const dealName = text(field("dealName"));
+  const customerPO = direction === "overweight" ? text(field("customerPO")) : "";
   const estimatedWeight = numeric(field("estimatedWeight")); const actualWeight = numeric(field("actualWeight")); const perExtraTonne = numeric(field("perExtraTonne"));
   const requiredDueDate = direction === "underweight" ? finalWeightDate(field("requiredDueDate")) : null;
   const sourceRefreshedAt = timestamp(field("modifiedTime"));
-  return { dealId, dealNumber, dealName, customerVtigerId, customerName, customerKind, estimatedWeight, actualWeight, perExtraTonne, requiredDueDate,
+  return { dealId, dealNumber, dealName, customerPO, customerVtigerId, customerName, customerKind, estimatedWeight, actualWeight, perExtraTonne, requiredDueDate,
     sourceRefreshedAt, customerRefreshedAt: customer ? timestamp(customer.modifiedtime) : null, mappingEvidence: mapping.mappingEvidence, sourceHoldReason: holds.length ? holds.join(" ") : null };
 }

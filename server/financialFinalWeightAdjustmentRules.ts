@@ -3,14 +3,14 @@ import { financialSha256 } from "./financialProposalIntegrity";
 import type { FinancialDraftPayload } from "./financialProductionWriter";
 
 export type FinalWeightDirection = "overweight" | "underweight";
-export const FINAL_WEIGHT_RULES_VERSION = "2026-10-12.final-weight.draft-amendment.v2";
-export const FINAL_WEIGHT_RULES_HASH = financialSha256({ version: FINAL_WEIGHT_RULES_VERSION, item: DEFAULT_FINANCIAL_AUTOMATION_RULES.itemCodes.overweight, scope: "new_events_only", operations: ["positive-exclusive-SER70-replacement", "due-date-only"], preserve: "all-retained-lines-and-invoice-fields" });
+export const FINAL_WEIGHT_RULES_VERSION = "2026-10-18.final-weight.draft-amendment.v3";
+export const FINAL_WEIGHT_RULES_HASH = financialSha256({ version: FINAL_WEIGHT_RULES_VERSION, item: DEFAULT_FINANCIAL_AUTOMATION_RULES.itemCodes.overweight, scope: "new_events_only", operations: ["positive-exclusive-SER70-replacement", "due-date-only", "overweight-reference-customer-po-then-container-number"], preserve: "all-retained-lines-and-invoice-fields-except-overweight-reference", overweightReference: { sourcesInPriorityOrder: ["current-deal-customer-po", "current-deal-container-number"], noFallbackBeyondSources: true, requireCustomerPOMetadata: true } });
 export const FINAL_WEIGHT_PATHS = {
   overweight: "/api/webhooks/vtiger/final-weight-overweight",
   underweight: "/api/webhooks/vtiger/final-weight-underweight",
 } as const;
 export type FinalWeightFacts = {
-  dealId: string; dealNumber: string; dealName: string;
+  dealId: string; dealNumber: string; dealName: string; customerPO: string;
   customerVtigerId: string; customerName: string; customerKind: "organisation" | "contact";
   estimatedWeight: number | null; actualWeight: number | null; perExtraTonne: number | null;
   requiredDueDate: string | null; sourceRefreshedAt: string | null; customerRefreshedAt: string | null;
@@ -101,6 +101,8 @@ export function buildFinalWeightAdjustment(facts: FinalWeightFacts, direction: F
       inserted = true; return [replacement];
     });
     if (!inserted) expectedDraft.LineItems.push(replacement);
+    // The verified current Deal source provides no third Reference fallback.
+    expectedDraft.Reference = facts.customerPO.trim() || facts.dealName.trim();
   }
   return { direction, eligible: true, invoiceNumber: number, invoiceId: invoice.InvoiceID, holdReason: null, originalDraft, expectedDraft, excessAmountExclusive };
 }

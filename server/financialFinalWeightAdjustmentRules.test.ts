@@ -8,8 +8,9 @@ describe("Final weight isolated pure Draft amendment rules", () => {
     expect(result.eligible).toBe(true); expect(result.excessAmountExclusive).toBe(250);
     expect(result.expectedDraft!.LineItems[0]).toEqual(baseLine());
     expect(result.expectedDraft!.LineItems[1]).toEqual({ ItemCode: "SER70", Description: "Excess weight", Quantity: 1, UnitAmount: 250, AccountCode: "200", TaxType: "OUTPUT" });
-    const { LineItems: _, ...headers } = result.originalDraft!;
+    const { LineItems: _, Reference: _reference, ...headers } = result.originalDraft!;
     expect(result.expectedDraft).toMatchObject(headers); expect(evidence).toEqual(before);
+    expect(result.expectedDraft!.Reference).toBe("Synthetic Customer PO");
     const payload = prepareFinalWeightPayload(result, "source");
     expect(payload).toMatchObject({ method: "POST", endpoint: "/Invoices/invoice-exact", expectedXeroDocumentId: "invoice-exact", documentNumber: "INV-702877" });
     expect(payload.body.Invoices).toEqual([result.expectedDraft]);
@@ -26,12 +27,24 @@ describe("Final weight isolated pure Draft amendment rules", () => {
     expect(result.expectedDraft!.LineItems[1]).not.toHaveProperty("TaxAmount");
     expect(result.expectedDraft!.LineItems[2]).toEqual(retained);
   });
+  it("overweight prioritizes the current Deal Customer PO for Reference", () => {
+    const result = buildFinalWeightAdjustment(facts({ customerPO: "  PO-42  ", dealName: "Container 8" }), "overweight", xero());
+    expect(result).toMatchObject({ eligible: true, expectedDraft: { Reference: "PO-42" } });
+    const readback = invoice({ Reference: "PO-42", LineItems: [baseLine(), { ...result.expectedDraft!.LineItems[1], LineItemID: "new-ser70", LineAmount: 250, TaxAmount: 25 }], SubTotal: 340, TotalTax: 34, Total: 374 });
+    expect(() => assertFinalWeightReadback(readback, result.expectedDraft!)).not.toThrow();
+    expect(() => assertFinalWeightReadback({ ...readback, Reference: "wrong" }, result.expectedDraft!)).toThrow(/Reference/);
+  });
+  it("overweight falls back only to the current Deal Container number when Customer PO is blank", () => {
+    const result = buildFinalWeightAdjustment(facts({ customerPO: "  ", dealName: "Container 8" }), "overweight", xero());
+    expect(result).toMatchObject({ eligible: true, expectedDraft: { Reference: "Container 8" } });
+  });
   it("underweight changes exactly DueDate with no new or negative line, even if existing SER70 exists", () => {
     const full = invoice({ LineItems: [baseLine(), { ...baseLine(), ItemCode: "SER70", LineItemID: "existing-ser" }] });
     const result = buildFinalWeightAdjustment(facts({ actualWeight: 9, requiredDueDate: "2026-10-20", perExtraTonne: null }), "underweight", xero({ invoice: full, ser70: null }));
     expect(result.eligible).toBe(true);
     expect(result.expectedDraft!.LineItems).toEqual(full.LineItems);
     expect(result.expectedDraft).toEqual({ ...result.originalDraft, DueDate: "2026-10-20" });
+    expect(result.expectedDraft!.Reference).toBe("Preserve this reference");
     expect(result.excessAmountExclusive).toBeNull();
   });
   it.each(["AUTHORISED", "PAID", "VOIDED", "DELETED", "SUBMITTED", "DRAFT "])("holds status %s without an invoice proposal", status => {

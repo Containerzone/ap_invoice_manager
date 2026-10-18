@@ -26,7 +26,7 @@ This does not enable a generic invoice update path. The dedicated authorisation 
 
 1. `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED === "true"` **and** a current separately approved final-weight policy.
 2. Exact final-weight workflow, direction, immutable event ID, policy release key and approver; no other-family event authorization.
-3. Exactly one existing **AUD Exclusive ACCREC DRAFT** main invoice `POST /Invoices/<verified ID>` with matching InvoiceID/InvoiceNumber/ContactID, retained dates and complete line evidence. Xero uses that exact-resource POST to update an existing invoice; collection-level POST/PUT and all create paths are rejected. No purchase order, suffix/-D or other update type is permitted.
+3. Exactly one existing **AUD Exclusive ACCREC DRAFT** main invoice `POST /Invoices/<verified ID>` with matching InvoiceID/InvoiceNumber/ContactID, retained dates and complete line evidence. For future overweight events only, its Reference is set to the current Deal's non-empty Customer PO, otherwise the current Deal's Container number; no other source or existing-Reference fallback is permitted. Underweight retains Reference unchanged. Xero uses that exact-resource POST to update an existing invoice; collection-level POST/PUT and all create paths are rejected. No purchase order, suffix/-D or other update type is permitted.
 4. Independent current metadata/Deal/customer re-read and exact Xero number/contact/item/full-ID preflight rebuild; compare source, rules, preflight and original/expected/payload hashes with the reservation before transport.
 5. One-shot submitted CAS and no transient gateway retry; exact GET full-payload readback before success. Uncertainty retains exclusive claims and payload for reconciliation. No CRM post-success action is queued.
 
@@ -36,7 +36,7 @@ The Xero current Draft can change between the last GET and exact-resource POST b
 
 The independent `FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED` flag is securely set to **`true`** and published. With the approved policy, only either dedicated Final Weight route can proceed to exact current evidence. Unauthenticated requests return **401** first; malformed authenticated ID envelopes return **400** without reads/writes.
 
-If the policy is missing/invalid, both routes return **503** after only a local policy SELECT, before evidence/claim writes or upstream calls. The current approved policy matches the current Final Weight rules hash and retains both VTiger branches, both Operations handovers, exact mappings, Draft-only approval and `new_events_only` scope.
+If the policy is missing/invalid, both routes return **503** after only a local policy SELECT, before evidence/claim writes or upstream calls. The policy retains both VTiger branches, both Operations handovers, exact mappings, Draft-only approval and `new_events_only` scope. The future overweight-only Reference policy is bound to rules v3's hash; the pre-existing v2 policy record is not changed by this implementation and cannot authorize v3 until separately approved with the current hash.
 
 The separate config key is `financial-automation.final-weight-adjustment-release`. Policy fields are **only**:
 
@@ -50,7 +50,7 @@ Both branches/handoffs must be true. Missing/invalid/future approval/effective d
 
 ## Source mapping evidence and remaining review
 
-See [Operations final-weight alignment](operations-final-weight-alignment.md) for the exact labels/API names observed through **metadata-only describe** on 2026-10-11. No exact label is unresolved. Required current facts are named D-number Deal, linked Deal customer, actual/estimated weights, per-extra-tonne and underweight pickup date. Runtime uniqueness/type/scalar checks hold on drift/absence/ambiguity.
+See [Operations final-weight alignment](operations-final-weight-alignment.md) for the exact labels/API names observed through **metadata-only describe** on 2026-10-11. No exact label is unresolved. Required current facts are named D-number Deal, linked Deal customer, actual/estimated weights, per-extra-tonne and underweight pickup date; overweight additionally requires the string Customer PO mapping, although a blank current value falls back only to the named Deal's Container number. Runtime uniqueness/type/scalar checks hold on drift/absence/ambiguity.
 
 Before a future release, independently confirm:
 
