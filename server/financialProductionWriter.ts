@@ -23,6 +23,8 @@ import type { FinalWeightDirection } from "./financialFinalWeightAdjustmentRules
 import { consumeExtraHirePayload, verifyExtraHireAutomaticWriteAccess } from "./financialExtraHireInvoiceDb";
 import { consumeD702946DepositMainDeductionRecoveryPayload, verifyD702946DepositMainDeductionRecoveryWriteAccess } from "./financialD702946DepositMainDeductionRecoveryDb";
 import { assertD702946RecoveryPayload, D702946_RECOVERY_RELEASE_KEY, d702946ExistingDeductions } from "./financialD702946DepositMainDeductionRecoveryScope";
+import { consumeD702946AuthorisedDepositMainDeductionRecoveryPayload, verifyD702946AuthorisedDepositMainDeductionRecoveryWriteAccess } from "./financialD702946AuthorisedDepositMainDeductionRecoveryDb";
+import { assertD702946AuthorisedDepositRecoveryPayload, D702946_AUTHORISED_DEPOSIT_RECOVERY_RELEASE_KEY } from "./financialD702946AuthorisedDepositMainDeductionRecoveryScope";
 
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 
@@ -141,6 +143,11 @@ export type FinancialWriteAuthorisation = {
   d702946DepositMainDeductionRecoveryToken?: string;
   d702946DepositMainDeductionRecoveryReleaseKey?: string;
   d702946DepositMainDeductionRecoveryApprovedBy?: number;
+  /** V2 closed recovery only: existing Authorised Deposit evidence, Main Draft write target. */
+  d702946AuthorisedDepositMainDeductionRecoveryEventId?: number;
+  d702946AuthorisedDepositMainDeductionRecoveryToken?: string;
+  d702946AuthorisedDepositMainDeductionRecoveryReleaseKey?: string;
+  d702946AuthorisedDepositMainDeductionRecoveryApprovedBy?: number;
 };
 
 export type FinancialDraftWriteResult = {
@@ -319,7 +326,9 @@ export function financialDraftWriteAllowsTransientRetry(context: FinancialWriteA
     context.mainInvoiceReconciliationEventId === undefined &&
     context.finalWeightAutomaticEventId === undefined &&
     context.d702946DepositMainDeductionRecoveryEventId === undefined &&
+    context.d702946AuthorisedDepositMainDeductionRecoveryEventId === undefined &&
     context.workflowType !== "d702946_deposit_main_deduction_recovery" &&
+    context.workflowType !== "d702946_authorised_deposit_main_deduction_recovery" &&
     context.depositMainDeductionAutomaticEventId === undefined &&
     context.extraHireAutomaticEventId === undefined;
 }
@@ -365,6 +374,25 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  const authorisedDepositRecoveryFields = [context.d702946AuthorisedDepositMainDeductionRecoveryEventId, context.d702946AuthorisedDepositMainDeductionRecoveryToken,
+    context.d702946AuthorisedDepositMainDeductionRecoveryReleaseKey, context.d702946AuthorisedDepositMainDeductionRecoveryApprovedBy];
+  if (context.workflowType === "d702946_authorised_deposit_main_deduction_recovery" || authorisedDepositRecoveryFields.some(value => value !== undefined)) {
+    const otherClasses = Object.entries(context).filter(([key, value]) => value !== undefined && !key.startsWith("d702946AuthorisedDepositMainDeductionRecovery") &&
+      /(?:EventId|Token|ReleaseKey|ApprovedBy|CorrectionKind|Direction)$/.test(key));
+    if (process.env.FINANCIAL_D702946_AUTHORISED_DEPOSIT_MAIN_DEDUCTION_RECOVERY_ENABLED !== "true" ||
+      context.workflowType !== "d702946_authorised_deposit_main_deduction_recovery" || otherClasses.length ||
+      !Number.isInteger(context.d702946AuthorisedDepositMainDeductionRecoveryEventId) || Number(context.d702946AuthorisedDepositMainDeductionRecoveryEventId) <= 0 ||
+      !context.d702946AuthorisedDepositMainDeductionRecoveryToken?.trim() || !context.d702946AuthorisedDepositMainDeductionRecoveryReleaseKey?.trim() ||
+      context.d702946AuthorisedDepositMainDeductionRecoveryReleaseKey !== D702946_AUTHORISED_DEPOSIT_RECOVERY_RELEASE_KEY ||
+      !Number.isInteger(context.d702946AuthorisedDepositMainDeductionRecoveryApprovedBy) || Number(context.d702946AuthorisedDepositMainDeductionRecoveryApprovedBy) <= 0 ||
+      context.approvalReference !== context.d702946AuthorisedDepositMainDeductionRecoveryReleaseKey || !context.currentDocumentPreflightPassed ||
+      !context.legacyWriterHandoffComplete || context.globalShadowMode || !context.familyLiveEnabled) {
+      throw new FinancialWriteDisabledError("D702946 Authorised-Deposit recovery requires its dedicated default-off V2 gate and mutually exclusive exact reservation context.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0))
+      throw new FinancialWriteDisabledError("D702946 Authorised-Deposit recovery writer execution ledger is required.");
+    return;
+  }
   const recoveryFields = [context.d702946DepositMainDeductionRecoveryEventId, context.d702946DepositMainDeductionRecoveryToken,
     context.d702946DepositMainDeductionRecoveryReleaseKey, context.d702946DepositMainDeductionRecoveryApprovedBy];
   if (context.workflowType === "d702946_deposit_main_deduction_recovery" || recoveryFields.some(value => value !== undefined)) {
@@ -610,8 +638,16 @@ export async function executeFinancialDraftWrite(
   assertFinancialDraftWriteAuthorised(context);
   const guardedRows = payload.body.Invoices;
   if (payload.documentNumber === "INV-702946" && Array.isArray(guardedRows) && guardedRows.some(row => d702946ExistingDeductions(row).length) &&
-    context.d702946DepositMainDeductionRecoveryEventId === undefined)
+    context.d702946DepositMainDeductionRecoveryEventId === undefined && context.d702946AuthorisedDepositMainDeductionRecoveryEventId === undefined)
     throw new FinancialWriteDisabledError("The D702946 recovery deduction body is reserved exclusively for its dedicated authorisation class.");
+  if (context.d702946AuthorisedDepositMainDeductionRecoveryEventId !== undefined) {
+    assertD702946AuthorisedDepositRecoveryPayload(payload);
+    await verifyD702946AuthorisedDepositMainDeductionRecoveryWriteAccess({ eventId: context.d702946AuthorisedDepositMainDeductionRecoveryEventId,
+      token: context.d702946AuthorisedDepositMainDeductionRecoveryToken!, releaseKey: context.d702946AuthorisedDepositMainDeductionRecoveryReleaseKey!,
+      preparedBy: context.d702946AuthorisedDepositMainDeductionRecoveryApprovedBy!, payload, executionId: context.executionId! });
+    await consumeD702946AuthorisedDepositMainDeductionRecoveryPayload({ eventId: context.d702946AuthorisedDepositMainDeductionRecoveryEventId,
+      token: context.d702946AuthorisedDepositMainDeductionRecoveryToken! }, context.executionId!);
+  }
   if (context.d702946DepositMainDeductionRecoveryEventId !== undefined) {
     assertD702946RecoveryPayload(payload);
     await verifyD702946DepositMainDeductionRecoveryWriteAccess({ eventId: context.d702946DepositMainDeductionRecoveryEventId,
@@ -852,6 +888,14 @@ export async function executeFinancialDraftWrite(
   const auth = await getXeroReadAuthWithRefresh();
   const operation = `${payload.method} financial-draft:${payload.documentFamily}:${payload.documentNumber}`;
   const response = await runXeroRequest<any>(auth, operation, async () => {
+    if (context.d702946AuthorisedDepositMainDeductionRecoveryEventId !== undefined) {
+      // Final fresh source/locks/full-Xero GETs and independently rebuilt V2 body immediately before the single POST.
+      assertFinancialDraftWriteAuthorised(context);
+      assertD702946AuthorisedDepositRecoveryPayload(payload);
+      await verifyD702946AuthorisedDepositMainDeductionRecoveryWriteAccess({ eventId: context.d702946AuthorisedDepositMainDeductionRecoveryEventId,
+        token: context.d702946AuthorisedDepositMainDeductionRecoveryToken!, releaseKey: context.d702946AuthorisedDepositMainDeductionRecoveryReleaseKey!,
+        preparedBy: context.d702946AuthorisedDepositMainDeductionRecoveryApprovedBy!, payload, executionId: context.executionId!, submitted: true });
+    }
     if (context.d702946DepositMainDeductionRecoveryEventId !== undefined) {
       // Final fresh source/locks/full-Xero GETs and independently rebuilt body immediately before the single POST.
       assertFinancialDraftWriteAuthorised(context);
@@ -869,7 +913,7 @@ export async function executeFinancialDraftWrite(
       );
     }
     if (payload.documentFamily === "customer_invoice" && payload.expectedXeroDocumentId &&
-      context.d702946DepositMainDeductionRecoveryEventId === undefined) {
+      context.d702946DepositMainDeductionRecoveryEventId === undefined && context.d702946AuthorisedDepositMainDeductionRecoveryEventId === undefined) {
       const { getPendingD702946DepositMainDeductionRecovery } = await import("./financialD702946DepositMainDeductionRecoveryDb");
       const pending = await getPendingD702946DepositMainDeductionRecovery(payload.expectedXeroDocumentId);
       if (pending) throw new FinancialWriteDisabledError(

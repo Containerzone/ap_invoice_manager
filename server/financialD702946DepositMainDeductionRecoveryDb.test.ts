@@ -58,6 +58,12 @@ describe("immutable D702946 recovery ledger", () => {
     const results = await Promise.all([reserveD702946DepositMainDeductionRecovery(reservation), reserveD702946DepositMainDeductionRecovery(reservation)]);
     expect(results.map(result => result.state).sort()).toEqual(["blocked", "reserved"]); expect(m.update).not.toHaveBeenCalled();
   });
+  it("returns a safe block rather than adopting an Authorised-Deposit V2 receipt with the same Main identity", async () => {
+    const p = previewFixture(); m.values.mockRejectedValue(Object.assign(new Error("duplicate"), { code: "ER_DUP_ENTRY" }));
+    m.rows = [{ ...receipt(), scopeKey: "D702946-authorised-deposit-main-deduction-recovery-v2", status: "reserved", processingToken: "v2" }];
+    expect(await reserveD702946DepositMainDeductionRecovery({ evidence: p.evidence, payload: p.payload, policy: policy(), token: "v1" })).toMatchObject({ state: "blocked", event: { scopeKey: "D702946-authorised-deposit-main-deduction-recovery-v2" } });
+    expect(m.update).not.toHaveBeenCalled();
+  });
   it("never reopens an uncertain/completed reservation regardless of changed evidence", async () => {
     const p = previewFixture(); m.values.mockRejectedValue(Object.assign(new Error("duplicate"), { code: "ER_DUP_ENTRY" }));
     m.rows = [{ ...receipt(), status: "reconciliation_required" }];

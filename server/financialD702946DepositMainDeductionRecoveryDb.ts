@@ -158,10 +158,13 @@ export async function reserveD702946DepositMainDeductionRecovery(input: { eviden
     status: "reserved" as const, processingToken: token };
   let inserted = false;
   try { await db.insert(events).values(values); inserted = true; } catch (error: any) { if (error?.code !== "ER_DUP_ENTRY" && error?.cause?.code !== "ER_DUP_ENTRY") throw error; }
-  const event = (await db.select().from(events).where(eq(events.scopeKey, D702946_RECOVERY_SCOPE_KEY)).limit(1))[0];
+  // The table has a shared unique Main/pair key. Query it rather than only V1's
+  // scope so a concurrent or completed V2 record is visibly blocked, never
+  // adopted as a V1 completion.
+  const event = (await db.select().from(events).where(eq(events.mainXeroInvoiceId, scope.mainXeroInvoiceId)).limit(1))[0];
   if (!event) throw new Error("D702946 recovery receipt could not be read back.");
-  if (!inserted || event.status !== "reserved" || event.processingToken !== token || event.recoveryKey !== values.recoveryKey)
-    return { state: event.status === "draft_updated" ? "completed" as const : "blocked" as const, event };
+  if (!inserted || event.scopeKey !== D702946_RECOVERY_SCOPE_KEY || event.status !== "reserved" || event.processingToken !== token || event.recoveryKey !== values.recoveryKey)
+    return { state: event.scopeKey === D702946_RECOVERY_SCOPE_KEY && event.status === "draft_updated" ? "completed" as const : "blocked" as const, event };
   return { state: "reserved" as const, event };
 }
 export async function assertD702946RecoveryWriterReceipt(executionId: number, event: FinancialD702946DepositMainDeductionRecoveryEvent, allowed: string[]): Promise<void> {
