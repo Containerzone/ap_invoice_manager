@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/lib/businessToast";
+import { formatSydneyDateTime } from "@/lib/dateFormat";
 import {
   RefreshCw,
   CheckCircle2,
@@ -149,9 +150,9 @@ function PoRequestDetail({
           <div className="space-y-5">
             {/* Summary row */}
             <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-              <span>Received: <strong className="text-foreground"><BusinessText value={new Date(data.createdAt!).toLocaleString()} /></strong></span>
+              <span>Received: <strong className="text-foreground"><BusinessText value={formatSydneyDateTime(data.createdAt)} /></strong></span>
               {data.processedAt && (
-                <span>Processed: <strong className="text-foreground"><BusinessText value={new Date(data.processedAt).toLocaleString()} /></strong></span>
+                <span>Processed: <strong className="text-foreground"><BusinessText value={formatSydneyDateTime(data.processedAt)} /></strong></span>
               )}
             </div>
 
@@ -348,11 +349,11 @@ export default function PoRequests() {
                         )}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        <BusinessText value={new Date(row.createdAt!).toLocaleString()} />
+                        <BusinessText value={formatSydneyDateTime(row.createdAt)} />
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         <BusinessText value={row.processedAt
-                          ? new Date(row.processedAt).toLocaleString()
+                          ? formatSydneyDateTime(row.processedAt)
                           : "—"} />
                       </TableCell>
                       <TableCell>

@@ -55,6 +55,24 @@ describe("Main Customer Invoice rules", () => {
     expect(result.document?.dueDate?.toISOString()).toBe("2026-10-06T00:00:00.000Z");
   });
 
+  it("uses the Operations Sydney creation-date fallback and omits DueDate when pickup date is blank", () => {
+    const result = buildMainCustomerInvoice(facts({ fullContainerPickupDate: "" }), new Date("2026-10-18T13:00:00.000Z"));
+
+    expect(result).toMatchObject({ eligible: true });
+    expect(result.document?.issueDate?.toISOString()).toBe("2026-10-19T00:00:00.000Z");
+    expect(result.document?.dueDate).toBeNull();
+  });
+
+  it("accepts the requested Australian DD/MM/YY and DD/MM/YYYY pickup-date formats", () => {
+    const shortYear = buildMainCustomerInvoice(facts({ fullContainerPickupDate: "04/11/26" }));
+    const longYear = buildMainCustomerInvoice(facts({ fullContainerPickupDate: "04/11/2026" }));
+
+    expect(shortYear.document?.issueDate?.toISOString()).toBe("2026-11-04T00:00:00.000Z");
+    expect(shortYear.document?.dueDate?.toISOString()).toBe("2026-11-06T00:00:00.000Z");
+    expect(longYear.document?.issueDate?.toISOString()).toBe("2026-11-04T00:00:00.000Z");
+    expect(longYear.document?.dueDate?.toISOString()).toBe("2026-11-06T00:00:00.000Z");
+  });
+
   it("maps only the authorised current Deal container situations and renders the native Xero route template", () => {
     expect(mainCustomerInvoiceTransportItemCode("SHIPPER OWN")).toBe("SER9");
     expect(mainCustomerInvoiceTransportItemCode("PURCHASED")).toBe("SER60");
@@ -114,7 +132,8 @@ describe("Main Customer Invoice rules", () => {
     expect(buildMainCustomerInvoice(facts({ containerSituation: "IMPORT", serviceLines: transportLine }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Container Situation") });
     expect(buildMainCustomerInvoice(facts({ originSuburb: "", serviceLines: transportLine }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Origin Suburb") });
     expect(buildMainCustomerInvoice(facts({ serviceLines: [{ serviceVtigerId: "", description: "", quantity: 0, unitAmount: 0 }] }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("billable Service") });
-    expect(buildMainCustomerInvoice(facts({ fullContainerPickupDate: "2026-02-30" }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Pickup DATE") });
+    expect(buildMainCustomerInvoice(facts({ fullContainerPickupDate: "31/02/26" }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("Pickup DATE") });
+    expect(buildMainCustomerInvoice(facts({ fullContainerPickupDate: "" }))).toMatchObject({ eligible: true });
     expect(buildMainCustomerInvoice(facts({ sourceHoldReason: "Deal field mapping for Full Container Pickup DATE is missing or ambiguous; no alias will be guessed." }))).toMatchObject({ eligible: false, holdReason: expect.stringContaining("mapping") });
   });
 });

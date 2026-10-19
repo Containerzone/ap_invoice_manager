@@ -1,3 +1,5 @@
+import { formatSydneyDate } from "@/lib/dateFormat";
+
 export type InvoiceStatus =
   | "uploaded"
   | "extracting"
@@ -44,14 +46,7 @@ export function formatCurrency(amount: number | string | null | undefined, curre
 }
 
 export function formatDate(dateStr: string | null | undefined): string {
-  if (!dateStr) return "—";
-  try {
-    return new Date(dateStr).toLocaleDateString("en-AU", {
-      day: "2-digit", month: "short", year: "numeric",
-    });
-  } catch {
-    return dateStr;
-  }
+  return formatSydneyDate(dateStr);
 }
 
 export function formatRelativeTime(date: Date | string | null | undefined): string {
@@ -65,7 +60,7 @@ export function formatRelativeTime(date: Date | string | null | undefined): stri
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString("en-AU", { day: "2-digit", month: "short", year: "numeric" });
+  return formatSydneyDate(d, "");
 }
 
 export function parseContainerNumbers(raw: string | null | undefined): string[] {

@@ -3,7 +3,7 @@ import { Temporal } from "@js-temporal/polyfill";
 import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export const MAIN_CUSTOMER_INVOICE_ACCOUNT_CODE = "200" as const;
-export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v6-full-container-pickup-date-deposit-status-due-date" as const;
+export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v7-optional-pickup-date-operations-fallback" as const;
 export const MAIN_CUSTOMER_INVOICE_RULES_HASH = createHash("sha256").update(MAIN_CUSTOMER_INVOICE_RULES_VERSION).digest("hex");
 
 export type MainCustomerInvoiceServiceLineFacts = {
@@ -62,11 +62,23 @@ function upper(value: string): string {
   return normal(value).toUpperCase();
 }
 
-/** Strict date-only VTiger business date; never parse locale strings or rollover dates. */
+/**
+ * Accept the date-only representation returned by VTiger plus the requested
+ * Australian display/input representations. This never delegates ambiguous
+ * locale parsing to JavaScript and therefore rejects rollover dates.
+ */
 export function mainCustomerInvoiceBusinessDate(value: string): Temporal.PlainDate | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const raw = value.trim();
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const australian = raw.match(/^(\d{2})\/(\d{2})\/(\d{2}|\d{4})$/);
+  const normalized = iso
+    ? `${iso[1]}-${iso[2]}-${iso[3]}`
+    : australian
+      ? `${australian[3]!.length === 2 ? `20${australian[3]}` : australian[3]}-${australian[2]}-${australian[1]}`
+      : null;
+  if (!normalized) return null;
   try {
-    return Temporal.PlainDate.from(value, { overflow: "reject" });
+    return Temporal.PlainDate.from(normalized, { overflow: "reject" });
   } catch {
     return null;
   }
@@ -77,6 +89,14 @@ function xeroBusinessDate(value: Temporal.PlainDate): Date {
   // Xero's Date/Date UTC transport representation rather than applying host
   // or UTC-instant arithmetic.
   return new Date(`${value.toString()}T00:00:00.000Z`);
+}
+
+/** The original Operations Main Invoice uses its Sydney creation day when no pickup date is available. */
+function sydneyBusinessDate(now: Date): Temporal.PlainDate {
+  const date = Temporal.Instant.fromEpochMilliseconds(now.getTime())
+    .toZonedDateTimeISO("Australia/Sydney")
+    .toPlainDate();
+  return date;
 }
 
 /**
@@ -200,13 +220,14 @@ export function applyMainCustomerInvoiceXeroTransportDescription(input: {
  * evidence. Warranty is intentionally excluded: it has a separately guarded
  * lifecycle and must not be inferred or bundled during Main Invoice migration.
  */
-export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, _now = new Date()): MainCustomerInvoicePreview {
+export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, now = new Date()): MainCustomerInvoicePreview {
   if (facts.sourceHoldReason) {
     return { eligible: false, holdReason: facts.sourceHoldReason, proposedInvoiceNumber: null, document: null };
   }
-  const issueBusinessDate = mainCustomerInvoiceBusinessDate(facts.fullContainerPickupDate);
-  if (!issueBusinessDate) {
-    return { eligible: false, holdReason: "Current Deal Full Container Pickup DATE must be a valid YYYY-MM-DD business date.", proposedInvoiceNumber: null, document: null };
+  const pickupDate = facts.fullContainerPickupDate.trim();
+  const pickupBusinessDate = pickupDate ? mainCustomerInvoiceBusinessDate(pickupDate) : null;
+  if (pickupDate && !pickupBusinessDate) {
+    return { eligible: false, holdReason: "When provided, Full Container Pickup DATE must be a valid DD/MM/YY or DD/MM/YYYY business date.", proposedInvoiceNumber: null, document: null };
   }
   if (!/^\d+x\d+$/i.test(facts.dealId) || !facts.dealNumber.trim()) {
     return { eligible: false, holdReason: "A current VTiger Deal ID and Deal number are required.", proposedInvoiceNumber: null, document: null };
@@ -228,11 +249,13 @@ export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, _now =
   if (!facts.serviceLines.length || facts.serviceLines.some((line) => !validServiceLine(line))) {
     return { eligible: false, holdReason: "The linked VTiger Quote requires one or more current billable Service line items with quantity and list price.", proposedInvoiceNumber: null, document: null };
   }
-  // PlainDate addition is calendar arithmetic. The +14 ON ACCOUNT term and
-  // normal +2 term therefore remain correct across Sydney DST changes.
-  const dueBusinessDate = issueBusinessDate.add({ days: upper(facts.depositStatus) === "ON ACCOUNT" ? 14 : 2 });
-  const issueDate = xeroBusinessDate(issueBusinessDate);
-  const dueDate = xeroBusinessDate(dueBusinessDate);
+  // A supplied pickup date remains the source for Date and DueDate. Where it
+  // is absent, preserve Operations behaviour: create the Main Invoice on the
+  // current Sydney business date and omit DueDate rather than inventing one.
+  const issueDate = xeroBusinessDate(pickupBusinessDate ?? sydneyBusinessDate(now));
+  const dueDate = pickupBusinessDate
+    ? xeroBusinessDate(pickupBusinessDate.add({ days: upper(facts.depositStatus) === "ON ACCOUNT" ? 14 : 2 }))
+    : null;
   const lineItems = facts.serviceLines.map((line) => toFinancialLine(line, transportItemCode));
   const subtotal = money(lineItems.reduce((total, line) => total + line.lineAmount, 0));
   const invoiceNumber = mainCustomerInvoiceNumber(facts.dealNumber);

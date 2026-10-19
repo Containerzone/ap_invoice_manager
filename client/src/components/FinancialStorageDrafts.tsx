@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatSydneyDate } from "@/lib/dateFormat";
 
 type StorageReceipt = { documentType?: string; number?: string; xeroId?: string; status?: string; readBackAt?: string };
 
@@ -38,7 +39,7 @@ export function FinancialStorageDrafts() {
           const finalReceipts = Array.isArray(event.finalisationResults) ? event.finalisationResults as StorageReceipt[] : [];
           const receipt = (kind: string) => receipts.find((item) => item.documentType === kind);
           return <tr key={event.id} className="border-b align-top last:border-0"><td className="p-3"><span className="font-mono font-medium"><BusinessText value={event.dealNumber} /></span><br /><span className="capitalize text-muted-foreground"><BusinessText value={event.location} /></span></td>
-            <td className="whitespace-nowrap p-3 font-mono text-xs"><span className="font-sans capitalize"><BusinessText value={event.eventKind} /></span><br /><BusinessText value={event.periodStart} /><br />to <BusinessText value={event.finalDate ?? event.periodEnd} />{event.nextBillingDate && <p className="mt-1 text-muted-foreground">Next: <BusinessText value={event.nextBillingDate} /></p>}</td><td className="p-3"><Badge className={statusStyle(event.status)}><BusinessText value={event.finalisedAt ? "finalised" : event.status.replaceAll("_", " ")} /></Badge>{finalReceipts.length > 0 && <p className="mt-1 text-xs"><BusinessText value={finalReceipts.length} /> final Draft receipts</p>}{event.errorMessage && <p className="mt-1 max-w-64 text-xs text-muted-foreground"><BusinessText value={event.errorMessage} /></p>}</td>
+            <td className="whitespace-nowrap p-3 font-mono text-xs"><span className="font-sans capitalize"><BusinessText value={event.eventKind} /></span><br /><BusinessText value={formatSydneyDate(event.periodStart)} /><br />to <BusinessText value={formatSydneyDate(event.finalDate ?? event.periodEnd)} />{event.nextBillingDate && <p className="mt-1 text-muted-foreground">Next: <BusinessText value={formatSydneyDate(event.nextBillingDate)} /></p>}</td><td className="p-3"><Badge className={statusStyle(event.status)}><BusinessText value={event.finalisedAt ? "finalised" : event.status.replaceAll("_", " ")} /></Badge>{finalReceipts.length > 0 && <p className="mt-1 text-xs"><BusinessText value={finalReceipts.length} /> final Draft receipts</p>}{event.errorMessage && <p className="mt-1 max-w-64 text-xs text-muted-foreground"><BusinessText value={event.errorMessage} /></p>}</td>
             {(["customer_invoice", "jd_transport", "gd_storage"] as const).map((kind) => <td key={kind} className="p-3"><span className="font-mono text-xs"><BusinessText value={receipt(kind)?.number ?? "—"} /></span><br /><span className="text-xs text-muted-foreground"><BusinessText value={receipt(kind)?.status ?? "Not verified"} /></span></td>)}
           </tr>;
         })}</tbody></table></div>}</CardContent>

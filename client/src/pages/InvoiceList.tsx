@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { StatusBadge } from "@/components/StatusBadge";
 import { InvoiceNotesPreview } from "@/components/InvoiceNotesPreview";
 import { formatRelativeTime } from "@/lib/invoiceUtils";
+import { formatSydneyDate } from "@/lib/dateFormat";
 import { externalInvoiceListRefreshOptions } from "@/lib/invoiceListRefresh";
 import { Upload, Search, FileText, Filter, Users, ChevronUp, ChevronDown, ChevronsUpDown, X, MessageSquare, StickyNote } from "lucide-react";
 
@@ -36,15 +37,6 @@ const STATUS_OPTIONS = [
 // ── Sort config ───────────────────────────────────────────────────────────────
 type SortKey = "invoiceNumber" | "poNumber" | "supplier" | "amount" | "issueDate" | "dueDate" | "received" | "status";
 type SortDir = "asc" | "desc";
-
-function formatShortDate(dateStr: string | null | undefined): string {
-  if (!dateStr) return "—";
-  try {
-    return new Date(dateStr).toLocaleDateString("en-AU", { day: "2-digit", month: "short", year: "2-digit" });
-  } catch {
-    return "—";
-  }
-}
 
 function formatCurrency(amount: string | number | null | undefined): string {
   if (amount == null || amount === "") return "—";
@@ -374,12 +366,12 @@ export default function InvoiceList() {
 
                     {/* Col 5: Issue Date */}
                     <span className="text-xs text-muted-foreground hidden xl:block">
-                      <BusinessText value={formatShortDate(invoice.extractedInvoiceDate)} />
+                      <BusinessText value={formatSydneyDate(invoice.extractedInvoiceDate)} />
                     </span>
 
                     {/* Col 6: Due Date (desktop only) */}
                     <span className="text-xs text-muted-foreground hidden xl:block">
-                      <BusinessText value={formatShortDate(invoice.extractedDueDate)} />
+                      <BusinessText value={formatSydneyDate(invoice.extractedDueDate)} />
                     </span>
 
                     {/* Col 7: Received Date (desktop only) */}

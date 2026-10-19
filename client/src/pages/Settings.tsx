@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { APP_NAME } from "@shared/branding";
+import { formatSydneyDateTime } from "@/lib/dateFormat";
 
 export default function Settings() {
   const { user } = useAuth();
@@ -49,7 +50,7 @@ export default function Settings() {
     try {
       const result = await enableMicrosoftMutation.mutateAsync({ origin: window.location.origin });
       await refetchMicrosoft();
-      toast.success(`Microsoft invoice mailbox enabled until ${new Date(result.subscriptionExpiresAt).toLocaleString()}`);
+      toast.success(`Microsoft invoice mailbox enabled until ${formatSydneyDateTime(result.subscriptionExpiresAt)}`);
     } catch (e: any) {
       toast.error(e?.message ?? "Unable to enable Microsoft invoice mailbox");
     }
@@ -118,7 +119,7 @@ export default function Settings() {
                       Xero has instructed the application to pause this organisation until<BusinessText value={" "} />
                       <strong>
                         <BusinessText value={xeroStatus.rateLimit.pausedUntil
-                          ? new Date(xeroStatus.rateLimit.pausedUntil).toLocaleString("en-AU")
+                          ? formatSydneyDateTime(xeroStatus.rateLimit.pausedUntil)
                           : "the limit resets"} />
                       </strong>.
                     </p>
@@ -167,7 +168,7 @@ export default function Settings() {
                     <p className={`text-xs mt-1 ${
                     xeroStatus.hasAttachmentsScope && !xeroExpired ? "text-emerald-600" : "text-amber-700"
                   }`}>
-                      Token <BusinessText value={xeroExpired ? "expired" : "expires"} />: <BusinessText value={new Date(xeroStatus.expiresAt).toLocaleString("en-AU")} />
+                      Token <BusinessText value={xeroExpired ? "expired" : "expires"} />: <BusinessText value={formatSydneyDateTime(xeroStatus.expiresAt)} />
                     </p>
                   )}
                   <p className={`text-xs mt-1 ${
@@ -269,7 +270,7 @@ export default function Settings() {
               </Button>
             </div>
             {microsoftStatus?.subscriptionId ? (
-              <p className="text-xs text-emerald-800">Connected. Subscription expires <BusinessText value={microsoftStatus.subscriptionExpiresAt ? new Date(microsoftStatus.subscriptionExpiresAt).toLocaleString() : "soon"} />; renewal runs automatically.</p>
+              <p className="text-xs text-emerald-800">Connected. Subscription expires <BusinessText value={microsoftStatus.subscriptionExpiresAt ? formatSydneyDateTime(microsoftStatus.subscriptionExpiresAt) : "soon"} />; renewal runs automatically.</p>
             ) : (
               <p className="text-xs text-amber-800">Not yet activated. Enable this after publishing the current version so Microsoft can validate the secure webhook.</p>
             )}

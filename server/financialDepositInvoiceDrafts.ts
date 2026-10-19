@@ -49,7 +49,12 @@ function money(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 export function strictDepositDate(value: string): Date | null {
-  const dateOnly = value.trim().match(/^(\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
+  const raw = value.trim();
+  const iso = raw.match(/^(\d{4}-\d{2}-\d{2})$/)?.[1] ?? "";
+  const australian = raw.match(/^(\d{2})\/(\d{2})\/(\d{2}|\d{4})$/);
+  const dateOnly = iso || (australian
+    ? `${australian[3]!.length === 2 ? `20${australian[3]}` : australian[3]}-${australian[2]}-${australian[1]}`
+    : "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return null;
   const parsed = new Date(`${dateOnly}T00:00:00.000Z`);
   return Number.isFinite(parsed.getTime()) &&

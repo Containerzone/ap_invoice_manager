@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/StatusBadge";
 import { SupplierCombobox } from "@/components/SupplierCombobox";
 import { formatCurrency, formatRelativeTime, parseContainerNumbers } from "@/lib/invoiceUtils";
+import { formatSydneyDate } from "@/lib/dateFormat";
 import { calculateInvoiceLineTotals } from "@shared/invoiceLineTotals";
 import { getInvoicePdfUrl, getPdfPreviewUrl, nextPdfZoom, type PdfPreviewZoom } from "@/lib/pdfPreview";
 import { toast } from "@/lib/businessToast";
@@ -44,30 +45,27 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { format, addDays, endOfMonth, parse, isValid } from "date-fns";
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
-// Display format: DD-MM-YY  (e.g. 04-06-25)
+// Display format: DD/MM/YY (e.g. 04/06/25)
 // Storage format: YYYY-MM-DD (ISO, what the DB stores)
 
 function toDisplayDate(isoOrRaw: string | null | undefined): string {
   if (!isoOrRaw) return "";
-  // Already in DD-MM-YY
-  if (/^\d{2}-\d{2}-\d{2}$/.test(isoOrRaw)) return isoOrRaw;
-  // YYYY-MM-DD → DD-MM-YY
-  const d = new Date(isoOrRaw);
-  if (!isNaN(d.getTime())) {
-    return format(d, "dd-MM-yy");
-  }
-  return isoOrRaw;
+  // Preserve legacy short dates while standardising their display separator.
+  if (/^\d{2}[-/]\d{2}[-/]\d{2}$/.test(isoOrRaw)) return isoOrRaw.replaceAll("-", "/");
+  const date = new Date(isoOrRaw);
+  return Number.isNaN(date.getTime()) ? isoOrRaw : formatSydneyDate(date, isoOrRaw);
 }
 
 function toIsoDate(ddMMyy: string): string {
   if (!ddMMyy) return "";
   // Already ISO
   if (/^\d{4}-\d{2}-\d{2}$/.test(ddMMyy)) return ddMMyy;
-  // DD-MM-YY → YYYY-MM-DD
-  const parsed = parse(ddMMyy, "dd-MM-yy", new Date());
+  // DD/MM/YY (or legacy DD-MM-YY) → YYYY-MM-DD
+  const normalised = ddMMyy.replaceAll("/", "-");
+  const parsed = parse(normalised, "dd-MM-yy", new Date());
   if (isValid(parsed)) return format(parsed, "yyyy-MM-dd");
   // DD-MM-YYYY
-  const parsed2 = parse(ddMMyy, "dd-MM-yyyy", new Date());
+  const parsed2 = parse(normalised, "dd-MM-yyyy", new Date());
   if (isValid(parsed2)) return format(parsed2, "yyyy-MM-dd");
   return ddMMyy;
 }
@@ -1200,7 +1198,7 @@ export default function InvoiceDetail() {
                       <span key={r.poNumber}>
                         PO <strong><BusinessText value={r.poNumber} /></strong> has already been <strong>PAID</strong>
                         <BusinessText value={r.paidAmount ? ` ($${r.paidAmount.toFixed(2)})` : ""} />
-                        <BusinessText value={r.paidDate ? ` on ${r.paidDate}` : ""} />.<BusinessText value={" "} />
+                        <BusinessText value={r.paidDate ? ` on ${formatSydneyDate(r.paidDate)}` : ""} />.<BusinessText value={" "} />
                       </span>
                     ))}
                   </p>
@@ -1595,7 +1593,7 @@ export default function InvoiceDetail() {
                                   <p className="text-red-700">
                                     <strong>PAID</strong>
                                     <BusinessText value={po.paidAmount ? ` — $${po.paidAmount.toFixed(2)}` : ""} />
-                                    <BusinessText value={po.paidDate ? ` on ${po.paidDate}` : ""} />
+                                    <BusinessText value={po.paidDate ? ` on ${formatSydneyDate(po.paidDate)}` : ""} />
                                   </p>
                                 ) : (
                                   <p className="text-amber-700">Payment status: <strong>NOT YET PAID</strong></p>

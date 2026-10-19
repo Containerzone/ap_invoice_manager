@@ -131,6 +131,20 @@ describe("Deposit isolated Draft calculations", () => {
     });
     expect(noDate.document?.dueDate).toBeNull();
   });
+  it("accepts DD/MM/YY and DD/MM/YYYY where an optional Deposit scheduling date is supplied", () => {
+    const shortYear = buildDepositInvoice(facts({
+      emptyContainerSupplyDate: "",
+      fullContainerCollectionDate: "13/10/26",
+    }), new Date("2026-10-11T02:00:00.000Z"));
+    const longYear = buildDepositInvoice(facts({
+      emptyContainerSupplyDate: "",
+      fullContainerCollectionDate: "13/10/2026",
+    }), new Date("2026-10-11T02:00:00.000Z"));
+
+    expect(shortYear).toMatchObject({ eligible: true, dueDateSource: "full_container_collection_date" });
+    expect(shortYear.document?.dueDate?.toISOString()).toBe("2026-10-12T00:00:00.000Z");
+    expect(longYear.document?.dueDate?.toISOString()).toBe("2026-10-12T00:00:00.000Z");
+  });
   it("holds unconfirmed schema or absent customer rather than inventing mappings", () => {
     expect(
       buildDepositInvoice(facts({ sourceHoldReason: "Unconfirmed mapping" }))

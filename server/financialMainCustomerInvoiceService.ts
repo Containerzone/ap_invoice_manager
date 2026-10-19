@@ -44,6 +44,8 @@ export const MAIN_CUSTOMER_INVOICE_SOURCE_FIELDS = {
   },
 } as const;
 
+const OPTIONAL_MAIN_INVOICE_SOURCE_FIELD_KEYS = ["fullContainerPickupDate"] as const;
+
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : typeof value === "number" && Number.isFinite(value) ? String(value) : "";
 }
@@ -83,17 +85,25 @@ export function resolveMainCustomerInvoiceSourceMappings(metadata: MainCustomerI
     const expected = MAIN_CUSTOMER_INVOICE_SOURCE_FIELDS[key];
     const fields = metadata.fields.filter((field) => field.label === expected.label);
     if (fields.length !== 1) {
-      holds.push(`Deal field mapping for ${expected.label} is missing or ambiguous; no alias will be guessed.`);
+      if (!OPTIONAL_MAIN_INVOICE_SOURCE_FIELD_KEYS.includes(key as typeof OPTIONAL_MAIN_INVOICE_SOURCE_FIELD_KEYS[number])) {
+        holds.push(`Deal field mapping for ${expected.label} is missing or ambiguous; no alias will be guessed.`);
+      }
       continue;
     }
     const field = fields[0]!;
     if (field.name !== expected.apiName || metadata.fields.filter((candidate) => candidate.name === field.name).length !== 1) {
-      holds.push(`Deal field mapping for ${expected.label} does not confirm its approved VTiger API field.`);
+      if (!OPTIONAL_MAIN_INVOICE_SOURCE_FIELD_KEYS.includes(key as typeof OPTIONAL_MAIN_INVOICE_SOURCE_FIELD_KEYS[number])) {
+        holds.push(`Deal field mapping for ${expected.label} does not confirm its approved VTiger API field.`);
+      }
       continue;
     }
     mappingEvidence[key] = field.name;
     if (field.type.name !== expected.type) {
-      holds.push(`Deal field mapping for ${expected.label} has an unverified field type.`);
+      if (!OPTIONAL_MAIN_INVOICE_SOURCE_FIELD_KEYS.includes(key as typeof OPTIONAL_MAIN_INVOICE_SOURCE_FIELD_KEYS[number])) {
+        holds.push(`Deal field mapping for ${expected.label} has an unverified field type.`);
+      } else {
+        delete mappingEvidence[key];
+      }
     }
   }
   return { mappingEvidence, holdReason: holds.length ? holds.join(" ") : null };
@@ -148,17 +158,18 @@ export async function readMainCustomerInvoiceFacts(dealId: string): Promise<Main
     await describeVtigerFinancialModuleFields(MAIN_CUSTOMER_INVOICE_VTIGER_MODULE),
   );
   const sourceHolds = mapping.holdReason ? [mapping.holdReason] : [];
-  const fullContainerPickupDate = mappedScalar(deal, mapping.mappingEvidence, "fullContainerPickupDate", sourceHolds);
+  const fullContainerPickupDate = mappedScalar(deal, mapping.mappingEvidence, "fullContainerPickupDate", sourceHolds, true);
   // A blank Deposit Status is the normal/default two-day case. Its current
   // metadata-backed scalar is still required so a missing/wrong-type source
   // cannot silently be treated as blank.
   const depositStatus = mappedScalar(deal, mapping.mappingEvidence, "depositStatus", sourceHolds, true);
-  if (!mainCustomerInvoiceBusinessDate(fullContainerPickupDate)) {
-    sourceHolds.push("Current Deal Full Container Pickup DATE must be a valid YYYY-MM-DD business date.");
+  if (fullContainerPickupDate && !mainCustomerInvoiceBusinessDate(fullContainerPickupDate)) {
+    sourceHolds.push("When provided, Current Deal Full Container Pickup DATE must be a valid DD/MM/YY or DD/MM/YYYY business date.");
   }
-  // These two fields determine the financial document's IssueDate/DueDate.
-  // A mapping, scalar or calendar-date failure holds before any unrelated
-  // Quote/customer lookup or Xero preflight can turn it into a Draft.
+  // Deposit Status remains a required exact field. Pickup DATE is optional:
+  // a valid supplied value determines Xero Date/DueDate, while a blank or
+  // unavailable value returns to the original Operations creation-date path.
+  // A populated malformed value still holds before unrelated source/Xero reads.
   if (sourceHolds.length) {
     return {
       dealId,

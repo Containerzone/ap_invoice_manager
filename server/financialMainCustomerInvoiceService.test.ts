@@ -85,29 +85,29 @@ describe("Main Customer Invoice current-source evidence", () => {
     expect(recordPreview).toHaveBeenCalledWith(expect.objectContaining({ status: "held" }));
   });
 
-  it.each(["missing", "ambiguous"])("holds %s Full Container Pickup DATE metadata rather than guessing an API alias", async (mode) => {
+  it.each(["missing", "ambiguous"])("uses the Operations date fallback when %s Full Container Pickup DATE metadata is unavailable", async (mode) => {
     const metadata = currentMetadata();
     if (mode === "missing") metadata.fields = metadata.fields.filter((field) => field.name !== "cf_potentials_fullcontainercollectiondate");
     if (mode === "ambiguous") metadata.fields.push({ ...metadata.fields[0]!, name: "cf_other_pickup_date" });
     mocks.describe.mockResolvedValue(metadata);
 
-    expect(resolveMainCustomerInvoiceSourceMappings(metadata).holdReason).toMatch(/Full Container Pickup DATE.*missing or ambiguous/);
+    expect(resolveMainCustomerInvoiceSourceMappings(metadata).holdReason).toBeNull();
     const result = await previewMainCustomerInvoice("5x77");
 
-    expect(result).toMatchObject({ state: "held", noWrites: true, holdReason: expect.stringContaining("Full Container Pickup DATE") });
+    expect(result).toMatchObject({ state: "previewed", noWrites: true, holdReason: null });
     expect(result.facts.mappingEvidence).not.toHaveProperty("fullContainerPickupDate");
-    expect(retrieve.mock.calls).toEqual([["5x77"]]);
-    expect(preflight).not.toHaveBeenCalled();
+    expect(retrieve.mock.calls.map(([id]) => id)).toEqual(["5x77", "20x9", "4x2", "14x1"]);
+    expect(preflight).toHaveBeenCalledTimes(2);
   });
 
-  it("holds an invalid current pickup date before Quote, customer, or Xero reads", async () => {
+  it("holds a populated invalid current pickup date before Quote, customer, or Xero reads", async () => {
     retrieve.mockImplementation(async (id: string) => id === "5x77"
       ? { id, potential_no: "D702877", cf_potentials_fullcontainercollectiondate: "2026-02-30", cf_potentials_depositstatus: "PENDING", modifiedtime: "2026-10-11T01:00:00Z" }
       : { id });
 
     const result = await previewMainCustomerInvoice("5x77");
 
-    expect(result).toMatchObject({ state: "held", noWrites: true, holdReason: expect.stringContaining("valid YYYY-MM-DD") });
+    expect(result).toMatchObject({ state: "held", noWrites: true, holdReason: expect.stringContaining("DD/MM/YY") });
     expect(retrieve.mock.calls).toEqual([["5x77"]]);
     expect(preflight).not.toHaveBeenCalled();
   });

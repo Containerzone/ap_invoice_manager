@@ -27,8 +27,8 @@
 | `Potentials` | `cf_potentials_containersituationselectone` | Container Situation (Select One) | Exact transport-item classification: `SHIPPER OWN` → SER9; `PURCHASED`/`HIRED` → SER60; all other values hold |
 | `Potentials` | `cf_potentials_pickuplocation` | Origin Suburb | Replaces only the first `<>` of the current Xero native transport template |
 | `Potentials` | `cf_potentials_deliverylocation` | Destination Suburb | Replaces only the second `<>` of the current Xero native transport template |
-| `Potentials` | `cf_potentials_fullcontainercollectiondate` | Full Container Pickup DATE | Required current Main Invoice IssueDate and Final Weight amended-Draft Date |
-| `Potentials` | `cf_potentials_depositstatus` | Deposit Status | Current Main Invoice / Final Weight due-term selector: `ON ACCOUNT` → +14 Sydney calendar days; all other scalar values, including blank → +2 |
+| `Potentials` | `cf_potentials_fullcontainercollectiondate` | Full Container Pickup DATE | Optional Main Invoice Date/DueDate source; required Final Weight amended-Draft Date |
+| `Potentials` | `cf_potentials_depositstatus` | Deposit Status | Main Invoice selector when Pickup DATE is populated, and Final Weight selector: `ON ACCOUNT` → +14 Sydney calendar days; all other scalar values, including blank → +2 |
 | `Quotes` | `quote_no` | Quote ID | Invoice reference when present |
 | `Quotes` | `account_id` | Organization Name | Quote customer Account reference |
 | `Quotes` | `contact_id` | Contact Name | Quote customer Contact reference |
@@ -58,9 +58,11 @@ A GET-only Xero item audit on 18 October 2026 confirmed the current active sales
 
 Any non-hire, non-sale or unrecognised Quote Service remains itemless rather than being mapped by inference. These mappings never alter existing Xero Drafts.
 
-## Approved Main Invoice and Final Weight dates
+## Approved Main Invoice date fallback and separate Final Weight dates
 
-AP must re-read current Potentials metadata and require one exact `date`-typed **Full Container Pickup DATE** field and one exact `picklist`-typed **Deposit Status** field with the API names above. The Xero Main Invoice `Date` is the collection calendar date. Its `DueDate` is two Australia/Sydney calendar days later, except a case/whitespace-normalized `ON ACCOUNT` status uses fourteen days. The same header rule applies to the exact current Draft amendment proposed by both Final Weight directions. Missing, ambiguous, non-scalar or invalid source date evidence holds before a financial write; a blank but scalar Deposit Status is the default two-day case. Existing/authorised/paid documents are never altered by this rule.
+For a Main Invoice, a verified populated `date`-typed **Full Container Pickup DATE** sets the Xero `Date`; its `DueDate` is two Australia/Sydney calendar days later, except a case/whitespace-normalized `ON ACCOUNT` status uses fourteen days. The user confirmed that this field is not required for Main Invoice creation: if it is blank or unavailable, the original Operations fallback uses the current Australia/Sydney business date and omits `DueDate`. A populated malformed value holds rather than being guessed. `DD/MM/YY`, `DD/MM/YYYY` and VTiger's exact date-only API representation are accepted; user-facing dates display `DD/MM/YY`.
+
+Final Weight remains separate: both directions require the exact current `date`-typed **Full Container Pickup DATE** and the exact `picklist` Deposit Status, setting Date and the +2/+14 DueDate terms on the existing Draft amendment. It has no invented fallback. Existing/authorised/paid documents are never altered by either rule.
 
 ## Release boundary
 
