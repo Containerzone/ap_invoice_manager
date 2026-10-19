@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ verify: vi.fn(), consume: vi.fn(), auth: vi.fn(), put: vi.fn(), post: vi.fn(), request: vi.fn(), billingLock: vi.fn() }));
+const m = vi.hoisted(() => ({ verify: vi.fn(), consume: vi.fn(), auth: vi.fn(), put: vi.fn(), post: vi.fn(), request: vi.fn(), billingLock: vi.fn(), d702946Lock: vi.fn() }));
 vi.mock("./financialFinalWeightAdjustmentDb", () => ({ verifyFinalWeightAutomaticWriteAccess: m.verify, consumeFinalWeightPayload: m.consume }));
 vi.mock("./financialBillingPartySyncDb", () => ({ getBillingPartySyncPendingInvoiceLock: m.billingLock }));
+vi.mock("./financialD702946DepositMainDeductionRecoveryDb", () => ({ getPendingD702946DepositMainDeductionRecovery: m.d702946Lock }));
 vi.mock("axios", () => ({ default: { put: m.put, post: m.post } }));
 vi.mock("./xeroService", () => ({ EXPECTED_AP_XERO_TENANT_LABEL: "CONTAINERZONE", getXeroReadAuthWithRefresh: m.auth }));
 vi.mock("./xeroRequestManager", () => ({ runXeroRequest: m.request }));
@@ -10,7 +11,7 @@ import { buildFinalWeightAdjustment, prepareFinalWeightPayload } from "./financi
 import { facts, policy, xero } from "./_test/finalWeightFixtures";
 const context = (patch: Partial<FinancialWriteAuthorisation> = {}): FinancialWriteAuthorisation => ({ executionId: 9, workflowType: "final_weight_adjustment", approvalReference: policy().releaseKey, globalShadowMode: false, familyLiveEnabled: true, releaseManifestApproved: true, cutoverPackApproved: true, currentDocumentPreflightPassed: true, legacyWriterHandoffComplete: true, finalWeightAutomaticEventId: 1, finalWeightDirection: "overweight", finalWeightReleaseKey: policy().releaseKey, finalWeightApprovedBy: 7, ...patch });
 const payload = () => prepareFinalWeightPayload(buildFinalWeightAdjustment(facts(), "overweight", xero()), "source-hash");
-beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED", "true"); vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "false"); m.billingLock.mockResolvedValue(null); m.verify.mockResolvedValue(undefined); m.consume.mockResolvedValue(undefined); m.auth.mockResolvedValue({ token: "test-token", tenantId: "test-tenant" }); m.request.mockImplementation(async (_auth, _name, operation) => operation()); m.post.mockResolvedValue({ data: { Invoices: [{ InvoiceID: "invoice-exact", InvoiceNumber: "INV-702877", Status: "DRAFT" }] } }); });
+beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("FINANCIAL_FINAL_WEIGHT_AUTOMATIC_ENABLED", "true"); vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "false"); m.billingLock.mockResolvedValue(null); m.d702946Lock.mockResolvedValue(null); m.verify.mockResolvedValue(undefined); m.consume.mockResolvedValue(undefined); m.auth.mockResolvedValue({ token: "test-token", tenantId: "test-tenant" }); m.request.mockImplementation(async (_auth, _name, operation) => operation()); m.post.mockResolvedValue({ data: { Invoices: [{ InvoiceID: "invoice-exact", InvoiceNumber: "INV-702877", Status: "DRAFT" }] } }); });
 afterEach(() => vi.unstubAllEnvs());
 describe("Final-weight narrowly isolated production amendment writer", () => {
   it("requires independent default-off env even if global/Main/Deposit enabled", () => {
@@ -72,6 +73,12 @@ describe("Final-weight narrowly isolated production amendment writer", () => {
     await executeFinancialDraftWrite(payload(), context());
     expect(m.billingLock).toHaveBeenCalledWith("invoice-exact");
     expect(m.post).toHaveBeenCalledTimes(2);
+  });
+  it("blocks a separate Draft amendment while the D702946 recovery receipt is pending or uncertain", async () => {
+    m.d702946Lock.mockResolvedValue({ id: 1, status: "reconciliation_required" });
+    await expect(executeFinancialDraftWrite(payload(), context())).rejects.toThrow(/Deposit deduction recovery/i);
+    expect(m.d702946Lock).toHaveBeenCalledWith("invoice-exact");
+    expect(m.post).not.toHaveBeenCalled();
   });
   it("holds a wrong/non-Draft transport response for reconciliation", async () => {
     m.post.mockResolvedValue({ data: { Invoices: [{ InvoiceID: "wrong", InvoiceNumber: "INV-702877", Status: "AUTHORISED" }] } });

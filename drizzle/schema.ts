@@ -1051,6 +1051,56 @@ export const financialDepositMainDeductionEvents = mysqlTable("financial_deposit
 }));
 export type FinancialDepositMainDeductionEvent = typeof financialDepositMainDeductionEvents.$inferSelect;
 
+// Closed D702946 exception: evidence/payload never change; only one-way receipt state may change.
+export const financialD702946DepositMainDeductionRecoveryEvents = mysqlTable("financial_d702946_deposit_main_deduction_recovery_events", {
+  id: int("id").autoincrement().primaryKey(),
+  scopeKey: varchar("scopeKey", { length: 128 }).notNull(),
+  recoveryKey: varchar("recoveryKey", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  originalMainEventId: int("originalMainEventId").notNull(),
+  failedMainWriterExecutionId: int("failedMainWriterExecutionId").notNull(),
+  mainRecoveryEventId: int("mainRecoveryEventId").notNull(),
+  mainRecoveryWriterExecutionId: int("mainRecoveryWriterExecutionId").notNull(),
+  depositEventId: int("depositEventId").notNull(),
+  depositWriterExecutionId: int("depositWriterExecutionId").notNull(),
+  mainInvoiceNumber: varchar("mainInvoiceNumber", { length: 128 }).notNull(),
+  mainXeroInvoiceId: varchar("mainXeroInvoiceId", { length: 128 }).notNull(),
+  depositInvoiceNumber: varchar("depositInvoiceNumber", { length: 128 }).notNull(),
+  depositXeroInvoiceId: varchar("depositXeroInvoiceId", { length: 128 }).notNull(),
+  anchorEvidenceHash: varchar("anchorEvidenceHash", { length: 64 }).notNull(),
+  anchorEvidence: json("anchorEvidence").notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  sourceSnapshot: json("sourceSnapshot").notNull(),
+  xeroEvidenceHash: varchar("xeroEvidenceHash", { length: 64 }).notNull(),
+  mainXeroSnapshot: json("mainXeroSnapshot").notNull(),
+  depositXeroSnapshot: json("depositXeroSnapshot").notNull(),
+  payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
+  authorisedPayload: json("authorisedPayload").notNull(),
+  releaseKey: varchar("releaseKey", { length: 128 }).notNull(),
+  approvedBy: int("approvedBy").notNull(),
+  approvedAt: varchar("approvedAt", { length: 64 }).notNull(),
+  policyHash: varchar("policyHash", { length: 64 }).notNull(),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["reserved", "submitted", "draft_updated", "reconciliation_required"] as const).default("reserved").notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  submittedAt: timestamp("submittedAt"),
+  readbackEvidence: json("readbackEvidence"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => ({
+  scopeUnique: uniqueIndex("financial_d702946_dd_scope_unique").on(table.scopeKey),
+  keyUnique: uniqueIndex("financial_d702946_dd_key_unique").on(table.recoveryKey),
+  invoiceUnique: uniqueIndex("financial_d702946_dd_invoice_unique").on(table.mainInvoiceNumber),
+  mainIdUnique: uniqueIndex("financial_d702946_dd_main_id_unique").on(table.mainXeroInvoiceId),
+  depositUnique: uniqueIndex("financial_d702946_dd_deposit_unique").on(table.depositXeroInvoiceId),
+  pairUnique: uniqueIndex("financial_d702946_dd_pair_unique").on(table.mainXeroInvoiceId, table.depositXeroInvoiceId),
+  mainReceiptUnique: uniqueIndex("financial_d702946_dd_main_receipt_unique").on(table.mainRecoveryEventId),
+  depositReceiptUnique: uniqueIndex("financial_d702946_dd_deposit_receipt_unique").on(table.depositEventId),
+}));
+export type FinancialD702946DepositMainDeductionRecoveryEvent = typeof financialD702946DepositMainDeductionRecoveryEvents.$inferSelect;
+
 // Final weight evidence never changes after insert. Both directions share a
 // per-document one-time exclusive claim, NOT Main Invoice's release or ledger.
 export const financialFinalWeightAdjustmentEvents = mysqlTable("financial_final_weight_adjustment_events", {

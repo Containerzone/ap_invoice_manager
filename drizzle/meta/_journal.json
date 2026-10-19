@@ -379,6 +379,13 @@
       "when": 1792398461736,
       "tag": "0053_fast_risque",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "5",
+      "when": 1792408393259,
+      "tag": "0054_dashing_strong_guy",
+      "breakpoints": true
     }
   ]
 }

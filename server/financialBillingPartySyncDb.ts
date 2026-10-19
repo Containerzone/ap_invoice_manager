@@ -4,6 +4,7 @@ import {
   financialBillingPartySyncAudits,
   financialBillingPartySyncEvents,
   financialBillingPartySyncLocks,
+  financialD702946DepositMainDeductionRecoveryEvents,
   financialDepositMainDeductionEvents,
   financialFinalWeightAdjustmentEvents,
   financialMainCustomerInvoiceEvents,
@@ -193,7 +194,7 @@ export async function recordBillingPartySyncAudit(input: {
  */
 export async function billingPartySyncConflictReason(dealId: string, xeroInvoiceId: string): Promise<string | null> {
   const db = await database();
-  const [writers, finalWeight, deductions, warranties] = await Promise.all([
+  const [writers, finalWeight, deductions, d702946Recovery, warranties] = await Promise.all([
     db.select().from(financialWriterExecutions).where(and(
       eq(financialWriterExecutions.targetXeroDocumentId, xeroInvoiceId),
       inArray(financialWriterExecutions.status, ["prepared", "submitted", "reconciliation_required"]),
@@ -206,6 +207,10 @@ export async function billingPartySyncConflictReason(dealId: string, xeroInvoice
       eq(financialDepositMainDeductionEvents.mainXeroInvoiceId, xeroInvoiceId),
       inArray(financialDepositMainDeductionEvents.status, ["reserved", "reconciliation_required"]),
     )).limit(1),
+    db.select().from(financialD702946DepositMainDeductionRecoveryEvents).where(and(
+      eq(financialD702946DepositMainDeductionRecoveryEvents.mainXeroInvoiceId, xeroInvoiceId),
+      inArray(financialD702946DepositMainDeductionRecoveryEvents.status, ["reserved", "submitted", "reconciliation_required"]),
+    )).limit(1),
     db.select().from(financialWarrantyAvisoEvents).where(and(
       eq(financialWarrantyAvisoEvents.dealId, dealId),
       inArray(financialWarrantyAvisoEvents.status, ["reserved", "main_submitted", "po_submitted", "reconciliation_required"]),
@@ -214,6 +219,7 @@ export async function billingPartySyncConflictReason(dealId: string, xeroInvoice
   if (writers[0]) return "An in-flight or uncertain AP writer execution already owns this exact Xero invoice; reconcile before any billing-party change.";
   if (finalWeight[0]) return "An active or uncertain Final Weight amendment already owns this exact Xero invoice; reconcile before any billing-party change.";
   if (deductions[0]) return "An active or uncertain Deposit-to-main deduction already owns this exact Xero invoice; reconcile before any billing-party change.";
+  if (d702946Recovery[0]) return "The dedicated D702946 Deposit-to-main recovery owns this exact Xero invoice; reconcile before any billing-party change.";
   if (warranties[0]) return "An active or uncertain Warranty/Aviso main path exists for this Deal; reconcile before any billing-party change.";
   return null;
 }

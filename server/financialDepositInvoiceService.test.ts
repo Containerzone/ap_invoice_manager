@@ -103,6 +103,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "false");
   vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "false");
+  // This suite validates Deposit creation only. The separately released generic
+  // Deposit-to-main writer has its own integration tests and must not perform
+  // an unmocked Xero read when the deployed project environment enables it.
+  vi.stubEnv("FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED", "false");
   m.billingSync.mockResolvedValue({ status: "unchanged", contactId: "xero-customer", xeroWritesAttempted: 0 });
   m.retrieve.mockImplementation(async (id: string) =>
     id === "5x77"
