@@ -13,9 +13,20 @@ export type CustomerContactResolutionSource = {
   email: string | null;
   linkedAccountId: string | null;
   linkedContactId: string | null;
+  /** Present only when a Main Invoice workflow validates its current linked Quote. */
+  invoiceQuoteId?: string | null;
   sourceFieldsUsed: string[];
   resolvedAt: string;
   sourceSnapshotHash: string;
+};
+
+/** A workflow-selected party that the v2 contact resolver must re-read and preserve exactly. */
+export type ExpectedCustomerBillingParty = {
+  customerVtigerId: string;
+  billingKind: CustomerBillingKind;
+  name: string;
+  /** The linked Quote is re-read and must remain unchanged when supplied. */
+  quoteId?: string | null;
 };
 
 function text(value: unknown): string {
@@ -50,6 +61,7 @@ function snapshot(input: Omit<CustomerContactResolutionSource, "sourceSnapshotHa
     email: normalizeCustomerEmail(input.email),
     linkedAccountId: input.linkedAccountId,
     linkedContactId: input.linkedContactId,
+    invoiceQuoteId: input.invoiceQuoteId ?? null,
     sourceFieldsUsed: input.sourceFieldsUsed,
     resolvedAt: input.resolvedAt,
   })).digest("hex");
@@ -75,6 +87,10 @@ function contactDisplayName(record: Record<string, unknown>): string {
   return [text(record.firstname), text(record.lastname)].filter(Boolean).join(" ").trim();
 }
 
+function accountDisplayName(record: Record<string, unknown>): string {
+  return firstValue(record, ["accountname", "organizationname", "name"]).value;
+}
+
 function timestamp(record: Record<string, unknown>): string {
   const candidate = text(record.modifiedtime ?? record.modifiedTime ?? record.createdtime ?? record.createdTime);
   const parsed = candidate ? new Date(candidate) : null;
@@ -83,15 +99,73 @@ function timestamp(record: Record<string, unknown>): string {
 }
 
 /**
- * Re-reads the current Deal plus linked Account and Contact. It deliberately
- * resolves the billing party before any Xero lookup and returns only the
- * minimal non-secret source data permitted for customer contact matching.
+ * Re-reads the current Deal plus linked Account and Contact. If a Main Invoice
+ * caller passes its linked Quote, the Quote link and the exact Deal-selected
+ * party must still agree with the original preview. The Deal remains
+ * organisation-first billing authority; the Quote remains service authority.
  */
-export async function readCurrentCustomerContactResolution(dealId: string): Promise<CustomerContactResolutionSource> {
+export async function readCurrentCustomerContactResolution(
+  dealId: string,
+  expectedParty?: ExpectedCustomerBillingParty,
+): Promise<CustomerContactResolutionSource> {
   if (!exactId(dealId)) throw new Error("Customer contact resolution requires an exact VTiger Deal webservice ID.");
   const deal = await exactRecord(dealId, "Deal");
   const linkedAccountId = exactId(deal.related_to ?? deal.relatedto);
   const linkedContactId = exactId(deal.contact_id);
+
+  if (expectedParty) {
+    const expectedId = exactId(expectedParty.customerVtigerId);
+    const expectedName = normalizeCustomerName(text(expectedParty.name));
+    if (!expectedId || !expectedName) {
+      throw new Error("Main Invoice customer-contact resolution requires one exact current Deal customer identity.");
+    }
+    const currentKind: CustomerBillingKind = linkedAccountId ? "organisation" : "individual";
+    const currentCustomerId = linkedAccountId ?? linkedContactId;
+    if (!currentCustomerId || currentKind !== expectedParty.billingKind || currentCustomerId !== expectedId) {
+      throw new Error("Current Deal billing party changed after Main Invoice customer preflight; no Xero contact or Draft will be created.");
+    }
+    if (expectedParty.quoteId) {
+      const quoteId = exactId(deal.cf_potentials_quotereference ?? deal.quote_reference ?? deal.items_sync_with);
+      if (!quoteId || quoteId !== expectedParty.quoteId) {
+        throw new Error("Current Deal Quote reference changed after Main Invoice customer preflight; no Xero contact or Draft will be created.");
+      }
+      await exactRecord(quoteId, "Current Main Invoice Quote");
+    }
+    const party = await exactRecord(
+      expectedId,
+      expectedParty.billingKind === "organisation" ? "Current Main Invoice Deal organisation" : "Current Main Invoice Deal contact",
+    );
+    const name = expectedParty.billingKind === "organisation" ? accountDisplayName(party) : contactDisplayName(party);
+    if (normalizeCustomerName(name) !== expectedName) {
+      throw new Error("Current Deal customer identity changed after Main Invoice customer preflight; no Xero contact or Draft will be created.");
+    }
+    const partyEmail = firstValue(party, ["email", "email1"]);
+    const dealEmail = expectedParty.billingKind === "individual" && linkedContactId === expectedId
+      ? firstValue(deal, ["email", "cf_potentials_contactemail"])
+      : { value: "", field: null };
+    const rawEmail = partyEmail.value || dealEmail.value;
+    const email = rawEmail && validEmail(rawEmail) ? rawEmail : null;
+    const source: Omit<CustomerContactResolutionSource, "sourceSnapshotHash"> = {
+      dealId,
+      billingKind: expectedParty.billingKind,
+      customerVtigerId: expectedId,
+      organisationName: expectedParty.billingKind === "organisation" ? name : null,
+      contactName: expectedParty.billingKind === "individual" ? name : null,
+      name,
+      email,
+      linkedAccountId,
+      linkedContactId,
+      invoiceQuoteId: expectedParty.quoteId ?? null,
+      sourceFieldsUsed: [
+        expectedParty.quoteId ? "Deal.currentQuote+Deal.billingParty" : "MainInvoice.billingParty",
+        expectedParty.billingKind === "organisation" ? "Accounts.accountname" : "Contacts.firstname+lastname",
+        ...(partyEmail.field ? [`CurrentQuoteCustomer.${partyEmail.field}`] : dealEmail.field ? [`Deal.${dealEmail.field}`] : []),
+      ],
+      resolvedAt: timestamp(deal),
+    };
+    return { ...source, sourceSnapshotHash: snapshot(source) };
+  }
+
   const [account, contact] = await Promise.all([
     linkedAccountId ? exactRecord(linkedAccountId, "Linked Account") : Promise.resolve(null),
     linkedContactId ? exactRecord(linkedContactId, "Linked Contact") : Promise.resolve(null),
@@ -99,12 +173,12 @@ export async function readCurrentCustomerContactResolution(dealId: string): Prom
 
   const used: string[] = [];
   const directOrganisation = firstValue(deal, ["organizationname", "accountname", "cf_potentials_organizationname"]);
-  let organisationName = directOrganisation.value || (account ? text(account.accountname) : "");
+  const organisationName = directOrganisation.value || (account ? text(account.accountname) : "");
   if (directOrganisation.field) used.push(`Deal.${directOrganisation.field}`);
   else if (organisationName) used.push("Accounts.accountname");
 
   const directContact = firstValue(deal, ["contactname", "cf_potentials_contactname"]);
-  let contactName = directContact.value || (contact ? contactDisplayName(contact) : "");
+  const contactName = directContact.value || (contact ? contactDisplayName(contact) : "");
   if (directContact.field) used.push(`Deal.${directContact.field}`);
   else if (contactName) used.push("Contacts.firstname+lastname");
 
@@ -133,6 +207,7 @@ export async function readCurrentCustomerContactResolution(dealId: string): Prom
     email,
     linkedAccountId,
     linkedContactId,
+    invoiceQuoteId: null,
     sourceFieldsUsed: used,
     resolvedAt,
   };

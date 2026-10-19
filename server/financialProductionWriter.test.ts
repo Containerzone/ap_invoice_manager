@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertFinancialDraftWriteAuthorised,
+  bindFinancialDraftPayloadIdempotencyKey,
   executeFinancialDraftWrite,
+  financialDraftWriteAllowsTransientRetry,
   FinancialWriteDisabledError,
   isFinancialLiveWriteEnvironmentEnabled,
   isPermittedMainCustomerInvoiceLineAccount,
@@ -94,6 +96,21 @@ describe("guarded financial production writer", () => {
     });
   });
 
+  it("changes Main Invoice idempotency when the completed Xero wire body changes", () => {
+    const first = prepareFinancialDraftPayload(proposal({
+      documentFamily: "customer_invoice", documentType: "main_customer_invoice", proposedDocumentNumber: "INV-702900",
+      reference: "Q702900", lineItems: [{ itemCode: "SER9", description: "Loaded Container from A to B", quantity: 1, unitAmount: 100, lineAmount: 100, accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" }],
+    }), "workflow-key");
+    (first.body.Invoices as any[])[0].CurrencyCode = "AUD";
+    const bound = bindFinancialDraftPayloadIdempotencyKey(first);
+    const changed = structuredClone(bound);
+    (changed.body.Invoices as any[])[0].Contact.ContactID = "another-contact";
+    const rebound = bindFinancialDraftPayloadIdempotencyKey(changed);
+
+    expect(bound.idempotencyKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(rebound.idempotencyKey).not.toBe(bound.idempotencyKey);
+  });
+
   it("permits only verified Main Invoice item and sales-account combinations", () => {
     expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "", AccountCode: "200" })).toBe(true);
     expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "SER9", AccountCode: "200" })).toBe(true);
@@ -105,6 +122,16 @@ describe("guarded financial production writer", () => {
     expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "20' Hire", AccountCode: "200" })).toBe(false);
     expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "20' Sale", AccountCode: "not-an-account" })).toBe(false);
     expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "Unexpected", AccountCode: "200" })).toBe(false);
+  });
+
+  it("never permits a blind transient retry for automatic or reconciliation Main Invoice writes", () => {
+    expect(financialDraftWriteAllowsTransientRetry(completeAuthorisation({
+      workflowType: "main_customer_invoice", mainCustomerInvoiceAutomaticEventId: 41, mainCustomerInvoiceReleaseKey: "MAIN-UNIT", mainCustomerInvoiceApprovedBy: 7, mainCustomerInvoiceToken: "token",
+    }))).toBe(false);
+    expect(financialDraftWriteAllowsTransientRetry(completeAuthorisation({
+      workflowType: "main_customer_invoice", mainInvoiceReconciliationEventId: 42, mainInvoiceReconciliationReceiptId: 9, mainInvoiceReconciliationApprovedBy: 7, mainInvoiceReconciliationSourceHash: "s".repeat(64), mainInvoiceReconciliationPreflightHash: "p".repeat(64),
+    }))).toBe(false);
+    expect(financialDraftWriteAllowsTransientRetry(completeAuthorisation({ workflowType: "initial_for_hire" }))).toBe(true);
   });
 
   it("creates a stable exact-Draft update request only after matching the verified identifier and number", () => {

@@ -75,13 +75,13 @@ describe("individual customer contact resolution", () => {
     expect(result).toMatchObject({ status: "matched", outcome: "matched_by_email", contactId: "jane" });
   });
 
-  it("records deterministic email fallback where no email result has the intended name", () => {
+  it("holds when an exact email belongs to a different Xero customer name", () => {
     const result = planCustomerContactResolution({
       source: individual(),
       nameResults: [],
       emailResults: [contact("first", "Billing Alias", "jane@example.test"), contact("second", "Other", "jane@example.test")],
     });
-    expect(result).toMatchObject({ status: "matched", outcome: "email_match_name_not_exact", contactId: "first" });
+    expect(result).toMatchObject({ status: "held", outcome: "held_duplicate_or_ambiguous", contactId: null, holdReason: expect.stringContaining("different name") });
   });
 
   it("falls back to one exact individual name only when email has no match", () => {

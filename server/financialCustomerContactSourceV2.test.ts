@@ -63,4 +63,56 @@ describe("current customer contact resolution source", () => {
     m.retrieve.mockImplementation(async (id: string) => id === "5x100" ? { id, modifiedtime: "2026-10-13T00:00:00+00:00" } : { id });
     await expect(readCurrentCustomerContactResolution("5x100")).rejects.toThrow(/held_missing_customer_identity/);
   });
+
+  it("revalidates the linked Quote while retaining the current Deal organisation as the Main Invoice party", async () => {
+    m.retrieve.mockImplementation(async (id: string) => {
+      if (id === "5x100") return { ...deal, cf_potentials_quotereference: "20x55" };
+      if (id === "20x55") return { id, contact_id: "4x300" };
+      if (id === "3x200") return { id, accountname: "Deal Customer Pty Ltd", email1: "deal@example.test" };
+      return { id, firstname: "Ignored", lastname: "Contact" };
+    });
+
+    const result = await readCurrentCustomerContactResolution("5x100", {
+      customerVtigerId: "3x200", billingKind: "organisation", name: "Deal Customer Pty Ltd", quoteId: "20x55",
+    });
+
+    expect(result).toMatchObject({ billingKind: "organisation", customerVtigerId: "3x200", name: "Deal Customer Pty Ltd", email: "deal@example.test", invoiceQuoteId: "20x55" });
+    expect(m.retrieve.mock.calls.map(([id]) => id)).toEqual(["5x100", "20x55", "3x200"]);
+  });
+
+  it("holds before a contact write if the current Deal billing party changes after Main Invoice preview", async () => {
+    m.retrieve.mockImplementation(async (id: string) => {
+      if (id === "5x100") return { ...deal, related_to: "3x999", cf_potentials_quotereference: "20x55" };
+      if (id === "20x55") return { id };
+      return { id, accountname: "Changed Customer" };
+    });
+
+    await expect(readCurrentCustomerContactResolution("5x100", {
+      customerVtigerId: "3x200", billingKind: "organisation", name: "Deal Customer Pty Ltd", quoteId: "20x55",
+    })).rejects.toThrow(/Deal billing party changed/);
+  });
+
+  it("holds an attempted Quote-contact substitution when the current Deal has an organisation", async () => {
+    m.retrieve.mockImplementation(async (id: string) => {
+      if (id === "5x100") return { ...deal, cf_potentials_quotereference: "20x55" };
+      if (id === "20x55") return { id, contact_id: "4x300" };
+      if (id === "4x300") return { id, firstname: "Quote", lastname: "Contact", email: "quote.contact@example.test" };
+      return { id, accountname: "Deal Organisation Must Not Win" };
+    });
+
+    await expect(readCurrentCustomerContactResolution("5x100", {
+      customerVtigerId: "4x300", billingKind: "individual", name: "Quote Contact", quoteId: "20x55",
+    })).rejects.toThrow(/Deal billing party changed/);
+  });
+
+  it("does not require a Quote bill-to field when the current Deal party is still exact", async () => {
+    m.retrieve.mockImplementation(async (id: string) => {
+      if (id === "5x100") return { ...deal, cf_potentials_quotereference: "20x55" };
+      if (id === "20x55") return { id };
+      return { id, accountname: "Deal Customer Pty Ltd", email: "deal@example.test" };
+    });
+    await expect(readCurrentCustomerContactResolution("5x100", {
+      customerVtigerId: "3x200", billingKind: "organisation", name: "Deal Customer Pty Ltd", quoteId: "20x55",
+    })).resolves.toMatchObject({ customerVtigerId: "3x200", billingKind: "organisation", invoiceQuoteId: "20x55" });
+  });
 });

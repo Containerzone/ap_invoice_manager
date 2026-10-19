@@ -57,6 +57,25 @@ describe("v2 customer contact execution", () => {
     expect(m.complete).toHaveBeenCalledWith(90, expect.objectContaining({ status: "created", outcome: "created_contact" }));
   });
 
+  it("does not retry an uncertain contact POST and records one attempted write for reconciliation", async () => {
+    m.get
+      .mockResolvedValueOnce(response({ Organisations: [{ Name: "ContainerZone" }] }))
+      .mockResolvedValueOnce(response({ Organisations: [{ Name: "ContainerZone" }] }))
+      .mockResolvedValueOnce(response({ Contacts: [] }))
+      .mockResolvedValueOnce(response({ Contacts: [] }));
+    m.run.mockImplementation(async (_auth: unknown, name: string, operation: () => Promise<unknown>, options?: unknown) => {
+      if (name === "POST customer-contact-v2") expect(options).toEqual({ retryTransientGatewayFailures: false });
+      return operation();
+    });
+    m.post.mockRejectedValue(Object.assign(new Error("gateway"), { response: { status: 502 } }));
+
+    const result = await executeCustomerContactCreationV2(plan());
+
+    expect(result).toMatchObject({ status: "reconciliation_required", contactWritesAttempted: 1 });
+    expect(m.post).toHaveBeenCalledTimes(1);
+    expect(m.hold).toHaveBeenCalledWith(90, expect.stringMatching(/uncertain gateway/i), true, "held_xero_contact_creation_failed");
+  });
+
   it("leaves a would-create plan read-only while either independent gate is disabled", async () => {
     vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "");
     const result = await executeCustomerContactCreationV2(plan());

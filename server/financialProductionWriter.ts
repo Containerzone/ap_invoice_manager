@@ -6,6 +6,7 @@ import type {
 } from "./financialWorkflowEngine";
 import { getXeroReadAuthWithRefresh } from "./xeroService";
 import { runXeroRequest } from "./xeroRequestManager";
+import { financialSha256 } from "./financialProposalIntegrity";
 import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
 import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
 import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
@@ -89,6 +90,8 @@ export type FinancialWriteAuthorisation = {
   mainCustomerInvoiceAutomaticEventId?: number;
   mainCustomerInvoiceReleaseKey?: string;
   mainCustomerInvoiceApprovedBy?: number;
+  /** Atomic Main Invoice preview claim; it is checked again immediately before POST. */
+  mainCustomerInvoiceToken?: string;
   /** One named locally-proven Main Invoice validation recovery; never a normal event replay. */
   mainInvoiceReconciliationEventId?: number;
   mainInvoiceReconciliationToken?: string;
@@ -284,6 +287,34 @@ export function prepareFinancialDraftPayload(
 }
 
 /**
+ * Main Invoice creation uses the exact completed wire body—not only selected
+ * source fields—for its idempotency identity. This prevents a changed Date,
+ * ContactID, Reference or CurrencyCode from reusing a stale Draft request key.
+ */
+export function bindFinancialDraftPayloadIdempotencyKey(payload: FinancialDraftPayload): FinancialDraftPayload {
+  return {
+    ...payload,
+    idempotencyKey: financialSha256({
+      version: "financial-draft-wire-body-v1",
+      endpoint: payload.endpoint,
+      method: payload.method,
+      documentFamily: payload.documentFamily,
+      documentNumber: payload.documentNumber,
+      expectedXeroDocumentId: payload.expectedXeroDocumentId,
+      body: payload.body,
+    }),
+  };
+}
+
+/** Financial create/amend paths with uncertain-outcome recovery never resubmit a 5xx POST. */
+export function financialDraftWriteAllowsTransientRetry(context: FinancialWriteAuthorisation): boolean {
+  return context.mainCustomerInvoiceAutomaticEventId === undefined &&
+    context.mainInvoiceReconciliationEventId === undefined &&
+    context.finalWeightAutomaticEventId === undefined &&
+    context.extraHireAutomaticEventId === undefined;
+}
+
+/**
  * Creates a Draft-update payload only after an independent preflight proved the
  * exact Xero identifier, document number and Draft status. Non-Draft targets are
  * rejected before a transport can be selected.
@@ -439,7 +470,7 @@ export function assertFinancialDraftWriteAuthorised(
   if (context.mainCustomerInvoiceAutomaticEventId !== undefined) {
     if (process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED !== "true" || context.workflowType !== "main_customer_invoice" ||
       !Number.isInteger(context.mainCustomerInvoiceAutomaticEventId) || context.mainCustomerInvoiceAutomaticEventId <= 0 || !context.mainCustomerInvoiceReleaseKey || !context.mainCustomerInvoiceApprovedBy ||
-      !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete) {
+      !context.mainCustomerInvoiceToken || !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete) {
       throw new FinancialWriteDisabledError("Main Customer Invoice automatic release gate is not valid.");
     }
     if (options.requireExecutionId !== false && (!context.executionId || context.executionId <= 0)) {
@@ -688,7 +719,8 @@ export async function executeFinancialDraftWrite(
     const rows = payload.body.Invoices;
     const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
     if (payload.method !== "POST" || payload.endpoint !== "/Invoices" || payload.documentFamily !== "customer_invoice" || payload.expectedXeroDocumentId ||
-      !row || row.Status !== "DRAFT" || row.Type !== "ACCREC" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" ||
+      !row || row.InvoiceID || row.InvoiceNumber !== payload.documentNumber || row.Status !== "DRAFT" || row.Type !== "ACCREC" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" ||
+      !row.Contact?.ContactID || !row.Date ||
       !Array.isArray(row.LineItems) || row.LineItems.length < 1 || !row.LineItems.every(isPermittedMainCustomerInvoiceLineAccount)) {
       throw new FinancialWriteDisabledError("Main Customer Invoice automatic release permits only exact approved transport/itemless, Sale, or Hire sales-account line combinations.");
     }
@@ -696,6 +728,7 @@ export async function executeFinancialDraftWrite(
       eventId: context.mainCustomerInvoiceAutomaticEventId,
       releaseKey: context.mainCustomerInvoiceReleaseKey!,
       preparedBy: context.mainCustomerInvoiceApprovedBy!,
+      token: context.mainCustomerInvoiceToken!,
       payload,
     });
   }
@@ -796,7 +829,7 @@ export async function executeFinancialDraftWrite(
     return payload.method === "POST"
       ? axios.post(url, payload.body, { headers })
       : axios.put(url, payload.body, { headers });
-  }, { retryTransientGatewayFailures: context.finalWeightAutomaticEventId === undefined && context.extraHireAutomaticEventId === undefined });
+  }, { retryTransientGatewayFailures: financialDraftWriteAllowsTransientRetry(context) });
   const result = responseDocument(payload, response.data);
   return {
     xeroDocumentId: result.returnedId,

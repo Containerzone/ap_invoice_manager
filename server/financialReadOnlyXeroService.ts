@@ -43,9 +43,13 @@ export type FinancialXeroPreflight = {
     salesUnitPrice: number | null;
     nativeDescription: string | null;
     salesAccountCode: string | null;
+    /** True only when one current Xero Account with this code is active. */
+    salesAccountActive: boolean | null;
     salesTaxType: string | null;
     isSold: boolean | null;
   }>;
+  /** Account evidence is recorded for Main Invoice proposals, including itemless lines. */
+  accountChecks?: Array<{ accountCode: string; active: boolean }>;
   contactCheck: { partyName: string | null; found: boolean | null; count: number | null; contactId: string | null };
   error: string | null;
 };
@@ -197,6 +201,7 @@ function initialPreflight(intent: ProposedFinancialDocument): FinancialXeroPrefl
     status: null,
     partyName: null,
     itemChecks: [],
+    accountChecks: [],
     contactCheck: { partyName: intent.partyName, found: null, count: null, contactId: null },
     error: intent.proposedDocumentNumber ? null : "No proposed document reference is available for Xero preflight.",
   };
@@ -224,12 +229,13 @@ async function preflightContact(auth: ReadOnlyAuth, partyName: string | null): P
  * after a guarded contact create and for Draft amendments, where customer
  * matching must never replace the existing invoice customer.
  */
-async function preflightContactId(auth: ReadOnlyAuth, contactId: string, partyName: string | null): Promise<FinancialXeroPreflight["contactCheck"]> {
+async function preflightContactId(auth: ReadOnlyAuth, contactId: string, partyName: string | null, requireExactName = false): Promise<FinancialXeroPreflight["contactCheck"]> {
   const response = await xeroRead<any>(auth, `contact-id:${contactId}`, `${XERO_API_BASE}/Contacts/${encodeURIComponent(contactId)}`);
   const contact = response?.Contacts?.[0] ?? null;
   const returnedId = String(contact?.ContactID ?? "").trim();
   const status = String(contact?.ContactStatus ?? "").trim().toUpperCase();
-  const found = returnedId === contactId && status === "ACTIVE";
+  const returnedName = String(contact?.Name ?? "").trim();
+  const found = returnedId === contactId && status === "ACTIVE" && (!requireExactName || !partyName?.trim() || normalCustomerName(returnedName) === normalCustomerName(partyName));
   return { partyName, found, count: returnedId ? 1 : 0, contactId: found ? returnedId : null };
 }
 
@@ -249,6 +255,7 @@ async function preflightItem(auth: ReadOnlyAuth, itemCode: string) {
       nativeDescription: (itemCode === "JD 20" || itemCode === "JD 40")
         ? (item?.PurchaseDescription ? String(item.PurchaseDescription) : item?.Description ? String(item.Description) : null)
         : (item?.Description ? String(item.Description) : null),
+      salesAccountActive: null as boolean | null,
     };
   } catch (error: any) {
     if (error?.response?.status === 404) return {
@@ -258,11 +265,25 @@ async function preflightItem(auth: ReadOnlyAuth, itemCode: string) {
       salesUnitPrice: null,
       nativeDescription: null,
       salesAccountCode: null,
+      salesAccountActive: null as boolean | null,
       salesTaxType: null,
       isSold: null,
     };
     throw error;
   }
+}
+
+/** One GET-only account snapshot shared by the current preflight batch. */
+async function activeSalesAccountCodes(auth: ReadOnlyAuth): Promise<Set<string>> {
+  const response = await xeroRead<any>(auth, "sales-account-configuration", `${XERO_API_BASE}/Accounts`);
+  const counts = new Map<string, number>();
+  for (const account of Array.isArray(response?.Accounts) ? response.Accounts : []) {
+    const code = String(account?.Code ?? "").trim();
+    if (code && String(account?.Status ?? "").trim().toUpperCase() === "ACTIVE") {
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+  }
+  return new Set(Array.from(counts.entries()).filter(([, count]) => count === 1).map(([code]) => code));
 }
 
 async function preflightDocument(auth: ReadOnlyAuth, result: FinancialXeroPreflight): Promise<void> {
@@ -306,6 +327,7 @@ export async function preflightFinancialXeroIntents(intents: ProposedFinancialDo
   const auth = await readOnlyAuth();
   await assertExpectedFinancialTenant(auth);
   const results: FinancialXeroPreflight[] = [];
+  let activeAccounts: Promise<Set<string>> | null = null;
   for (const intent of intents) {
     const result = initialPreflight(intent);
     try {
@@ -313,10 +335,28 @@ export async function preflightFinancialXeroIntents(intents: ProposedFinancialDo
       result.contactCheck = options.skipContactCheck
         ? { partyName: intent.partyName, found: null, count: null, contactId: null }
         : intent.partySourceId
-          ? await preflightContactId(auth, intent.partySourceId, intent.partyName)
+          ? await preflightContactId(auth, intent.partySourceId, intent.partyName, intent.sourceWorkflow === "main_customer_invoice")
           : await preflightContact(auth, intent.partyName);
       const codes = Array.from(new Set(intent.lineItems.map((line) => line.itemCode.trim()).filter(Boolean))).slice(0, 12);
-      for (const code of codes) result.itemChecks.push(await preflightItem(auth, code));
+      for (const code of codes) {
+        const item = await preflightItem(auth, code);
+        if (intent.sourceWorkflow === "main_customer_invoice" && item.salesAccountCode) {
+          activeAccounts ??= activeSalesAccountCodes(auth);
+          item.salesAccountActive = (await activeAccounts).has(item.salesAccountCode);
+        }
+        result.itemChecks.push(item);
+      }
+      if (intent.sourceWorkflow === "main_customer_invoice") {
+        const accountCodes = Array.from(new Set(intent.lineItems
+          .map((line) => line.accountCode || intent.accountCode || "")
+          .map((code) => code.trim())
+          .filter(Boolean)));
+        if (accountCodes.length) {
+          activeAccounts ??= activeSalesAccountCodes(auth);
+          const accounts = await activeAccounts;
+          result.accountChecks = accountCodes.map((accountCode) => ({ accountCode, active: accounts.has(accountCode) }));
+        }
+      }
     } catch (error) {
       result.duplicateState = "error";
       result.error = safeMessage(error);

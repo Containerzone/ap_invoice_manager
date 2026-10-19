@@ -21,7 +21,6 @@ const EXPECTED_AP_TENANT_LABEL = "CONTAINERZONE";
 export type CustomerContactAuditOutcome =
   | "matched_by_name"
   | "matched_by_email"
-  | "email_match_name_not_exact"
   | "would_create_contact"
   | "created_contact"
   | "held_missing_customer_identity"
@@ -92,7 +91,7 @@ function held(source: CustomerContactResolutionSource, lookupOrder: string[], re
   return { source, status: "held", outcome, contactId: null, contactName: null, includeEmailOnCreate: false, lookupOrder, nameMatchCount, emailMatchCount, holdReason: reason };
 }
 
-function matched(source: CustomerContactResolutionSource, lookupOrder: string[], result: XeroCustomerContactCandidate, outcome: Extract<CustomerContactAuditOutcome, "matched_by_name" | "matched_by_email" | "email_match_name_not_exact">, nameMatchCount: number, emailMatchCount: number): CustomerContactPlan {
+function matched(source: CustomerContactResolutionSource, lookupOrder: string[], result: XeroCustomerContactCandidate, outcome: Extract<CustomerContactAuditOutcome, "matched_by_name" | "matched_by_email">, nameMatchCount: number, emailMatchCount: number): CustomerContactPlan {
   if (!active(result)) return held(source, lookupOrder, "A resolved Xero customer contact is inactive or archived; no contact will be adopted or created.", nameMatchCount, emailMatchCount);
   return { source, status: "matched", outcome, contactId: result.contactId, contactName: result.name, includeEmailOnCreate: false, lookupOrder, nameMatchCount, emailMatchCount, holdReason: null };
 }
@@ -132,7 +131,7 @@ export function planCustomerContactResolution(input: {
       const named = activeEmail.filter(item => normalizeCustomerName(item.name) === normalizeCustomerName(source.name));
       if (named.length === 1) return matched(source, lookupOrder, named[0]!, "matched_by_email", nameMatches.length, emailMatches.length);
       if (named.length > 1) return held(source, lookupOrder, "More than one Xero email result has the same intended customer name; AP will not choose one.", nameMatches.length, emailMatches.length);
-      return matched(source, lookupOrder, activeEmail[0]!, "email_match_name_not_exact", nameMatches.length, emailMatches.length);
+      return held(source, lookupOrder, "An exact Xero customer email belongs to a different name; AP will not choose or duplicate it.", nameMatches.length, emailMatches.length);
     }
   }
 
@@ -192,7 +191,17 @@ export async function executeCustomerContactCreationV2(plan: CustomerContactPlan
   if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED !== "true" || process.env.FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED !== "true") {
     return { ...plan, status: "would_create", contactEventId: null, contactWritesAttempted: 0 };
   }
-  const currentSource = await readCurrentCustomerContactResolution(plan.source.dealId);
+  const currentSource = await readCurrentCustomerContactResolution(
+    plan.source.dealId,
+    plan.source.invoiceQuoteId
+      ? {
+        customerVtigerId: plan.source.customerVtigerId,
+        billingKind: plan.source.billingKind,
+        name: plan.source.name,
+        quoteId: plan.source.invoiceQuoteId,
+      }
+      : undefined,
+  );
   if (currentSource.sourceSnapshotHash !== plan.source.sourceSnapshotHash) {
     return { ...plan, status: "held", outcome: "held_duplicate_or_ambiguous", contactEventId: null, contactWritesAttempted: 0, holdReason: "Current VTiger customer identity changed after preview; no Xero contact will be created." };
   }
@@ -226,6 +235,7 @@ export async function executeCustomerContactCreationV2(plan: CustomerContactPlan
     }
     return { ...plan, status: reservation.event.status === "reconciliation_required" ? "reconciliation_required" : "held", outcome: reservation.event.status === "reconciliation_required" ? "reconciled_existing" : "held_xero_contact_creation_failed", contactEventId: reservation.event.id, contactWritesAttempted: 0, holdReason: "Customer-contact creation is already held or requires reconciliation; no second contact will be created." };
   }
+  let contactPostAttempted = false;
   try {
     const fresh = await previewCustomerContactResolution(plan.source);
     if (fresh.status === "matched") {
@@ -237,7 +247,10 @@ export async function executeCustomerContactCreationV2(plan: CustomerContactPlan
       return { ...fresh, status: "held", outcome: "held_duplicate_or_ambiguous", contactEventId: reservation.event.id, contactWritesAttempted: 0, holdReason: fresh.holdReason ?? "Xero customer contact evidence changed before creation." };
     }
     const body = payload(fresh);
-    const response = await runXeroRequest(auth, "POST customer-contact-v2", () => axios.post(`${XERO_API_BASE}/Contacts`, body, { headers: { ...headers(auth), "Content-Type": "application/json", "Idempotency-Key": idempotencyKey } }), { retryTransientGatewayFailures: true });
+    const response = await runXeroRequest(auth, "POST customer-contact-v2", () => {
+      contactPostAttempted = true;
+      return axios.post(`${XERO_API_BASE}/Contacts`, body, { headers: { ...headers(auth), "Content-Type": "application/json", "Idempotency-Key": idempotencyKey } });
+    }, { retryTransientGatewayFailures: false });
     const created = candidate(response.data?.Contacts?.[0]);
     const errors = Array.isArray(response.data?.Contacts?.[0]?.ValidationErrors) ? response.data.Contacts[0].ValidationErrors : [];
     if (!created?.contactId || errors.length) throw new Error("Xero customer contact creation did not return one ContactID without validation errors.");
@@ -252,6 +265,6 @@ export async function executeCustomerContactCreationV2(plan: CustomerContactPlan
     const uncertain = [502, 503, 504].includes(error?.response?.status);
     const reason = uncertain ? "Xero customer contact creation has an uncertain gateway result; reconcile before any retry." : "Xero customer contact creation failed; no customer invoice Draft was created.";
     await holdFinancialCustomerContactEvent(reservation.event.id, reason, uncertain, "held_xero_contact_creation_failed");
-    return { ...plan, status: uncertain ? "reconciliation_required" : "held", outcome: "held_xero_contact_creation_failed", contactEventId: reservation.event.id, contactWritesAttempted: 0, holdReason: reason };
+    return { ...plan, status: uncertain ? "reconciliation_required" : "held", outcome: "held_xero_contact_creation_failed", contactEventId: reservation.event.id, contactWritesAttempted: contactPostAttempted ? 1 : 0, holdReason: reason };
   }
 }

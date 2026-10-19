@@ -101,8 +101,9 @@ describe("financial read-only Xero service", () => {
       validationStatus: "valid", sourceWorkflow: "recurring_for_hire", sourceRecordId: "4x1",
     }]);
     expect(result).toMatchObject({ duplicateState: "found", xeroDocumentId: "po-1", status: "DRAFT", partyName: "Hire Supplier" });
-    expect(result?.itemChecks[0]).toMatchObject({ itemCode: "HC 20 E", found: true, purchaseUnitPrice: 8, nativeDescription: "Native HC 20 E", isSold: true, salesAccountCode: "312", salesTaxType: "OUTPUT" });
+    expect(result?.itemChecks[0]).toMatchObject({ itemCode: "HC 20 E", found: true, purchaseUnitPrice: 8, nativeDescription: "Native HC 20 E", isSold: true, salesAccountCode: "312", salesAccountActive: null, salesTaxType: "OUTPUT" });
     expect(result?.contactCheck).toMatchObject({ found: true, contactId: "contact-hire" });
+    expect(mockGet.mock.calls.some(([url]) => String(url).endsWith("/Accounts"))).toBe(false);
     noMutationAssertions();
   });
 
@@ -112,7 +113,7 @@ describe("financial read-only Xero service", () => {
     noMutationAssertions();
   });
 
-  it("verifies an immutable Xero ContactID without rematching the current customer name", async () => {
+  it("holds an immutable Xero ContactID when its current Xero name differs from the intended party", async () => {
     mockGet
       .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
       .mockResolvedValueOnce({ data: { Invoices: [] } })
@@ -124,8 +125,46 @@ describe("financial read-only Xero service", () => {
       lineItems: [{ itemCode: "", description: "Service", quantity: 1, unitAmount: 10, lineAmount: 10, accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" }],
       validationStatus: "valid", sourceWorkflow: "main_customer_invoice", sourceRecordId: "5x1",
     }]);
-    expect(result?.contactCheck).toMatchObject({ found: true, contactId: "contact-bound" });
+    expect(result?.contactCheck).toMatchObject({ found: false, contactId: null, partyName: "Changed Deal Name" });
     expect(mockGet.mock.calls[2]![0]).toMatch(/Contacts\/contact-bound$/);
+    noMutationAssertions();
+  });
+
+  it("keeps an active immutable ContactID valid for a non-Main Draft even when a display name has changed", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
+      .mockResolvedValueOnce({ data: { Invoices: [] } })
+      .mockResolvedValueOnce({ data: { Contacts: [{ ContactID: "contact-bound", ContactStatus: "ACTIVE", Name: "Original Draft Customer" }] } });
+    const [result] = await preflightFinancialXeroIntents([{
+      documentFamily: "customer_invoice", documentType: "storage_activation", proposedAction: "create_draft", proposedDocumentNumber: "INV-7000-A",
+      reference: null, partyName: "Changed Deal Name", partySourceId: "contact-bound", accountCode: "200", gstTreatment: "GST_EXCLUSIVE", currency: "AUD",
+      issueDate: null, dueDate: null, subtotal: 10, taxAmount: 1, total: 11,
+      lineItems: [{ itemCode: "", description: "Storage", quantity: 1, unitAmount: 10, lineAmount: 10, accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" }],
+      validationStatus: "valid", sourceWorkflow: "storage_activation", sourceRecordId: "5x1",
+    }]);
+    expect(result?.contactCheck).toMatchObject({ found: true, contactId: "contact-bound" });
+    noMutationAssertions();
+  });
+
+  it("records inactive Main Invoice sales-account evidence rather than treating an item code as sufficient", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
+      .mockResolvedValueOnce({ data: { Invoices: [] } })
+      .mockResolvedValueOnce({ data: { Contacts: [{ ContactID: "contact-main", ContactStatus: "ACTIVE", Name: "Customer" }] } })
+      .mockResolvedValueOnce({ data: { Items: [{ Code: "SER9", Description: "Loaded Container from <> to <>", IsSold: true, SalesDetails: { AccountCode: "200", TaxType: "OUTPUT" } }] } })
+      .mockResolvedValueOnce({ data: { Accounts: [{ Code: "200", Status: "ARCHIVED" }] } });
+    const [result] = await preflightFinancialXeroIntents([{
+      documentFamily: "customer_invoice", documentType: "main_customer_invoice", proposedAction: "create_draft", proposedDocumentNumber: "INV-7000",
+      reference: "Q7000", partyName: "Customer", partySourceId: "contact-main", accountCode: "200", gstTreatment: "GST_EXCLUSIVE", currency: "AUD",
+      issueDate: new Date("2026-10-11T00:00:00Z"), dueDate: null, subtotal: 10, taxAmount: 1, total: 11,
+      lineItems: [{ itemCode: "SER9", description: "Loaded Container from Origin to Destination", quantity: 1, unitAmount: 10, lineAmount: 10, accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" }],
+      validationStatus: "valid", sourceWorkflow: "main_customer_invoice", sourceRecordId: "5x1",
+    }]);
+    expect(result).toMatchObject({
+      duplicateState: "not_found",
+      itemChecks: [expect.objectContaining({ itemCode: "SER9", salesAccountActive: false })],
+      accountChecks: [{ accountCode: "200", active: false }],
+    });
     noMutationAssertions();
   });
 

@@ -28,6 +28,7 @@ describe("Main Customer Invoice isolated writer gate", () => {
     mainCustomerInvoiceAutomaticEventId: 41,
     mainCustomerInvoiceReleaseKey: "MAIN-INV-test",
     mainCustomerInvoiceApprovedBy: 7,
+    mainCustomerInvoiceToken: "unit-test-exclusive-token",
   });
 
   it("does not inherit global financial writer or any purchase-order family gate", () => {
@@ -42,6 +43,12 @@ describe("Main Customer Invoice isolated writer gate", () => {
       assertFinancialDraftWriteAuthorised(
         { ...context(), workflowType: "asset_purchase" },
         { requireExecutionId: false }
+      )
+    ).toThrow(/Main Customer Invoice automatic release gate/);
+    expect(() =>
+      assertFinancialDraftWriteAuthorised(
+        { ...context(), mainCustomerInvoiceToken: "" },
+        { requireExecutionId: false },
       )
     ).toThrow(/Main Customer Invoice automatic release gate/);
   });

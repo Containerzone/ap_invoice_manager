@@ -181,6 +181,7 @@ export async function executeGuardedFinancialWriterCommand(
     await verifyMainCustomerInvoiceAutomaticWriteAccess({
       eventId: command.authorisation.mainCustomerInvoiceAutomaticEventId,
       releaseKey: command.authorisation.mainCustomerInvoiceReleaseKey!,
+      token: command.authorisation.mainCustomerInvoiceToken!,
       payload: command.payload,
       preparedBy: command.preparedBy,
     });

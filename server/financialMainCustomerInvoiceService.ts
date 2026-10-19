@@ -20,7 +20,7 @@ import {
 import { assertMainCustomerInvoiceRelease, getMainCustomerInvoiceReleasePolicy } from "./financialMainCustomerInvoiceRelease";
 import { preflightFinancialXeroIntents, type FinancialXeroPreflight } from "./financialReadOnlyXeroService";
 import { financialSha256, sourceSnapshotHash } from "./financialProposalIntegrity";
-import { prepareFinancialDraftPayload } from "./financialProductionWriter";
+import { bindFinancialDraftPayloadIdempotencyKey, prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
 import { describeVtigerFinancialModuleFields, retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
 import { readCurrentCustomerContactSource } from "./financialCustomerContactSource";
@@ -45,6 +45,8 @@ export const MAIN_CUSTOMER_INVOICE_SOURCE_FIELDS = {
 } as const;
 
 const OPTIONAL_MAIN_INVOICE_SOURCE_FIELD_KEYS = ["fullContainerPickupDate"] as const;
+/** Protect VTiger and Xero from an unbounded/malformed Quote expansion. */
+const MAX_MAIN_CUSTOMER_INVOICE_SERVICE_LINES = 100;
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : typeof value === "number" && Number.isFinite(value) ? String(value) : "";
@@ -194,21 +196,52 @@ export async function readMainCustomerInvoiceFacts(dealId: string): Promise<Main
   if (!quoteId) throw new Error("Main Customer Invoice requires an exact linked VTiger Quote id.");
   const quote = await exactRecord(quoteId, "Linked Quote");
 
-  const organisationId = recordId(quote.account_id ?? deal.related_to ?? deal.relatedto);
-  const contactId = recordId(quote.contact_id ?? deal.contact_id);
+  // Owner-approved billing rule: use the current Deal organisation whenever it
+  // exists; otherwise use the current Deal contact. Quote links are authority
+  // for services/prices only and never supply a substitute bill-to party.
+  const organisationId = recordId(deal.related_to ?? deal.relatedto);
+  const contactId = recordId(deal.contact_id);
   const customerKind = organisationId ? "organisation" : "contact";
   const customerVtigerId = organisationId || contactId;
   const customerName = customerVtigerId ? await nameForCustomer(customerVtigerId, customerKind) : "";
-  const services = await Promise.all(lineSource(quote).map(async (line) => {
+  const quoteLines = lineSource(quote);
+  if (quoteLines.length > MAX_MAIN_CUSTOMER_INVOICE_SERVICE_LINES) {
+    return {
+      dealId,
+      dealNumber: text(deal.potential_no ?? deal.deal_no),
+      quoteId,
+      quoteNumber: text(quote.quote_no) || quoteId,
+      customerVtigerId,
+      customerName,
+      customerKind,
+      containerSituation: text(deal.cf_potentials_containersituationselectone),
+      originSuburb: text(deal.cf_potentials_pickuplocation),
+      destinationSuburb: text(deal.cf_potentials_deliverylocation),
+      fullContainerPickupDate,
+      depositStatus,
+      mappingEvidence: mapping.mappingEvidence,
+      sourceHoldReason: `Current VTiger Quote has more than ${MAX_MAIN_CUSTOMER_INVOICE_SERVICE_LINES} service lines; AP will not make an unbounded Main Invoice request.`,
+      sourceRefreshedAt: latestTimestamp(deal.modifiedtime ?? deal.modifiedTime ?? deal.createdtime, quote.modifiedtime ?? quote.modifiedTime ?? quote.createdtime),
+      serviceLines: [],
+    };
+  }
+  const servicesById = new Map<string, Record<string, unknown>>();
+  for (const line of quoteLines) {
     const serviceId = recordId(line.productid ?? line.hdnProductId);
-    const service = serviceId ? await exactRecord(serviceId, "Quote Service") : null;
+    if (serviceId && !servicesById.has(serviceId)) {
+      servicesById.set(serviceId, await exactRecord(serviceId, "Quote Service"));
+    }
+  }
+  const services = quoteLines.map((line) => {
+    const serviceId = recordId(line.productid ?? line.hdnProductId);
+    const service = serviceId ? servicesById.get(serviceId) ?? null : null;
     return {
       serviceVtigerId: serviceId,
       description: service ? text(service.servicename ?? service.productname ?? service.service_name) : "",
       quantity: number(line.quantity ?? line.qty) ?? 0,
       unitAmount: number(line.listprice ?? line.listPrice) ?? Number.NaN,
     };
-  }));
+  });
   return {
     dealId,
     dealNumber: text(deal.potential_no ?? deal.deal_no),
@@ -233,6 +266,23 @@ function preflightReason(document: NonNullable<MainCustomerInvoicePreview["docum
   if (!preflight) return "No valid Main Customer Invoice proposal is available for Xero preflight.";
   if (preflight.duplicateState !== "not_found") return `Exact Xero invoice ${document.proposedDocumentNumber} is ${preflight.duplicateState}${preflight.status ? ` (${preflight.status})` : ""}; AP will not bypass or adopt it.`;
   if (!preflight.contactCheck.found || !preflight.contactCheck.contactId) return "Xero customer contact is missing, ambiguous or not an exact match.";
+  if (document.sourceWorkflow === "main_customer_invoice") {
+    const accounts = new Map((preflight.accountChecks ?? []).map((check) => [check.accountCode, check.active]));
+    if (document.lineItems.some((line) => accounts.get(line.accountCode || document.accountCode || "") !== true)) {
+      return "A current Main Invoice Xero sales account is absent, inactive or ambiguous; no Draft will be created.";
+    }
+    const items = new Map((preflight.itemChecks ?? []).map((check) => [check.itemCode.trim(), check]));
+    for (const line of document.lineItems) {
+      if (!line.itemCode) continue;
+      const item = items.get(line.itemCode.trim());
+      if (!item || item.salesAccountCode !== line.accountCode || item.salesAccountActive !== true) {
+        return `Current Xero sales item ${line.itemCode} does not match one active Main Invoice sales account.`;
+      }
+      if (["20' Hire", "40' Hire"].includes(line.itemCode) && item.salesAccountCode !== "210") {
+        return `Current Xero hire item ${line.itemCode} must use verified active sales account 210.`;
+      }
+    }
+  }
   return null;
 }
 
@@ -256,7 +306,7 @@ function bindVerifiedMainTransportDescription(input: {
   if (transportCodes.length === 1) {
     const itemCode = transportCodes[0]!;
     const item = checks.get(itemCode);
-    if (!item?.found || item.isSold !== true || item.salesAccountCode !== "200" || item.salesTaxType !== "OUTPUT" || !item.nativeDescription) {
+    if (!item?.found || item.isSold !== true || item.salesAccountCode !== "200" || item.salesAccountActive !== true || item.salesTaxType !== "OUTPUT" || !item.nativeDescription) {
       return { document: null, reason: `Current Xero sales item ${itemCode} must be active for sale with account 200, OUTPUT GST and its native route description.` };
     }
     const rendered = applyMainCustomerInvoiceXeroTransportDescription({
@@ -271,7 +321,8 @@ function bindVerifiedMainTransportDescription(input: {
 
   for (const itemCode of quoteItemCodes) {
     const item = checks.get(itemCode.toUpperCase());
-    if (!item?.found || item.isSold !== true || !item.salesAccountCode || item.salesTaxType !== "OUTPUT") {
+    if (!item?.found || item.isSold !== true || !item.salesAccountCode || item.salesAccountActive !== true || item.salesTaxType !== "OUTPUT" ||
+      (["20' Hire", "40' Hire"].includes(itemCode) && item.salesAccountCode !== "210")) {
       return { document: null, reason: `Current Xero sales item ${itemCode} must be active for sale with an OUTPUT GST sales account.` };
     }
     // The exact current Quote service name remains the container-sale/hire line
@@ -330,7 +381,12 @@ export async function previewMainCustomerInvoice(dealId: string): Promise<MainCu
   }
   try {
     const customerContactPlan = process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true"
-      ? await previewCustomerContactResolution(await readCurrentCustomerContactResolution(dealId))
+      ? await previewCustomerContactResolution(await readCurrentCustomerContactResolution(dealId, {
+        customerVtigerId: facts.customerVtigerId,
+        billingKind: facts.customerKind === "organisation" ? "organisation" : "individual",
+        name: facts.customerName,
+        quoteId: facts.quoteId,
+      }))
       : null;
     if (customerContactPlan?.status === "matched" && customerContactPlan.contactId) {
       preview.document.partySourceId = customerContactPlan.contactId;
@@ -346,11 +402,19 @@ export async function previewMainCustomerInvoice(dealId: string): Promise<MainCu
     // The native Xero item description becomes part of the immutable payload;
     // refresh the full contact/collision/item preflight before saving or writing.
     const [preflight] = await preflightFinancialXeroIntents([preview.document]);
+    // A missing contact can justify the separately guarded create/read-back
+    // sequence only after Xero has conclusively proved the target INV number
+    // is free. Never create a contact merely to discover a collision/error on
+    // the subsequent invoice preflight.
+    const collisionOrPreflightReason = preflightReason(preview.document, preflight ?? null);
+    const contactCreationIsSafeToOffer = customerContactPlan?.status === "would_create" && preflight?.duplicateState === "not_found";
     const reason = customerContactPlan?.status === "held"
       ? customerContactPlan.holdReason ?? "Xero customer-contact resolution is held."
-      : customerContactPlan?.status === "would_create"
-        ? "Xero customer contact is absent; preview proposes one guarded contact creation and no Draft write."
-        : preflightReason(preview.document, preflight ?? null);
+      : collisionOrPreflightReason && collisionOrPreflightReason !== "Xero customer contact is missing, ambiguous or not an exact match."
+        ? collisionOrPreflightReason
+        : contactCreationIsSafeToOffer
+          ? "Xero customer contact is absent; preview proposes one guarded contact creation and no Draft write."
+          : collisionOrPreflightReason;
     if (!preflight || reason) {
       const hold = reason ?? "Xero GET-only preflight was not completed.";
       await savePreview({ facts, preview, sourceHash, preflight: preflight ?? null, state: "held", reason: hold });
@@ -388,7 +452,7 @@ export async function processAutomaticMainCustomerInvoice(dealId: string) {
   }
   const initialReason = preflightReason(preview.preview.document, preview.preflight);
   const missingContactOnly = initialReason === "Xero customer contact is missing, ambiguous or not an exact match."
-    || preview.customerContactPlan?.status === "would_create";
+    || (preview.customerContactPlan?.status === "would_create" && preview.preflight?.duplicateState === "not_found");
   if (preview.state !== "previewed" && !missingContactOnly) return { ok: false, status: "held" as const, recordId: dealId, warning: preview.holdReason ?? "Main Customer Invoice source/Xero preflight is not ready.", xeroWritesAttempted: 0 };
   let customerContactWrites = 0;
   if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED === "true") {
@@ -433,17 +497,18 @@ export async function processAutomaticMainCustomerInvoice(dealId: string) {
   const token = randomUUID();
   if (!(await claimMainCustomerInvoicePreview(event.id, token))) return { ok: false, status: "held" as const, recordId: dealId, eventId: event.id, warning: "Main Customer Invoice is already processing or was not freshly preflighted.", xeroWritesAttempted: customerContactWrites };
   try {
-    const payload = prepareFinancialDraftPayload(preview.preview.document, `${dealId}:main_customer_invoice:${preview.sourceSnapshotHash}`);
+    let payload = prepareFinancialDraftPayload(preview.preview.document, `${dealId}:main_customer_invoice:${preview.sourceSnapshotHash}`);
     const row = (payload.body.Invoices as Record<string, unknown>[] | undefined)?.[0];
     if (!row) throw new Error("Main Customer Invoice transport payload is missing its customer invoice.");
     row.CurrencyCode = "AUD";
-    await bindMainCustomerInvoicePayload(event.id, policy.releaseKey, payload);
+    payload = bindFinancialDraftPayloadIdempotencyKey(payload);
+    await bindMainCustomerInvoicePayload({ eventId: event.id, token, releaseKey: policy.releaseKey, payload });
     const outcome = await executeGuardedFinancialWriterCommand({
       workflowType: "main_customer_invoice", proposedAction: "create_draft", payload, expectedDraftDocument: preview.preview.document,
       preparedBy: policy.approvedBy!, sourceRecordId: dealId, verifiedSourceData: { dealId, sourceSnapshotHash: preview.sourceSnapshotHash },
       authorisation: { workflowType: "main_customer_invoice", approvalReference: policy.releaseKey, globalShadowMode: false, familyLiveEnabled: true,
         releaseManifestApproved: true, cutoverPackApproved: true, currentDocumentPreflightPassed: true, legacyWriterHandoffComplete: true,
-        mainCustomerInvoiceAutomaticEventId: event.id, mainCustomerInvoiceReleaseKey: policy.releaseKey, mainCustomerInvoiceApprovedBy: policy.approvedBy! },
+        mainCustomerInvoiceAutomaticEventId: event.id, mainCustomerInvoiceReleaseKey: policy.releaseKey, mainCustomerInvoiceApprovedBy: policy.approvedBy!, mainCustomerInvoiceToken: token },
     });
     if (outcome.outcome === "reconciliation_required" || outcome.outcome === "duplicate") {
       await holdMainCustomerInvoiceExecution(event.id, "Main Customer Invoice Xero execution requires exact reconciliation before any retry.", true);

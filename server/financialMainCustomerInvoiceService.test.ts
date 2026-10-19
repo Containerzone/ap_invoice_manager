@@ -42,7 +42,8 @@ const currentMetadata = () => ({
 const readyPreflight = () => [{
   duplicateState: "not_found", status: null,
   contactCheck: { found: true, contactId: "xero-customer", count: 1, partyName: "Customer Pty Ltd" },
-  itemChecks: [{ itemCode: "SER9", found: true, isSold: true, salesAccountCode: "200", salesTaxType: "OUTPUT", nativeDescription: "Loaded Container from <> to <>" }],
+  itemChecks: [{ itemCode: "SER9", found: true, isSold: true, salesAccountCode: "200", salesAccountActive: true, salesTaxType: "OUTPUT", nativeDescription: "Loaded Container from <> to <>" }],
+  accountChecks: [{ accountCode: "200", active: true }],
 }];
 
 beforeEach(() => {
@@ -127,9 +128,10 @@ describe("Main Customer Invoice current-source evidence", () => {
       duplicateState: "not_found", status: null,
       contactCheck: { found: true, contactId: "xero-customer", count: 1, partyName: "Customer Pty Ltd" },
       itemChecks: [
-        { itemCode: "20' Hire", found: true, isSold: true, salesAccountCode: "210", salesTaxType: "OUTPUT", nativeDescription: "{Container Type} Container Hire per 30 days" },
-        { itemCode: "40' Hire", found: true, isSold: true, salesAccountCode: "210", salesTaxType: "OUTPUT", nativeDescription: "{Container Type} Container Hire per 30 days" },
+        { itemCode: "20' Hire", found: true, isSold: true, salesAccountCode: "210", salesAccountActive: true, salesTaxType: "OUTPUT", nativeDescription: "{Container Type} Container Hire per 30 days" },
+        { itemCode: "40' Hire", found: true, isSold: true, salesAccountCode: "210", salesAccountActive: true, salesTaxType: "OUTPUT", nativeDescription: "{Container Type} Container Hire per 30 days" },
       ],
+      accountChecks: [{ accountCode: "210", active: true }],
     }];
     preflight.mockResolvedValue(preflightResult);
 
@@ -141,6 +143,43 @@ describe("Main Customer Invoice current-source evidence", () => {
       expect.objectContaining({ itemCode: "40' Hire", description: "40 Foot Standard Height Container Hire per 30 days", quantity: 2, unitAmount: 309.25, accountCode: "210" }),
     ]);
     expect(preflight).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds before invoice execution when any current Main Invoice Xero sales account is inactive or ambiguous", async () => {
+    preflight.mockResolvedValue([{ ...readyPreflight()[0], accountChecks: [{ accountCode: "200", active: false }] }]);
+
+    const result = await previewMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ state: "held", noWrites: true, holdReason: expect.stringContaining("sales account") });
+    expect(mocks.writer).not.toHaveBeenCalled();
+  });
+
+  it("bounds malformed Quote expansion before reading Services or Xero", async () => {
+    retrieve.mockImplementation(async (id: string) => {
+      if (id === "5x77") return { id, potential_no: "D702877", cf_potentials_quotereference: "20x9", related_to: "4x2", cf_potentials_containersituationselectone: "SHIPPER OWN", cf_potentials_pickuplocation: "Origin", cf_potentials_deliverylocation: "Destination", cf_potentials_fullcontainercollectiondate: "2026-10-12", cf_potentials_depositstatus: "PENDING", modifiedtime: "2026-10-11T01:00:00Z" };
+      if (id === "20x9") return { id, quote_no: "Q-702877", LineItems: Array.from({ length: 101 }, () => ({ productid: "14x1", quantity: "1", listprice: "1" })), modifiedtime: "2026-10-11T02:00:00Z" };
+      return { id, accountname: "Customer Pty Ltd" };
+    });
+
+    const result = await previewMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ state: "held", noWrites: true, holdReason: expect.stringContaining("more than 100") });
+    expect(retrieve.mock.calls.map(([id]) => id)).toEqual(["5x77", "20x9", "4x2"]);
+    expect(preflight).not.toHaveBeenCalled();
+  });
+
+  it("does not substitute a Quote customer when the current Deal has neither organisation nor contact", async () => {
+    retrieve.mockImplementation(async (id: string) => {
+      if (id === "5x77") return { id, potential_no: "D702877", cf_potentials_quotereference: "20x9", related_to: "", contact_id: "", cf_potentials_containersituationselectone: "SHIPPER OWN", cf_potentials_pickuplocation: "Origin", cf_potentials_deliverylocation: "Destination", cf_potentials_fullcontainercollectiondate: "2026-10-12", cf_potentials_depositstatus: "PENDING", modifiedtime: "2026-10-11T01:00:00Z" };
+      if (id === "20x9") return { id, quote_no: "Q-702877", account_id: "3x200", LineItems: [{ productid: "14x1", quantity: "1", listprice: "100" }], modifiedtime: "2026-10-11T02:00:00Z" };
+      return { id, servicename: "Transport", modifiedtime: "2026-10-11T02:00:00Z" };
+    });
+
+    const result = await previewMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ state: "held", noWrites: true, holdReason: expect.stringContaining("customer") });
+    expect(retrieve.mock.calls.map(([id]) => id)).not.toContain("3x200");
+    expect(preflight).not.toHaveBeenCalled();
   });
 
   it("creates a contact only for a contact-only preflight hold, refreshes evidence, then writes the Draft", async () => {
@@ -174,6 +213,34 @@ describe("Main Customer Invoice current-source evidence", () => {
     expect(mocks.contactV2Execute).toHaveBeenCalledTimes(1);
     expect(preflight).toHaveBeenCalledTimes(6);
     expect(mocks.writer.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.contactV2Execute.mock.invocationCallOrder[0]!);
+  });
+
+  it("does not create a missing contact when the target invoice number is already occupied", async () => {
+    vi.stubEnv("FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const wouldCreate = { source: await mocks.contactV2Source(), status: "would_create", outcome: "would_create_contact", contactId: null, contactName: "Customer Pty Ltd", includeEmailOnCreate: true, lookupOrder: ["name", "email"], nameMatchCount: 0, emailMatchCount: 0, holdReason: null };
+    mocks.contactV2Preview.mockResolvedValue(wouldCreate);
+    preflight.mockResolvedValue([{ ...readyPreflight()[0], duplicateState: "found", status: "DRAFT" }]);
+
+    const result = await processAutomaticMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ status: "held", xeroWritesAttempted: 0, warning: expect.stringContaining("Exact Xero invoice") });
+    expect(mocks.contactV2Execute).not.toHaveBeenCalled();
+    expect(mocks.writer).not.toHaveBeenCalled();
+  });
+
+  it("binds the final AUD wire body to the same atomic claim token before writer execution", async () => {
+    vi.stubEnv("FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED", "true");
+    const result = await processAutomaticMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ status: "drafts_created" });
+    expect(mocks.bind).toHaveBeenCalledWith(expect.objectContaining({ eventId: 51, releaseKey: "MAIN-test", payload: expect.objectContaining({ idempotencyKey: expect.stringMatching(/^[a-f0-9]{64}$/) }) }));
+    const bindToken = mocks.bind.mock.calls[0]![0].token;
+    expect(bindToken).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(mocks.writer).toHaveBeenCalledWith(expect.objectContaining({
+      authorisation: expect.objectContaining({ mainCustomerInvoiceToken: bindToken }),
+      payload: expect.objectContaining({ body: { Invoices: [expect.objectContaining({ CurrencyCode: "AUD", InvoiceNumber: "INV-702877", Contact: { ContactID: "xero-customer" } })] } }),
+    }));
   });
 
   it("does not invoke the Draft writer when the VTiger evidence refresh fails after v2 contact creation", async () => {
