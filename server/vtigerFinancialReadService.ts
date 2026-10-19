@@ -42,10 +42,25 @@ function validRecordId(recordId: string): boolean {
   return /^\d+x\d+$/i.test(recordId.trim());
 }
 
-async function vtigerRequest<T>(params: Record<string, string>): Promise<T> {
+function isTransientVtigerReadFailure(error: unknown): boolean {
+  const code = typeof (error as { code?: unknown })?.code === "string"
+    ? (error as { code: string }).code.toUpperCase()
+    : "";
+  if (["ECONNRESET", "ECONNABORTED", "ETIMEDOUT", "EAI_AGAIN"].includes(code)) return true;
+  const status = (error as { response?: { status?: unknown } })?.response?.status;
+  if ([502, 503, 504].includes(status as number)) return true;
+  return error instanceof Error && /\b(?:ECONNRESET|ECONNABORTED|ETIMEDOUT|EAI_AGAIN)\b/i.test(error.message);
+}
+
+async function vtigerGetRead<T>(params: Record<string, string>): Promise<T> {
   const response = await axios.get(endpoint(), { params, timeout: 20_000 });
   if (!response.data?.success) throw new Error(response.data?.error?.message ?? "VTiger read request failed");
   return response.data.result as T;
+}
+
+/** Each idempotent VTiger GET may be retried once for a transport/gateway failure. */
+async function vtigerRequest<T>(params: Record<string, string>): Promise<T> {
+  return retryReadOnceWhen(() => vtigerGetRead<T>(params), isTransientVtigerReadFailure);
 }
 
 /**
@@ -63,44 +78,39 @@ async function vtigerLogin<T>(params: Record<string, string>): Promise<T> {
 }
 
 function isTransientVtigerLoginRejection(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    /invalid username or password/i.test(error.message)
-  );
+  return error instanceof Error && /invalid username or password/i.test(error.message);
 }
 
 /**
- * Retries only VTiger's intermittent login-rejection response, using a new
- * challenge token. This helper is read-only: it cannot retry a CRM or Xero
- * write, and a second rejection still propagates as a hold.
+ * Opens a short-lived read-only session. Each idempotent GET has its own
+ * bounded transport/gateway retry. VTiger's known intermittent login rejection
+ * receives at most one new challenge/login cycle; it cannot replay a CRM or
+ * Xero write and the second rejection is returned as a hold.
  */
 async function readOnlyVtigerSession(): Promise<string> {
   const { username, accessKey } = config();
   const status = getVtigerFinancialConnectionStatus();
   if (!status.configured || !username || !accessKey)
     throw new Error("VTiger is not configured for read-only financial evaluation.");
-  return retryReadOnceWhen(
-    async () => {
-      const challenge = await vtigerRequest<{ token?: string }>({
-        operation: "getchallenge",
-        username,
-      });
-      if (!challenge?.token)
-        throw new Error("VTiger challenge did not return a usable temporary token.");
-      const accessKeyHash = createHash("md5")
-        .update(`${challenge.token}${accessKey}`)
-        .digest("hex");
-      const login = await vtigerLogin<{ sessionName?: string }>({
-        operation: "login",
-        username,
-        accessKey: accessKeyHash,
-      });
-      if (!login?.sessionName)
-        throw new Error("VTiger read-only login did not return a usable session.");
-      return login.sessionName;
-    },
-    isTransientVtigerLoginRejection,
-  );
+  return retryReadOnceWhen(async () => {
+    const challenge = await vtigerRequest<{ token?: string }>({
+      operation: "getchallenge",
+      username,
+    });
+    if (!challenge?.token)
+      throw new Error("VTiger challenge did not return a usable temporary token.");
+    const accessKeyHash = createHash("md5")
+      .update(`${challenge.token}${accessKey}`)
+      .digest("hex");
+    const login = await vtigerLogin<{ sessionName?: string }>({
+      operation: "login",
+      username,
+      accessKey: accessKeyHash,
+    });
+    if (!login?.sessionName)
+      throw new Error("VTiger read-only login did not return a usable session.");
+    return login.sessionName;
+  }, isTransientVtigerLoginRejection);
 }
 
 function safeMessage(error: unknown): string {

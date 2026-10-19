@@ -22,6 +22,32 @@ export type MainCustomerInvoiceWebhookEnvelope = {
   event: string | null;
 };
 
+const MAIN_CUSTOMER_INVOICE_ERROR_LIMIT = 500;
+
+/** Keeps an actionable cause while excluding credential-shaped values from alerts and webhook responses. */
+export function safeMainCustomerInvoiceWebhookFailure(error: unknown): string {
+  let message = error instanceof Error
+    ? error.message
+    : "Main Customer Invoice processing could not be completed.";
+  for (const secret of [
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET,
+    process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET,
+    process.env.VTIGER_ACCESS_KEY,
+    process.env.XERO_CLIENT_SECRET,
+    process.env.XERO_REFRESH_TOKEN,
+  ]) {
+    if (secret) message = message.split(secret).join("[REDACTED]");
+  }
+  message = message
+    .replace(/\b(Bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
+    .replace(/([?&](?:access[_-]?token|api[_-]?key|token|secret|password)=)[^&#\s]+/gi, "$1[REDACTED]")
+    .replace(/(["']?(?:access[_-]?key|api[_-]?key|token|secret|password)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}&]+)/gi, "$1[REDACTED]")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+  return (message || "Main Customer Invoice processing could not be completed.")
+    .slice(0, MAIN_CUSTOMER_INVOICE_ERROR_LIMIT);
+}
+
 /**
  * Accepts the existing VTiger JSON envelope: `id` and `secret`, optionally
  * `dryRun`. Financial/body fields are intentionally ignored. `id` may be the
@@ -154,12 +180,15 @@ export function registerMainCustomerInvoiceWebhook(app: Express): void {
 
     try {
       const result = await processAutomaticMainCustomerInvoice(recordId);
+      const warning = !result.ok && "warning" in result
+        ? safeMainCustomerInvoiceWebhookFailure(result.warning)
+        : null;
       if (!result.ok) {
         reportWorkflowFailureSafely({
           workflowType: "main_customer_invoice",
           recordKey: `main-customer-invoice:${recordId}`,
           title: "Main Customer Invoice held",
-          errorMessage: ("warning" in result ? result.warning : null) ?? result.status,
+          errorMessage: warning ?? result.status,
           details: { dealId: recordId, status: result.status },
           severity: "error",
         });
@@ -175,21 +204,21 @@ export function registerMainCustomerInvoiceWebhook(app: Express): void {
           severity: "error",
         });
       }
-      return res.status(result.ok ? 200 : 202).json(result);
-    } catch {
+      return res.status(result.ok ? 200 : 202).json(warning ? { ...result, warning } : result);
+    } catch (error) {
+      const message = safeMainCustomerInvoiceWebhookFailure(error);
       reportWorkflowFailureSafely({
         workflowType: "main_customer_invoice",
         recordKey: `main-customer-invoice:${recordId}`,
         title: "Main Customer Invoice held",
-        errorMessage:
-          "Main Customer Invoice source, release or Xero preflight could not be completed.",
+        errorMessage: message,
         details: { dealId: recordId },
         severity: "error",
       });
       return res.status(202).json({
         ok: false,
         status: "held",
-        warning: "Main Customer Invoice held; inspect the AP lifecycle ledger.",
+        warning: message,
         xeroWritesAttempted: 0,
       });
     }

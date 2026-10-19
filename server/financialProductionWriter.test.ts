@@ -4,6 +4,7 @@ import {
   executeFinancialDraftWrite,
   FinancialWriteDisabledError,
   isFinancialLiveWriteEnvironmentEnabled,
+  isPermittedMainCustomerInvoiceLineAccount,
   prepareFinancialDraftPayload,
   prepareFinancialDraftUpdatePayload,
 } from "./financialProductionWriter";
@@ -91,6 +92,19 @@ describe("guarded financial production writer", () => {
     expect(payload.body).toMatchObject({
       Invoices: [{ Type: "ACCREC", Status: "DRAFT", LineAmountTypes: "Inclusive", LineItems: [{ TaxType: "OUTPUT", UnitAmount: 110 }] }],
     });
+  });
+
+  it("permits only verified Main Invoice item and sales-account combinations", () => {
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "", AccountCode: "200" })).toBe(true);
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "SER9", AccountCode: "200" })).toBe(true);
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "SER60", AccountCode: "200" })).toBe(true);
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "20' Hire", AccountCode: "210" })).toBe(true);
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "40' Hire", AccountCode: "210" })).toBe(true);
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "20' Sale", AccountCode: "230" })).toBe(true);
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "SER60", AccountCode: "210" })).toBe(false);
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "20' Hire", AccountCode: "200" })).toBe(false);
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "20' Sale", AccountCode: "not-an-account" })).toBe(false);
+    expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "Unexpected", AccountCode: "200" })).toBe(false);
   });
 
   it("creates a stable exact-Draft update request only after matching the verified identifier and number", () => {
@@ -189,6 +203,25 @@ describe("guarded financial production writer", () => {
     expect(() => assertFinancialDraftWriteAuthorised({ ...customerSale, customerSalePurchaseAutomaticEventId: 0 })).toThrow(/Customer Sale purchase automatic release/i);
     expect(() => assertFinancialDraftWriteAuthorised({ ...customerSale, customerSalePurchaseReleaseKey: undefined })).toThrow(/Customer Sale purchase automatic release/i);
     expect(() => assertFinancialDraftWriteAuthorised(completeAuthorisation())).toThrow(FinancialWriteDisabledError);
+  });
+
+  it("keeps Main Invoice local-validation reconciliation default-off and rejects cross-family or normal-event contexts", () => {
+    delete process.env.FINANCIAL_LIVE_WRITES_ENABLED;
+    const reconciliation = completeAuthorisation({
+      workflowType: "main_invoice_reconciliation",
+      approvalReference: "MAIN-RECONCILIATION-UNIT-TEST",
+      mainInvoiceReconciliationEventId: 750002,
+      mainInvoiceReconciliationToken: "exclusive-token",
+      mainInvoiceReconciliationReleaseKey: "MAIN-RECONCILIATION-UNIT-TEST",
+      mainInvoiceReconciliationApprovedBy: 7,
+    });
+    delete process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_RECONCILIATION_ENABLED;
+    expect(() => assertFinancialDraftWriteAuthorised(reconciliation)).toThrow(/Main Customer Invoice reconciliation/i);
+    process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_RECONCILIATION_ENABLED = "true";
+    expect(() => assertFinancialDraftWriteAuthorised(reconciliation)).not.toThrow();
+    expect(() => assertFinancialDraftWriteAuthorised({ ...reconciliation, workflowType: "main_customer_invoice" })).toThrow(/reconciliation/i);
+    expect(() => assertFinancialDraftWriteAuthorised({ ...reconciliation, mainCustomerInvoiceAutomaticEventId: 750001 })).toThrow(/reconciliation/i);
+    delete process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_RECONCILIATION_ENABLED;
   });
 
   it("rejects storage-pilot updates and non-Draft create payloads before Xero authentication", async () => {

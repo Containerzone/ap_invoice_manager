@@ -175,4 +175,25 @@ describe("Main Customer Invoice current-source evidence", () => {
     expect(preflight).toHaveBeenCalledTimes(6);
     expect(mocks.writer.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.contactV2Execute.mock.invocationCallOrder[0]!);
   });
+
+  it("does not invoke the Draft writer when the VTiger evidence refresh fails after v2 contact creation", async () => {
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const wouldCreate = { source: await mocks.contactV2Source(), status: "would_create", outcome: "would_create_contact", contactId: null, contactName: "Customer Pty Ltd", includeEmailOnCreate: true, lookupOrder: ["name", "email"], nameMatchCount: 0, emailMatchCount: 0, holdReason: null };
+    mocks.contactV2Preview.mockResolvedValue(wouldCreate);
+    mocks.contactV2Execute.mockResolvedValue({ ...wouldCreate, status: "created", outcome: "created_contact", contactId: "v2-contact", contactEventId: 99, contactWritesAttempted: 1 });
+    preflight.mockResolvedValueOnce(readyPreflight())
+      .mockResolvedValueOnce([{ ...readyPreflight()[0], contactCheck: { found: false, contactId: null, count: 0, partyName: "Customer Pty Ltd" } }]);
+    retrieve.mockReset()
+      .mockResolvedValueOnce({ id: "5x77", potential_no: "D702877", cf_potentials_quotereference: "20x9", related_to: "4x2", cf_potentials_containersituationselectone: "SHIPPER OWN", cf_potentials_pickuplocation: "Origin", cf_potentials_deliverylocation: "Destination", cf_potentials_fullcontainercollectiondate: "2026-10-12", cf_potentials_depositstatus: "PENDING", modifiedtime: "2026-10-11T01:00:00Z" })
+      .mockResolvedValueOnce({ id: "20x9", quote_no: "Q-702877", LineItems: { 1: { productid: "14x1", quantity: "2", listprice: "250" } }, modifiedtime: "2026-10-11T02:00:00Z" })
+      .mockResolvedValueOnce({ id: "4x2", accountname: "Customer Pty Ltd" })
+      .mockResolvedValueOnce({ id: "14x1", servicename: "Transport - Loaded Container" })
+      .mockRejectedValueOnce(new Error("VTiger GET getchallenge failed with ECONNRESET"));
+
+    await expect(processAutomaticMainCustomerInvoice("5x77"))
+      .rejects.toThrow("VTiger GET getchallenge failed with ECONNRESET");
+
+    expect(mocks.contactV2Execute).toHaveBeenCalledTimes(1);
+    expect(mocks.writer).not.toHaveBeenCalled();
+  });
 });

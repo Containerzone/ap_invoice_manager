@@ -12,6 +12,7 @@ import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
 import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
+import { consumeMainCustomerInvoiceReconciliationPayload, verifyMainCustomerInvoiceReconciliationWriteAccess } from "./financialMainCustomerInvoiceReconciliationDb";
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
 import { consumeDepositInvoiceReconciliationPayload, verifyDepositInvoiceReconciliationWriteAccess } from "./financialDepositInvoiceReconciliationDb";
 import { consumeFinalWeightPayload, verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
@@ -88,6 +89,11 @@ export type FinancialWriteAuthorisation = {
   mainCustomerInvoiceAutomaticEventId?: number;
   mainCustomerInvoiceReleaseKey?: string;
   mainCustomerInvoiceApprovedBy?: number;
+  /** One named locally-proven Main Invoice validation recovery; never a normal event replay. */
+  mainInvoiceReconciliationEventId?: number;
+  mainInvoiceReconciliationToken?: string;
+  mainInvoiceReconciliationReleaseKey?: string;
+  mainInvoiceReconciliationApprovedBy?: number;
   /** Dedicated Deposit release only; the generic all-family gate cannot enable it. */
   depositInvoiceAutomaticEventId?: number;
   depositInvoiceReleaseKey?: string;
@@ -140,6 +146,21 @@ export class FinancialWriteDisabledError extends Error {
     super(message);
     this.name = "FinancialWriteDisabledError";
   }
+}
+
+/**
+ * Main Invoices may contain itemless Quote services, native transport items,
+ * current Sale items, and the separately verified 20/40-foot Hire items. Sale
+ * account evidence is bound by the current Xero preflight and immutable event
+ * payload; all other pairings are fixed here to prevent cross-item accounts.
+ */
+export function isPermittedMainCustomerInvoiceLineAccount(line: unknown): boolean {
+  const itemCode = String((line as { ItemCode?: unknown } | null)?.ItemCode ?? "").trim();
+  const accountCode = String((line as { AccountCode?: unknown } | null)?.AccountCode ?? "").trim();
+  if (!itemCode || itemCode === "SER9" || itemCode === "SER60") return accountCode === "200";
+  if (itemCode === "20' Hire" || itemCode === "40' Hire") return accountCode === "210";
+  if (itemCode === "20' Sale" || itemCode === "40' Sale") return /^\d{1,10}$/.test(accountCode);
+  return false;
 }
 
 function isoDate(value: Date | null): string | undefined {
@@ -303,6 +324,24 @@ export function assertFinancialDraftWriteAuthorised(
   context: FinancialWriteAuthorisation,
   options: { requireExecutionId?: boolean } = {},
 ): void {
+  if (context.workflowType === "main_invoice_reconciliation" || context.mainInvoiceReconciliationEventId !== undefined) {
+    if (process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_RECONCILIATION_ENABLED !== "true" || context.workflowType !== "main_invoice_reconciliation" ||
+      !Number.isInteger(context.mainInvoiceReconciliationEventId) || Number(context.mainInvoiceReconciliationEventId) <= 0 ||
+      !context.mainInvoiceReconciliationToken || !context.mainInvoiceReconciliationReleaseKey ||
+      !Number.isInteger(context.mainInvoiceReconciliationApprovedBy) || Number(context.mainInvoiceReconciliationApprovedBy) <= 0 ||
+      context.approvalReference !== context.mainInvoiceReconciliationReleaseKey || !context.currentDocumentPreflightPassed || !context.legacyWriterHandoffComplete ||
+      [context.mainCustomerInvoiceAutomaticEventId, context.depositInvoiceAutomaticEventId, context.depositInvoiceReconciliationEventId,
+        context.depositMainDeductionAutomaticEventId, context.depositDraftCorrectionKind, context.finalWeightAutomaticEventId,
+        context.finalWeightReconciliationEventId, context.finalWeightReconciliationRemediationEventId, context.assetPurchaseAutomaticEventId,
+        context.customerSalePurchaseAutomaticEventId, context.forHireAutomaticEventId, context.storageAutomaticEventId,
+        context.storagePilotEventId, context.extraHireAutomaticEventId].some(value => value !== undefined)) {
+      throw new FinancialWriteDisabledError("Main Customer Invoice reconciliation requires its separate one-time recovery gate and exact reservation.");
+    }
+    if (options.requireExecutionId !== false && (!Number.isInteger(context.executionId) || Number(context.executionId) <= 0)) {
+      throw new FinancialWriteDisabledError("Main Customer Invoice reconciliation execution ledger is required.");
+    }
+    return;
+  }
   if (context.workflowType === "deposit_invoice_reconciliation" || context.depositInvoiceReconciliationEventId !== undefined) {
     if (process.env.FINANCIAL_DEPOSIT_INVOICE_RECONCILIATION_ENABLED !== "true" || context.workflowType !== "deposit_invoice_reconciliation" ||
       !Number.isInteger(context.depositInvoiceReconciliationEventId) || Number(context.depositInvoiceReconciliationEventId) <= 0 ||
@@ -580,6 +619,21 @@ export async function executeFinancialDraftWrite(
     await verifyDepositInvoiceReconciliationWriteAccess(input);
     await consumeDepositInvoiceReconciliationPayload({ eventId: input.eventId, token: input.token }, context.executionId!);
   }
+  if (context.mainInvoiceReconciliationEventId !== undefined) {
+    const rows = payload.body.Invoices;
+    const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+    if (payload.method !== "POST" || payload.endpoint !== "/Invoices" || payload.documentFamily !== "customer_invoice" || payload.expectedXeroDocumentId ||
+      !/^INV-\d{1,12}$/.test(payload.documentNumber) || Object.keys(payload.body).length !== 1 || !row || row.InvoiceID ||
+      row.InvoiceNumber !== payload.documentNumber || row.Type !== "ACCREC" || row.Status !== "DRAFT" || row.CurrencyCode !== "AUD" ||
+      row.LineAmountTypes !== "Exclusive" || !row.Contact?.ContactID || !Array.isArray(row.LineItems) || row.LineItems.length < 1 ||
+      !row.LineItems.every(isPermittedMainCustomerInvoiceLineAccount)) {
+      throw new FinancialWriteDisabledError("Main Customer Invoice reconciliation permits only one exact AUD Exclusive Draft ACCREC with the independently revalidated Main Invoice lines.");
+    }
+    const input = { eventId: context.mainInvoiceReconciliationEventId, token: context.mainInvoiceReconciliationToken!,
+      releaseKey: context.mainInvoiceReconciliationReleaseKey!, preparedBy: context.mainInvoiceReconciliationApprovedBy!, payload };
+    await verifyMainCustomerInvoiceReconciliationWriteAccess(input);
+    await consumeMainCustomerInvoiceReconciliationPayload({ eventId: input.eventId, token: input.token }, context.executionId!);
+  }
   if (/^INV-\d+-D$/i.test(payload.documentNumber) && context.depositInvoiceAutomaticEventId === undefined && context.depositInvoiceReconciliationEventId === undefined && context.depositDraftCorrectionKind === undefined) {
     throw new FinancialWriteDisabledError("Exact Deposit -D invoices require their independent Deposit release; another family cannot create or amend them.");
   }
@@ -635,8 +689,8 @@ export async function executeFinancialDraftWrite(
     const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
     if (payload.method !== "POST" || payload.endpoint !== "/Invoices" || payload.documentFamily !== "customer_invoice" || payload.expectedXeroDocumentId ||
       !row || row.Status !== "DRAFT" || row.Type !== "ACCREC" || row.CurrencyCode !== "AUD" || row.LineAmountTypes !== "Exclusive" ||
-      !Array.isArray(row.LineItems) || row.LineItems.length < 1 || !row.LineItems.every((line: any) => String(line.AccountCode) === "200")) {
-      throw new FinancialWriteDisabledError("Main Customer Invoice automatic release permits only a new exact AUD Exclusive Draft ACCREC with account 200 lines.");
+      !Array.isArray(row.LineItems) || row.LineItems.length < 1 || !row.LineItems.every(isPermittedMainCustomerInvoiceLineAccount)) {
+      throw new FinancialWriteDisabledError("Main Customer Invoice automatic release permits only exact approved transport/itemless, Sale, or Hire sales-account line combinations.");
     }
     await verifyMainCustomerInvoiceAutomaticWriteAccess({
       eventId: context.mainCustomerInvoiceAutomaticEventId,

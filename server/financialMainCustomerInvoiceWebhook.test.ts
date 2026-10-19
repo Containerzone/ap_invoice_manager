@@ -29,6 +29,7 @@ import {
   parseMainCustomerInvoiceWebhookEnvelope,
   registerMainCustomerInvoiceWebhook,
   resolveMainCustomerInvoiceWebhookRecord,
+  safeMainCustomerInvoiceWebhookFailure,
 } from "./financialMainCustomerInvoiceWebhook";
 
 function response() {
@@ -184,5 +185,33 @@ describe("Main Customer Invoice webhook contract", () => {
       })
     ).rejects.toThrow(/ambiguous/i);
     expect(mocks.process).not.toHaveBeenCalled();
+  });
+
+  it("keeps the post-contact failure cause in the held response and alert while redacting a configured secret", async () => {
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET = "webhook-secret";
+    process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED = "true";
+    mocks.process.mockRejectedValue(new Error("VTiger GET getchallenge failed with ECONNRESET; token=webhook-secret"));
+    const res = response();
+
+    await registeredHandler()(
+      { header: () => undefined, body: { id: "5x702877", secret: "webhook-secret" } },
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(202);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      status: "held",
+      warning: "VTiger GET getchallenge failed with ECONNRESET; token=[REDACTED]",
+      xeroWritesAttempted: 0,
+    }));
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({
+      errorMessage: "VTiger GET getchallenge failed with ECONNRESET; token=[REDACTED]",
+    }));
+  });
+
+  it("redacts Bearer credentials and bounds an unexpected failure message", () => {
+    expect(safeMainCustomerInvoiceWebhookFailure(new Error("upstream Authorization: Bearer token-value\nfailed")))
+      .toBe("upstream Authorization: Bearer [REDACTED] failed");
+    expect(safeMainCustomerInvoiceWebhookFailure(new Error("x".repeat(501)))).toHaveLength(500);
   });
 });

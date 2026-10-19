@@ -49,6 +49,21 @@ export function assertMainCustomerInvoiceRelease(policy: MainCustomerInvoiceRele
   }
 }
 
+/**
+ * A historical local-validation recovery is separately default-off. It relies
+ * on the already approved named Main Invoice handover, but deliberately does
+ * not call the normal automatic-release assertion or inspect its runtime gate.
+ */
+export function assertMainCustomerInvoiceReconciliationRelease(policy: MainCustomerInvoiceReleasePolicy): void {
+  if (process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_RECONCILIATION_ENABLED !== "true" || !policy.enabled || !policy.releaseKey ||
+    policy.rulesHash !== MAIN_CUSTOMER_INVOICE_RULES_HASH || !policy.approvedBy || !policy.approvedAt || !policy.effectiveFrom ||
+    !Number.isFinite(Date.parse(policy.approvedAt)) || !Number.isFinite(Date.parse(policy.effectiveFrom)) ||
+    Date.parse(policy.approvedAt) > Date.now() || Date.parse(policy.effectiveFrom) > Date.now() ||
+    !policy.mainInvoiceOnlyVtigerBranch || !policy.operationsMainInvoiceHandoff || policy.migrationScope !== "new_events_only") {
+    throw new Error("Main Customer Invoice reconciliation release is disabled or lacks its approved isolated handover policy.");
+  }
+}
+
 /** AP-local preparation only; it cannot set a deployment flag or call Xero. */
 export async function prepareMainCustomerInvoiceReleasePolicy(preparedBy: number): Promise<MainCustomerInvoiceReleasePolicy> {
   const current = await getMainCustomerInvoiceReleasePolicy();

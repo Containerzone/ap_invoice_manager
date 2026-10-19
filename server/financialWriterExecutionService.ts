@@ -23,6 +23,7 @@ import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
 import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
+import { verifyMainCustomerInvoiceReconciliationWriteAccess } from "./financialMainCustomerInvoiceReconciliationDb";
 import { verifyDepositInvoiceAutomaticWriteAccess } from "./financialDepositInvoiceDb";
 import { verifyDepositInvoiceReconciliationWriteAccess } from "./financialDepositInvoiceReconciliationDb";
 import { verifyDepositMainDeductionWriteAccess } from "./financialDepositMainDeductionDb";
@@ -126,6 +127,26 @@ export async function executeGuardedFinancialWriterCommand(
       eventId: command.authorisation.depositInvoiceReconciliationEventId,
       token: command.authorisation.depositInvoiceReconciliationToken!,
       releaseKey: command.authorisation.depositInvoiceReconciliationReleaseKey!,
+      payload: command.payload,
+      preparedBy: command.preparedBy,
+    });
+  }
+  if (command.authorisation.mainInvoiceReconciliationEventId !== undefined) {
+    if (command.workflowType !== "main_invoice_reconciliation" || command.proposedAction !== "create_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
+      command.preparedBy !== command.authorisation.mainInvoiceReconciliationApprovedBy || !command.expectedDraftDocument ||
+      command.expectedDraftDocument.sourceWorkflow !== "main_customer_invoice" || command.expectedDraftDocument.documentType !== "main_customer_invoice" ||
+      command.expectedFinalWeightDraft || command.expectedExactDraft) {
+      throw new Error("Main Customer Invoice reconciliation permits only its exact current Draft POST recovery and no CRM/post-success action.");
+    }
+    const expectedPayload = prepareFinancialDraftPayload(command.expectedDraftDocument, "main-invoice-reconciliation-readback-binding");
+    (expectedPayload.body.Invoices as any[])[0].CurrencyCode = "AUD";
+    if (financialSha256(expectedPayload.body) !== financialSha256(command.payload.body)) {
+      throw new Error("Main Customer Invoice reconciliation exact readback proposal must match the immutable authorised POST body.");
+    }
+    await verifyMainCustomerInvoiceReconciliationWriteAccess({
+      eventId: command.authorisation.mainInvoiceReconciliationEventId,
+      token: command.authorisation.mainInvoiceReconciliationToken!,
+      releaseKey: command.authorisation.mainInvoiceReconciliationReleaseKey!,
       payload: command.payload,
       preparedBy: command.preparedBy,
     });

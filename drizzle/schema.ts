@@ -916,6 +916,41 @@ export const financialMainCustomerInvoiceEvents = mysqlTable("financial_main_cus
 export type FinancialMainCustomerInvoiceEvent = typeof financialMainCustomerInvoiceEvents.$inferSelect;
 export type InsertFinancialMainCustomerInvoiceEvent = typeof financialMainCustomerInvoiceEvents.$inferInsert;
 
+// A one-time, separately auditable recovery receipt for a named Main Invoice
+// local-validation failure. It never clears or reuses the original event.
+export const financialMainCustomerInvoiceReconciliationEvents = mysqlTable("financial_main_customer_invoice_reconciliation_events", {
+  id: int("id").autoincrement().primaryKey(),
+  originalEventId: int("originalEventId").notNull(),
+  failedWriterExecutionId: int("failedWriterExecutionId").notNull(),
+  recoveryKey: varchar("recoveryKey", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  invoiceNumber: varchar("invoiceNumber", { length: 128 }).notNull(),
+  originalEventHash: varchar("originalEventHash", { length: 64 }).notNull(),
+  failedWriterEvidenceHash: varchar("failedWriterEvidenceHash", { length: 64 }).notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  xeroPreflightHash: varchar("xeroPreflightHash", { length: 64 }).notNull(),
+  sourceSnapshot: json("sourceSnapshot").notNull(),
+  proposal: json("proposal").notNull(),
+  xeroPreflight: json("xeroPreflight").notNull(),
+  releaseKey: varchar("releaseKey", { length: 128 }),
+  authorisedPayload: json("authorisedPayload"),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["reserved", "submitted", "drafts_created", "reconciliation_required"] as const).default("reserved").notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  submittedAt: timestamp("submittedAt"),
+  readbackEvidence: json("readbackEvidence"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => ({
+  originalEventUnique: uniqueIndex("financial_main_invoice_reconcile_original_unique").on(table.originalEventId),
+  failedWriterExecutionUnique: uniqueIndex("financial_main_invoice_reconcile_writer_unique").on(table.failedWriterExecutionId),
+  recoveryKeyUnique: uniqueIndex("financial_main_invoice_reconcile_key_unique").on(table.recoveryKey),
+  invoiceUnique: uniqueIndex("financial_main_invoice_reconcile_invoice_unique").on(table.invoiceNumber),
+}));
+export type FinancialMainCustomerInvoiceReconciliationEvent = typeof financialMainCustomerInvoiceReconciliationEvents.$inferSelect;
+
 // Deposit evidence is append-only; only reservation/execution state can change.
 // Nullable unique claim keys prevent any second write for a Deal or exact -D number.
 export const financialDepositInvoiceEvents = mysqlTable("financial_deposit_invoice_events", {

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
 vi.mock("axios", () => ({ default: { get: mockGet, post: mockPost } }));
 
-import { describeVtigerFinancialModule, testVtigerFinancialConnection } from "./vtigerFinancialReadService";
+import { describeVtigerFinancialModule, retrieveCurrentVtigerFinancialRecord, testVtigerFinancialConnection } from "./vtigerFinancialReadService";
 
 function configuredEnvironment() {
   process.env.VTIGER_URL = "https://vtiger.example.test";
@@ -51,7 +51,19 @@ describe("VTiger financial read-only connection health", () => {
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
-  it("reissues one fresh challenge after VTiger's transient invalid-login response", async () => {
+  it("retries a transient GET challenge once without retrying the login POST", async () => {
+    mockGet
+      .mockRejectedValueOnce(Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }))
+      .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge-one" } } })
+    mockPost.mockResolvedValueOnce({ data: { success: true, result: { sessionName: "read-session" } } });
+
+    await expect(testVtigerFinancialConnection()).resolves.toMatchObject({ outcome: "passed" });
+    expect(mockGet).toHaveBeenCalledTimes(2);
+    expect(mockGet.mock.calls.map(([, request]) => request?.params?.operation)).toEqual(["getchallenge", "getchallenge"]);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("reissues one fresh challenge/login cycle after VTiger's intermittent invalid-login response", async () => {
     mockGet
       .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge-one" } } })
       .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge-two" } } });
@@ -60,8 +72,21 @@ describe("VTiger financial read-only connection health", () => {
       .mockResolvedValueOnce({ data: { success: true, result: { sessionName: "read-session" } } });
 
     await expect(testVtigerFinancialConnection()).resolves.toMatchObject({ outcome: "passed" });
-    expect(mockGet).toHaveBeenCalledTimes(2);
+    expect(mockGet.mock.calls.map(([, request]) => request?.params?.operation)).toEqual(["getchallenge", "getchallenge"]);
     expect(mockPost).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a failed GET retrieve once but never retries the form-login POST", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge" } } })
+      .mockRejectedValueOnce(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }))
+      .mockResolvedValueOnce({ data: { success: true, result: { id: "5x77", potential_no: "D702946" } } });
+    mockPost.mockResolvedValueOnce({ data: { success: true, result: { sessionName: "read-session" } } });
+
+    await expect(retrieveCurrentVtigerFinancialRecord("5x77")).resolves.toMatchObject({ id: "5x77" });
+
+    expect(mockGet.mock.calls.map(([, request]) => request?.params?.operation)).toEqual(["getchallenge", "retrieve", "retrieve"]);
+    expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
   it("describes post-success mapping fields with GET-only metadata after session login", async () => {
