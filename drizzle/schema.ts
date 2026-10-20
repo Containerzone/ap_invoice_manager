@@ -1051,6 +1051,26 @@ export const financialDepositMainDeductionEvents = mysqlTable("financial_deposit
 }));
 export type FinancialDepositMainDeductionEvent = typeof financialDepositMainDeductionEvents.$inferSelect;
 
+// Append-only operational outcomes, including calls that never reserve/write.
+// No updatedAt, mutable state, or recovery authorisation belongs in this table.
+export const financialDepositMainDeductionAttempts = mysqlTable("financial_deposit_main_deduction_attempts", {
+  id: int("id").autoincrement().primaryKey(),
+  attemptKey: varchar("attemptKey", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }),
+  dealNumber: varchar("dealNumber", { length: 128 }),
+  trigger: varchar("trigger", { length: 32 }).notNull(),
+  outcome: mysqlEnum("outcome", ["disabled", "not_ready", "already_deducted", "held", "reconciliation_required", "deducted"] as const).notNull(),
+  phase: mysqlEnum("phase", ["release", "source", "xero_read", "eligibility", "reservation", "writer", "completed"] as const).notNull(),
+  deductionEventId: int("deductionEventId"),
+  executionId: int("executionId"),
+  reason: varchar("reason", { length: 2000 }),
+  details: json("details"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => ({
+  attemptUnique: uniqueIndex("financial_deposit_main_deduction_attempt_unique").on(table.attemptKey),
+}));
+export type FinancialDepositMainDeductionAttempt = typeof financialDepositMainDeductionAttempts.$inferSelect;
+
 // Closed D702946 exception: evidence/payload never change; only one-way receipt state may change.
 export const financialD702946DepositMainDeductionRecoveryEvents = mysqlTable("financial_d702946_deposit_main_deduction_recovery_events", {
   id: int("id").autoincrement().primaryKey(),

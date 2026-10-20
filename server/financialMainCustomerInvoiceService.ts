@@ -439,7 +439,7 @@ export async function processAutomaticMainCustomerInvoice(dealId: string) {
   const event = await getMainCustomerInvoiceEvent(dealId);
   if (!event) throw new Error("Main Customer Invoice current preflight was not recorded in the AP ledger.");
   if (event.status === "drafts_created") {
-    const deduction = await processAutomaticDepositMainDeduction(dealId);
+    const deduction = await processAutomaticDepositMainDeduction(dealId, "replay");
     return { ok: true, status: "duplicate_replay" as const, recordId: dealId, eventId: event.id, invoiceNumber: event.proposedInvoiceNumber, xeroWritesAttempted: deduction.xeroWritesAttempted, mainDeduction: deduction };
   }
   if (event.status === "reconciliation_required") return { ok: false, status: "reconciliation_required" as const, recordId: dealId, eventId: event.id, warning: event.holdReason ?? "Main Customer Invoice is awaiting reconciliation.", xeroWritesAttempted: 0 };
@@ -515,7 +515,7 @@ export async function processAutomaticMainCustomerInvoice(dealId: string) {
       return { ok: false, status: "reconciliation_required" as const, recordId: dealId, eventId: event.id, warning: "Main Customer Invoice Xero result is awaiting reconciliation; no blind retry will occur.", xeroWritesAttempted: customerContactWrites + (outcome.outcome === "reconciliation_required" ? 1 : 0) };
     }
     await completeMainCustomerInvoiceDraft({ eventId: event.id, executionId: outcome.executionId, xeroInvoiceId: outcome.result.xeroDocumentId });
-    const deduction = await processAutomaticDepositMainDeduction(dealId);
+    const deduction = await processAutomaticDepositMainDeduction(dealId, "main");
     return { ok: true, status: "drafts_created" as const, recordId: dealId, eventId: event.id, invoiceNumber: outcome.result.documentNumber, xeroInvoiceId: outcome.result.xeroDocumentId, xeroWritesAttempted: customerContactWrites + 1 + deduction.xeroWritesAttempted, mainDeduction: deduction };
   } catch (error) {
     await holdMainCustomerInvoiceExecution(event.id, error instanceof Error ? error.message : "Main Customer Invoice execution failed.");

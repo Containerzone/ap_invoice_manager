@@ -115,13 +115,13 @@ export function registerDepositInvoiceWebhook(app: Express): void {
           });
         }
         const deduction = "mainDeduction" in result ? result.mainDeduction : null;
-        if (deduction && (deduction.status === "held" || deduction.status === "reconciliation_required")) {
+        if (deduction && deduction.status !== "deducted" && deduction.status !== "already_deducted") {
           reportWorkflowFailureSafely({
             workflowType: "deposit_main_deduction",
             recordKey: `deposit-main-deduction:${recordId}`,
-            title: "Deposit-to-main Draft deduction held",
+            title: `Deposit-to-main Draft deduction: ${deduction.status}`,
             errorMessage: deduction.reason,
-            details: { dealId: recordId, status: deduction.status },
+            details: { dealId: recordId, status: deduction.status, reason: deduction.reason, trigger: result.status === "drafts_created" ? "deposit" : "replay" },
             severity: "error",
           });
         }

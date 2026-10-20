@@ -18,6 +18,7 @@ const m = vi.hoisted(() => ({
   contactV2Preview: vi.fn(),
   contactV2Execute: vi.fn(),
   billingSync: vi.fn(),
+  deduction: vi.fn(),
 }));
 vi.mock("./vtigerFinancialReadService", () => ({
   retrieveCurrentVtigerFinancialRecord: m.retrieve,
@@ -53,6 +54,7 @@ vi.mock("./financialCustomerContactService", () => ({
 vi.mock("./financialCustomerContactSourceV2", () => ({ readCurrentCustomerContactResolution: m.contactV2Source }));
 vi.mock("./financialCustomerContactServiceV2", () => ({ previewCustomerContactResolution: m.contactV2Preview, executeCustomerContactCreationV2: m.contactV2Execute }));
 vi.mock("./financialBillingPartySyncService", () => ({ processAutomaticBillingPartySync: m.billingSync }));
+vi.mock("./financialDepositMainDeductionService", () => ({ processAutomaticDepositMainDeduction: m.deduction }));
 import { readDepositInvoiceFacts } from "./financialDepositInvoiceSource";
 import {
   previewDepositInvoice,
@@ -101,6 +103,7 @@ const ready = () => ({
 });
 beforeEach(() => {
   vi.clearAllMocks();
+  m.deduction.mockReset(); m.deduction.mockResolvedValue({ status: "disabled", reason: "independently gated", xeroWritesAttempted: 0 });
   vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "false");
   vi.stubEnv("FINANCIAL_BILLING_PARTY_SYNC_ENABLED", "false");
   // This suite validates Deposit creation only. The separately released generic
@@ -433,5 +436,25 @@ describe("Deposit isolated automatic path", () => {
     m.previous.mockResolvedValue({ id: 1, status: "reconciliation_required" });
     expect((await processAutomaticDepositInvoice("5x77")).status).toBe("held");
     expect(m.billingSync).not.toHaveBeenCalled();
+  });
+
+  it.each(["disabled", "not_ready", "held", "reconciliation_required"])("forwards deposit after real source/draft completion and keeps creation successful for %s", async status => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED", "true");
+    m.deduction.mockResolvedValue({ status, reason: "exact postcondition reason", xeroWritesAttempted: 0 });
+    const result = await processAutomaticDepositInvoice("5x77");
+    expect(result).toMatchObject({ ok: true, status: "drafts_created", mainDeduction: { status } });
+    expect(m.deduction).toHaveBeenCalledTimes(1); expect(m.deduction).toHaveBeenCalledWith("5x77", "deposit");
+    expect(m.deduction.mock.invocationCallOrder[0]).toBeGreaterThan(m.complete.mock.invocationCallOrder[0]!);
+    expect(m.retrieve).toHaveBeenCalled(); expect(m.writer).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards replay for a completed Deposit claim without recreating the invoice", async () => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED", "true");
+    m.previous.mockResolvedValue({ id: 61, status: "drafts_created" });
+    m.deduction.mockResolvedValue({ status: "already_deducted", reason: "existing exact line", xeroWritesAttempted: 0 });
+    expect(await processAutomaticDepositInvoice("5x77")).toMatchObject({ ok: false, status: "held" });
+    expect(m.deduction).toHaveBeenCalledWith("5x77", "replay"); expect(m.writer).not.toHaveBeenCalled();
   });
 });

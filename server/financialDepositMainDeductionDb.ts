@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
-import { financialDepositMainDeductionEvents, financialWriterExecutions, type FinancialDepositMainDeductionEvent } from "../drizzle/schema";
+import { randomUUID } from "node:crypto";
+import { financialDepositMainDeductionAttempts, financialDepositMainDeductionEvents, financialWriterExecutions, type FinancialDepositMainDeductionEvent, type FinancialDepositMainDeductionAttempt } from "../drizzle/schema";
 import { getDb } from "./db";
 import { financialSha256 } from "./financialProposalIntegrity";
 import type { FinancialDraftPayload } from "./financialProductionWriter";
@@ -11,6 +12,48 @@ async function database() {
   return db;
 }
 export const depositMainDeductionPayloadHash = (payload: FinancialDraftPayload) => financialSha256(payload);
+
+export type DepositMainDeductionTrigger = "main" | "deposit" | "replay";
+export type DepositMainDeductionPhase = FinancialDepositMainDeductionAttempt["phase"];
+
+/** Store error messages, never request/response bodies, credentials or stacks. */
+export function safeDepositMainDeductionReason(value: unknown): string {
+  let reason = value instanceof Error ? value.message : typeof value === "string" ? value : "Deposit-to-main deduction evidence is held.";
+  reason = reason.replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
+    .replace(/\b(token|secret|password|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .replace(/https?:\/\/[^\s]+/gi, "[URL REDACTED]");
+  for (const [key, secret] of Object.entries(process.env)) {
+    if (/SECRET|TOKEN|PASSWORD|API_KEY/.test(key) && secret && secret.length >= 4) reason = reason.split(secret).join("[REDACTED]");
+  }
+  return reason.replace(/[\r\n\t]+/g, " ").slice(0, 2000);
+}
+
+/** Each invocation is a distinct fact. Insert only: never merge/update/delete. */
+export async function recordDepositMainDeductionAttempt(input: {
+  attemptKey?: string; dealId?: string | null; dealNumber?: string | null;
+  trigger: DepositMainDeductionTrigger; outcome: FinancialDepositMainDeductionAttempt["outcome"];
+  phase: DepositMainDeductionPhase; deductionEventId?: number | null; executionId?: number | null;
+  reason?: string | null;
+  details?: { httpStatus?: number; retryAfterSeconds?: number; reservationTransitioned?: boolean };
+}): Promise<void> {
+  // Explicit scalar allowlist also protects against untyped callers supplying
+  // an Axios error, payload, auth object or arbitrary nested details.
+  const details = Object.fromEntries(Object.entries(input.details ?? {}).filter(([key, value]) =>
+    (["httpStatus", "retryAfterSeconds"].includes(key) && typeof value === "number" && Number.isFinite(value)) ||
+    (key === "reservationTransitioned" && typeof value === "boolean")));
+  await (await database()).insert(financialDepositMainDeductionAttempts).values({
+    attemptKey: input.attemptKey ?? randomUUID(),
+    dealId: input.dealId?.slice(0, 128) ?? null,
+    dealNumber: input.dealNumber?.slice(0, 128) ?? null,
+    trigger: input.trigger,
+    outcome: input.outcome,
+    phase: input.phase,
+    deductionEventId: input.deductionEventId ?? null,
+    executionId: input.executionId ?? null,
+    reason: input.reason == null ? null : safeDepositMainDeductionReason(input.reason),
+    details,
+  });
+}
 
 export async function reserveDepositMainDeduction(input: {
   dealId: string; dealNumber: string; depositInvoiceNumber: string; depositXeroInvoiceId: string;
@@ -67,10 +110,10 @@ export async function completeDepositMainDeduction(input: { eventId: number; tok
     throw new Error("Deposit-to-main deduction requires reconciliation; exclusive reservation was lost.");
   }
 }
-export async function holdDepositMainDeduction(eventId: number, token: string, reason: string) {
+export async function holdDepositMainDeduction(eventId: number, token: string, reason: string): Promise<boolean> {
   const db = await database();
-  await db.update(financialDepositMainDeductionEvents).set({ status: "reconciliation_required", processingToken: null, holdReason: reason.slice(0, 2000) })
-    .where(and(eq(financialDepositMainDeductionEvents.id, eventId), eq(financialDepositMainDeductionEvents.status, "reserved"), eq(financialDepositMainDeductionEvents.processingToken, token)));
+  return affected(await db.update(financialDepositMainDeductionEvents).set({ status: "reconciliation_required", processingToken: null, holdReason: safeDepositMainDeductionReason(reason) })
+    .where(and(eq(financialDepositMainDeductionEvents.id, eventId), eq(financialDepositMainDeductionEvents.status, "reserved"), eq(financialDepositMainDeductionEvents.processingToken, token))));
 }
 
 /**

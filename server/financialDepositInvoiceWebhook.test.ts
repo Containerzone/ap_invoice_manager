@@ -167,4 +167,25 @@ describe("Deposit dedicated protected webhook", () => {
     );
     expect(m.process).toHaveBeenCalledWith("5x77");
   });
+
+  it.each(["disabled", "not_ready", "held", "reconciliation_required"])("durably alerts exact deduction %s but retains Deposit creation HTTP 200", async status => {
+    vi.stubEnv("FINANCIAL_AP_WEBHOOK_SECRET", "private-test");
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    const reason = `Exact deduction ${status} reason`;
+    m.process.mockResolvedValue({ ok: true, status: "drafts_created", mainDeduction: { status, reason, xeroWritesAttempted: 0 } });
+    const res = response();
+    await handler()({ header: () => "private-test", body: { record_id: "5x77" } }, res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(m.report).toHaveBeenCalledTimes(1);
+    expect(m.report).toHaveBeenCalledWith(expect.objectContaining({ workflowType: "deposit_main_deduction", errorMessage: reason, details: { dealId: "5x77", status, reason, trigger: "deposit" } }));
+  });
+
+  it.each(["deducted", "already_deducted"])("does not alert a successful deduction %s", async status => {
+    vi.stubEnv("FINANCIAL_AP_WEBHOOK_SECRET", "private-test");
+    vi.stubEnv("FINANCIAL_DEPOSIT_INVOICE_AUTOMATIC_ENABLED", "true");
+    m.process.mockResolvedValue({ ok: true, status: "drafts_created", mainDeduction: { status, reason: "completed", xeroWritesAttempted: 0 } });
+    const res = response();
+    await handler()({ header: () => "private-test", body: { record_id: "5x77" } }, res);
+    expect(res.status).toHaveBeenCalledWith(200); expect(m.report).not.toHaveBeenCalled();
+  });
 });

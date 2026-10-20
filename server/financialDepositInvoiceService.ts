@@ -161,7 +161,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
     : null;
   if (previous) {
     const deduction = previous.status === "drafts_created"
-      ? await processAutomaticDepositMainDeduction(dealId)
+      ? await processAutomaticDepositMainDeduction(dealId, "replay")
       : null;
     return {
       ok: false,
@@ -360,7 +360,7 @@ export async function processAutomaticDepositInvoice(dealId: string) {
       executionId: outcome.executionId,
       xeroInvoiceId: outcome.result.xeroDocumentId,
     });
-    const deduction = await processAutomaticDepositMainDeduction(dealId);
+    const deduction = await processAutomaticDepositMainDeduction(dealId, "deposit");
     return {
       ok: true,
       status: "drafts_created" as const,

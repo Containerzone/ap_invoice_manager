@@ -214,4 +214,25 @@ describe("Main Customer Invoice webhook contract", () => {
       .toBe("upstream Authorization: Bearer [REDACTED] failed");
     expect(safeMainCustomerInvoiceWebhookFailure(new Error("x".repeat(501)))).toHaveLength(500);
   });
+
+  it.each(["disabled", "not_ready", "held", "reconciliation_required"])("durably alerts the exact deduction %s while keeping Main creation HTTP 200", async status => {
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET = "test-secret";
+    process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED = "true";
+    const reason = `Exact deduction ${status} reason`;
+    mocks.process.mockResolvedValue({ ok: true, status: "drafts_created", mainDeduction: { status, reason, xeroWritesAttempted: 0 } });
+    const res = response();
+    await registeredHandler()({ header: () => undefined, body: { id: "5x702877", secret: "test-secret" } }, res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(mocks.alert).toHaveBeenCalledTimes(1);
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ workflowType: "deposit_main_deduction", errorMessage: reason, details: { dealId: "5x702877", status, reason, trigger: "main" } }));
+  });
+
+  it.each(["deducted", "already_deducted"])("does not alert a successful deduction outcome %s", async status => {
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET = "test-secret";
+    process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED = "true";
+    mocks.process.mockResolvedValue({ ok: true, status: "drafts_created", mainDeduction: { status, reason: "completed", xeroWritesAttempted: 0 } });
+    const res = response();
+    await registeredHandler()({ header: () => undefined, body: { id: "5x702877", secret: "test-secret" } }, res);
+    expect(res.status).toHaveBeenCalledWith(200); expect(mocks.alert).not.toHaveBeenCalled();
+  });
 });

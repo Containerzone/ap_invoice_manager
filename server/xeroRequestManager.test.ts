@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import axios from "axios";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockReportWorkflowFailureSafely } = vi.hoisted(() => ({
   mockReportWorkflowFailureSafely: vi.fn(),
@@ -21,7 +22,7 @@ import {
   setXeroApiCache,
   updateXeroRateLimitState,
 } from "./db";
-import { runCachedXeroGet, runXeroRequest } from "./xeroRequestManager";
+import { runBoundedXeroGet, runCachedXeroGet, runXeroRequest, XeroRateLimitError } from "./xeroRequestManager";
 
 describe("central Xero request manager", () => {
   beforeEach(() => {
@@ -197,5 +198,82 @@ describe("central Xero request manager", () => {
 
     expect(operation).toHaveBeenCalledTimes(2);
     expect(mockReportWorkflowFailureSafely).not.toHaveBeenCalled();
+  });
+});
+
+describe("bounded strict GET rate-limit handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.mocked(getXeroToken).mockResolvedValue(null);
+    vi.mocked(updateXeroRateLimitState).mockResolvedValue(undefined);
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+  const auth = (tenantId: string) => ({ token: "token", tenantId });
+  const limit = (seconds?: string) => ({ response: { status: 429, headers: seconds === undefined ? {} : { "retry-after": seconds } } });
+
+  it.each(["1", "5"])("retries a %s-second GET 429 once through the queue, respecting the recorded pause", async seconds => {
+    const tenantId = `tenant-bounded-${seconds}`;
+    let token: any = { tenantId, rateLimitPausedUntil: null };
+    vi.mocked(getXeroToken).mockImplementation(async () => token);
+    vi.mocked(updateXeroRateLimitState).mockImplementation(async (_id, state) => { token = { ...token, ...state }; });
+    const times: number[] = [];
+    const get = vi.spyOn(axios, "get").mockImplementationOnce(async () => { times.push(Date.now()); throw limit(seconds); })
+      .mockImplementationOnce(async () => { times.push(Date.now()); return { data: { Invoices: [] }, headers: {} } as any; });
+    const result = expect(runBoundedXeroGet(auth(tenantId), "GET exact evidence", "https://example.test/Invoices")).resolves.toMatchObject({ data: { Invoices: [] } });
+    await vi.runAllTimersAsync();
+    await result;
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(times[1]! - times[0]!).toBeGreaterThanOrEqual(Math.max(1100, Number(seconds) * 1000));
+    expect(updateXeroRateLimitState).toHaveBeenCalledWith(tenantId, expect.objectContaining({ rateLimitRetryAfterSeconds: Number(seconds), rateLimitPausedUntil: expect.any(Date) }));
+    expect(updateXeroRateLimitState).toHaveBeenCalledWith(tenantId, expect.objectContaining({ rateLimitPausedUntil: null }));
+  });
+
+  it.each(["6", "72000", undefined, "not-a-number"])("does not retry a long/missing/invalid Retry-After (%s)", async seconds => {
+    const get = vi.spyOn(axios, "get").mockRejectedValue(limit(seconds));
+    await expect(runBoundedXeroGet(auth(`tenant-long-${seconds}`), "GET exact evidence", "https://example.test/Invoices"))
+      .rejects.toMatchObject({ name: "XeroRateLimitError", retryAfterSeconds: seconds === undefined ? 1 : /^\d+$/.test(seconds) ? Number(seconds) : 60, hasExplicitRetryAfter: seconds !== undefined && /^\d+$/.test(seconds) });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("never performs a third GET if its single retry is also rate limited", async () => {
+    const get = vi.spyOn(axios, "get").mockRejectedValue(limit("1"));
+    const result = expect(runBoundedXeroGet(auth("tenant-twice"), "GET exact evidence", "https://example.test/Invoices")).rejects.toBeInstanceOf(XeroRateLimitError);
+    await vi.runAllTimersAsync(); await result;
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not override a longer tenant pause recorded while waiting", async () => {
+    const tenantId = "tenant-concurrent-pause";
+    vi.mocked(getXeroToken).mockResolvedValueOnce(null).mockResolvedValue({ tenantId, rateLimitPausedUntil: new Date(Date.now() + 60000) } as any);
+    const get = vi.spyOn(axios, "get").mockRejectedValue(limit("1"));
+    const result = expect(runBoundedXeroGet(auth(tenantId), "GET exact evidence", "https://example.test/Invoices")).rejects.toThrow("still active");
+    await vi.runAllTimersAsync(); await result;
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["POST", "PUT"])("offers no arbitrary %s callback or method override", async method => {
+    const get = vi.spyOn(axios, "get");
+    const callback = vi.fn();
+    await expect(runBoundedXeroGet(auth(method), `${method} forbidden` as any, "https://example.test/Invoices")).rejects.toThrow("only GET");
+    await expect(runBoundedXeroGet(auth(method), "GET forbidden", callback as any)).rejects.toThrow("only GET");
+    await expect(runBoundedXeroGet(auth(method), "GET forbidden", "https://example.test/Invoices", { method } as any)).rejects.toThrow("only GET");
+    if (false) {
+      // @ts-expect-error A write operation is not accepted by the bounded GET API.
+      void runBoundedXeroGet(auth(method), "POST forbidden", "https://example.test/Invoices");
+      // @ts-expect-error An arbitrary callback cannot be supplied as its transport.
+      void runBoundedXeroGet(auth(method), "GET forbidden", callback);
+      // @ts-expect-error Method overrides cannot be supplied in read configuration.
+      void runBoundedXeroGet(auth(method), "GET forbidden", "https://example.test/Invoices", { method: "PUT" });
+    }
+    expect(get).not.toHaveBeenCalled(); expect(callback).not.toHaveBeenCalled();
+  });
+
+  it.each(["POST", "PUT"])("keeps ordinary %s 429 calls single-attempt", async method => {
+    const operation = vi.fn().mockRejectedValue(limit("1"));
+    await expect(runXeroRequest(auth(`tenant-write-${method}`), `${method} financial write`, operation)).rejects.toBeInstanceOf(XeroRateLimitError);
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

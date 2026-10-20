@@ -1,4 +1,4 @@
-import type { AxiosResponse } from "axios";
+import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 import {
   getXeroApiCache,
   getXeroToken,
@@ -9,6 +9,13 @@ import {
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
 
 export type XeroRequestAuth = { token: string; tenantId: string };
+
+export class XeroRateLimitError extends Error {
+  readonly name = "XeroRateLimitError";
+  constructor(message: string, readonly retryAfterSeconds: number, readonly tenantId: string, readonly hasExplicitRetryAfter: boolean = true) {
+    super(message);
+  }
+}
 
 const MIN_REQUEST_INTERVAL_MS = 1_100;
 const tenantTails = new Map<string, Promise<void>>();
@@ -103,7 +110,11 @@ async function recordRateLimit(tenantId: string, headers: unknown): Promise<neve
     rateLimitUpdatedAt: new Date(),
   });
   const label = problem === "day" ? "daily" : problem === "minute" ? "minute" : "API";
-  throw new Error(`Xero ${label} request limit has been reached. Xero says to retry in ${formatDuration(retryAfterSeconds)}.`);
+  // Preserve legacy pause recording, but never infer permission to retry a
+  // bounded GET from a missing/malformed Retry-After header.
+  const rawRetryAfter = headerValue(headers, "retry-after");
+  const hasExplicitRetryAfter = rawRetryAfter !== null && rawRetryAfter.trim() !== "" && Number.isFinite(Number(rawRetryAfter)) && Number(rawRetryAfter) >= 0;
+  throw new XeroRateLimitError(`Xero ${label} request limit has been reached. Xero says to retry in ${formatDuration(retryAfterSeconds)}.`, retryAfterSeconds, tenantId, hasExplicitRetryAfter);
 }
 
 /**
@@ -172,6 +183,32 @@ export async function runXeroRequest<T>(
   } finally {
     release();
     if (tenantTails.get(auth.tenantId) === queuedTail) tenantTails.delete(auth.tenantId);
+  }
+}
+
+/**
+ * Strict GET transport, not an arbitrary operation callback. Only an actual 429
+ * with a short Retry-After permits one retry. Both attempts use the unchanged
+ * tenant queue/persisted pause checks; no pause is bypassed or write retried.
+ */
+export async function runBoundedXeroGet<T = any>(
+  auth: XeroRequestAuth,
+  operationName: `GET ${string}`,
+  url: string,
+  config: Pick<AxiosRequestConfig, "headers" | "params" | "timeout"> = {},
+): Promise<AxiosResponse<T>> {
+  // Runtime guard as well as a type boundary for untyped/cast callers.
+  if (!operationName.startsWith("GET ") || typeof url !== "string" ||
+      Object.keys(config).some(key => !["headers", "params", "timeout"].includes(key))) {
+    throw new Error("Bounded Xero reads accept only GET requests; arbitrary writes/callbacks are forbidden.");
+  }
+  const read = () => runXeroRequest<T>(auth, operationName, () => axios.get<T>(url, config));
+  try {
+    return await read();
+  } catch (error) {
+    if (!(error instanceof XeroRateLimitError) || error.tenantId !== auth.tenantId || !error.hasExplicitRetryAfter || !Number.isFinite(error.retryAfterSeconds) || error.retryAfterSeconds < 0 || error.retryAfterSeconds > 5) throw error;
+    await wait(error.retryAfterSeconds * 1000);
+    return read(); // Deliberately outside the catch: never a third attempt.
   }
 }
 

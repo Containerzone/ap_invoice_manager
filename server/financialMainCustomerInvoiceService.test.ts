@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   preflight: vi.fn(),
   recordPreview: vi.fn().mockResolvedValue({ id: 51, status: "previewed" }),
   getEvent: vi.fn(), claim: vi.fn(), bind: vi.fn(), complete: vi.fn(), hold: vi.fn(),
-  policy: vi.fn(), writer: vi.fn(), contactSource: vi.fn(), contactResolution: vi.fn(), contactV2Source: vi.fn(), contactV2Preview: vi.fn(), contactV2Execute: vi.fn(),
+  policy: vi.fn(), writer: vi.fn(), contactSource: vi.fn(), contactResolution: vi.fn(), contactV2Source: vi.fn(), contactV2Preview: vi.fn(), contactV2Execute: vi.fn(), deduction: vi.fn(),
 }));
 const { retrieve, preflight, recordPreview } = mocks;
 vi.mock("./vtigerFinancialReadService", () => ({
@@ -26,7 +26,7 @@ vi.mock("./financialCustomerContactService", () => ({ resolveOrCreateAutomaticCu
 vi.mock("./financialCustomerContactSourceV2", () => ({ readCurrentCustomerContactResolution: mocks.contactV2Source }));
 vi.mock("./financialCustomerContactServiceV2", () => ({ previewCustomerContactResolution: mocks.contactV2Preview, executeCustomerContactCreationV2: mocks.contactV2Execute }));
 vi.mock("./financialDepositMainDeductionService", () => ({
-  processAutomaticDepositMainDeduction: vi.fn().mockResolvedValue({ status: "disabled", reason: "independently gated", xeroWritesAttempted: 0 }),
+  processAutomaticDepositMainDeduction: mocks.deduction,
 }));
 
 import { previewMainCustomerInvoice, processAutomaticMainCustomerInvoice, readMainCustomerInvoiceFacts, resolveMainCustomerInvoiceSourceMappings } from "./financialMainCustomerInvoiceService";
@@ -48,6 +48,7 @@ const readyPreflight = () => [{
 
 beforeEach(() => {
   retrieve.mockReset(); mocks.describe.mockReset(); preflight.mockReset(); recordPreview.mockClear(); mocks.getEvent.mockReset(); mocks.claim.mockReset(); mocks.bind.mockReset(); mocks.complete.mockReset(); mocks.hold.mockReset(); mocks.policy.mockReset(); mocks.writer.mockReset(); mocks.contactSource.mockReset(); mocks.contactResolution.mockReset(); mocks.contactV2Source.mockReset(); mocks.contactV2Preview.mockReset(); mocks.contactV2Execute.mockReset(); vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "");
+  mocks.deduction.mockReset(); mocks.deduction.mockResolvedValue({ status: "disabled", reason: "independently gated", xeroWritesAttempted: 0 });
   mocks.describe.mockResolvedValue(currentMetadata());
   retrieve.mockImplementation(async (id: string) => {
     const records: Record<string, Record<string, unknown>> = {
@@ -262,5 +263,24 @@ describe("Main Customer Invoice current-source evidence", () => {
 
     expect(mocks.contactV2Execute).toHaveBeenCalledTimes(1);
     expect(mocks.writer).not.toHaveBeenCalled();
+  });
+
+  it.each(["disabled", "not_ready", "held", "reconciliation_required"])("forwards main after real source/draft completion and retains creation success for %s", async status => {
+    vi.stubEnv("FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED", "true");
+    vi.stubEnv("FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED", "true");
+    mocks.deduction.mockResolvedValue({ status, reason: "exact postcondition reason", xeroWritesAttempted: 0 });
+    const result = await processAutomaticMainCustomerInvoice("5x77");
+    expect(result).toMatchObject({ ok: true, status: "drafts_created", mainDeduction: { status } });
+    expect(mocks.deduction).toHaveBeenCalledTimes(1); expect(mocks.deduction).toHaveBeenCalledWith("5x77", "main");
+    expect(mocks.deduction.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.complete.mock.invocationCallOrder[0]!);
+    expect(retrieve).toHaveBeenCalled(); expect(mocks.writer).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards replay for an already-completed Main without sending another invoice", async () => {
+    vi.stubEnv("FINANCIAL_DEPOSIT_MAIN_DEDUCTION_AUTOMATIC_ENABLED", "true");
+    mocks.getEvent.mockResolvedValue({ id: 51, status: "drafts_created", proposedInvoiceNumber: "INV-702877" });
+    mocks.deduction.mockResolvedValue({ status: "already_deducted", reason: "existing exact line", xeroWritesAttempted: 0 });
+    expect(await processAutomaticMainCustomerInvoice("5x77")).toMatchObject({ ok: true, status: "duplicate_replay" });
+    expect(mocks.deduction).toHaveBeenCalledWith("5x77", "replay"); expect(mocks.writer).not.toHaveBeenCalled();
   });
 });
