@@ -5,7 +5,10 @@ const m = vi.hoisted(() => ({
 }));
 vi.mock("axios", () => ({ default: { get: m.get, post: m.post } }));
 vi.mock("./xeroService", () => ({ getXeroReadAuthWithRefresh: m.auth }));
-vi.mock("./xeroRequestManager", () => ({ runXeroRequest: m.run }));
+vi.mock("./xeroRequestManager", () => ({
+  runBoundedXeroGet: async (_auth: unknown, _operation: string, url: string, config: unknown) => m.get(url, config),
+  runXeroRequest: m.run,
+}));
 vi.mock("./financialCustomerContactDb", () => ({
   requireFinancialCustomerContactLedger: m.requireLedger,
   reserveFinancialCustomerContactEvent: m.reserve,

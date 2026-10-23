@@ -1,54 +1,45 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
-vi.mock("axios", () => ({ default: { get: mockGet, post: mockPost } }));
+const { sharedSession } = vi.hoisted(() => ({ sharedSession: vi.fn() }));
+vi.mock("./vtigerFinancialReadService", () => ({ withVtigerFinancialReadSession: sharedSession }));
 
 import { findCurrentFinancialCandidates, findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
 
-function configuredEnvironment() {
-  process.env.VTIGER_URL = "https://vtiger.example.test";
-  process.env.VTIGER_USERNAME = "ap@example.test";
-  process.env.VTIGER_ACCESS_KEY = "read-only-secret";
-}
-
-function successfulSession() {
-  mockGet.mockResolvedValueOnce({ data: { success: true, result: { token: "challenge" } } });
-  mockPost.mockResolvedValueOnce({ data: { success: true, result: { sessionName: "session" } } });
+function querySession(responses: Array<unknown>) {
+  const query = vi.fn(async () => {
+    const response = responses.shift();
+    if (response instanceof Error) throw response;
+    return response;
+  });
+  sharedSession.mockImplementation(async (operation) => operation({ query }));
+  return query;
 }
 
 describe("exact VTiger financial candidate finder", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    configuredEnvironment();
   });
 
-  afterEach(() => {
-    delete process.env.VTIGER_URL;
-    delete process.env.VTIGER_USERNAME;
-    delete process.env.VTIGER_ACCESS_KEY;
-  });
+  it("uses the shared financial read session for one bounded exact named-deal query", async () => {
+    const query = querySession([[{ id: "4x702903", potentials_no: "D702903", accountname: "ContainerZone Customer", modifiedtime: "2026-09-26 09:00:00" }]]);
 
-  it("uses a GET challenge, form-POST login and exact read query for one named deal", async () => {
-    successfulSession();
-    mockGet.mockResolvedValueOnce({ data: { success: true, result: [{ id: "4x702903", potentials_no: "D702903", accountname: "ContainerZone Customer", modifiedtime: "2026-09-26 09:00:00" }] } });
     const result = await findExactFinancialCandidate({
       sourceCategory: "deal",
       businessNumber: "D702903",
       configuration: { deal: [{ module: "Potentials", businessNumberFields: ["potentials_no"], selectFields: ["id", "potentials_no", "accountname", "modifiedtime"] }] },
     });
+
     expect(result).toMatchObject({ outcome: "found", businessNumber: "D702903" });
     expect(result.candidates[0]).toMatchObject({ recordId: "4x702903", matchedField: "potentials_no", sourceCategory: "deal" });
-    expect(mockGet).toHaveBeenCalledTimes(2);
-    expect(mockPost).toHaveBeenCalledTimes(1);
-    expect(mockPost.mock.calls[0]?.[1]).toContain("operation=login");
-    const query = mockGet.mock.calls[1]?.[1]?.params?.query as string;
-    expect(query).toContain("FROM Potentials WHERE potentials_no = 'D702903'");
-    expect(query).not.toContain("LIMIT");
+    expect(sharedSession).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(1);
+    const sql = query.mock.calls[0]?.[0] as string;
+    expect(sql).toContain("FROM Potentials WHERE potentials_no = 'D702903'");
+    expect(sql).not.toContain("LIMIT");
   });
 
   it("returns ambiguous instead of choosing one of multiple exact matches", async () => {
-    successfulSession();
-    mockGet.mockResolvedValueOnce({ data: { success: true, result: [{ id: "4x1" }, { id: "4x2" }] } });
+    querySession([[{ id: "4x1" }, { id: "4x2" }]]);
     const result = await findExactFinancialCandidate({
       sourceCategory: "deal",
       businessNumber: "D702903",
@@ -59,10 +50,7 @@ describe("exact VTiger financial candidate finder", () => {
   });
 
   it("continues to the next configured exact alias when one VTiger field is unavailable", async () => {
-    successfulSession();
-    mockGet
-      .mockResolvedValueOnce({ data: { success: false, error: { message: "Unknown field" } } })
-      .mockResolvedValueOnce({ data: { success: true, result: [{ id: "4x702903", cf_deal_number: "D702903" }] } });
+    const query = querySession([new Error("Unknown field"), [{ id: "4x702903", cf_deal_number: "D702903" }]]);
     const result = await findExactFinancialCandidate({
       sourceCategory: "deal",
       businessNumber: "D702903",
@@ -70,51 +58,30 @@ describe("exact VTiger financial candidate finder", () => {
     });
     expect(result).toMatchObject({ outcome: "found" });
     expect(result.candidates[0]?.matchedField).toBe("cf_deal_number");
+    expect(query).toHaveBeenCalledTimes(2);
   });
 
   it("escapes a business number as a single exact literal rather than expanding the query", async () => {
-    successfulSession();
-    mockGet.mockResolvedValueOnce({ data: { success: true, result: [] } });
+    const query = querySession([[]]);
     await findExactFinancialCandidate({
       sourceCategory: "deal",
       businessNumber: "D702903' OR id != ''",
       configuration: { deal: [{ module: "Potentials", businessNumberFields: ["potentials_no"], selectFields: ["id"] }] },
     });
-    const query = mockGet.mock.calls[1]?.[1]?.params?.query as string;
-    expect(query).toContain("potentials_no = 'D702903\\'");
-    expect(query).not.toContain("WHERE potentials_no = 'D702903' OR");
-    expect((query.match(/WHERE/g) ?? [])).toHaveLength(1);
+    const sql = query.mock.calls[0]?.[0] as string;
+    expect(sql).toContain("potentials_no = 'D702903\\'");
+    expect(sql).not.toContain("WHERE potentials_no = 'D702903' OR");
+    expect((sql.match(/WHERE/g) ?? [])).toHaveLength(1);
   });
 
   it("records a blocked lookup result instead of throwing credential details", async () => {
-    mockGet.mockRejectedValueOnce({ response: { status: 403 } });
+    sharedSession.mockRejectedValueOnce(Object.assign(new Error("forbidden"), { response: { status: 403 } }));
     const result = await findExactFinancialCandidate({ sourceCategory: "deal", businessNumber: "D702903" });
     expect(result).toMatchObject({ outcome: "blocked", candidates: [], message: "VTiger rejected AP Management's read-only credentials." });
   });
 
-  it("reissues one fresh challenge when VTiger transiently rejects the login", async () => {
-    mockGet
-      .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge-one" } } })
-      .mockResolvedValueOnce({ data: { success: true, result: { token: "challenge-two" } } })
-      .mockResolvedValueOnce({ data: { success: true, result: [{ id: "4x702903", potential_no: "D702903" }] } });
-    mockPost
-      .mockResolvedValueOnce({ data: { success: false, error: { message: "Invalid username or password" } } })
-      .mockResolvedValueOnce({ data: { success: true, result: { sessionName: "session" } } });
-
-    await expect(
-      findExactFinancialCandidate({
-        sourceCategory: "deal",
-        businessNumber: "D702903",
-        configuration: { deal: [{ module: "Potentials", businessNumberFields: ["potential_no"], selectFields: ["id", "potential_no"] }] },
-      }),
-    ).resolves.toMatchObject({ outcome: "found" });
-    expect(mockGet).toHaveBeenCalledTimes(3);
-    expect(mockPost).toHaveBeenCalledTimes(2);
-  });
-
   it("uses positive current predicates, recent sort and a hard ten-row cap for family discovery", async () => {
-    successfulSession();
-    mockGet.mockResolvedValueOnce({ data: { success: true, result: [{ id: "4x1", potentials_no: "D702903", sales_stage: "READY", modifiedtime: "2026-09-29 12:00:00" }] } });
+    const query = querySession([[{ id: "4x1", potentials_no: "D702903", sales_stage: "READY", modifiedtime: "2026-09-29 12:00:00" }]]);
     const result = await findCurrentFinancialCandidates({
       sourceCategory: "deal",
       queries: [{
@@ -123,8 +90,8 @@ describe("exact VTiger financial candidate finder", () => {
       }],
     });
     expect(result).toMatchObject({ outcome: "found", candidates: [expect.objectContaining({ recordId: "4x1", eligibilityReasons: ["Current READY stage"] })] });
-    const query = mockGet.mock.calls[1]?.[1]?.params?.query as string;
-    expect(query).toContain("WHERE sales_stage = 'READY'");
-    expect(query).toContain("ORDER BY modifiedtime DESC LIMIT 10");
+    const sql = query.mock.calls[0]?.[0] as string;
+    expect(sql).toContain("WHERE sales_stage = 'READY'");
+    expect(sql).toContain("ORDER BY modifiedtime DESC LIMIT 10");
   });
 });

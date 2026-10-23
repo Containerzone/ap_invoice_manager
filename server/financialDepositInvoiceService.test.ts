@@ -24,6 +24,7 @@ vi.mock("./vtigerFinancialReadService", () => ({
   retrieveCurrentVtigerFinancialRecord: m.retrieve,
   queryCurrentVtigerFinancialRecords: vi.fn(async () => [{ id: "20x9", quote_no: "Q-702877", modifiedtime: "2026-10-11T02:00:00Z" }]),
   describeVtigerFinancialModuleFields: m.describe,
+  withVtigerFinancialReadSession: (operation: (session: { query: <T>(query: string) => Promise<T> }) => Promise<unknown>) => operation({ query: vi.fn() }),
 }));
 vi.mock("./financialReadOnlyXeroService", () => ({
   preflightFinancialXeroIntents: m.preflight,

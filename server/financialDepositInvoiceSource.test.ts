@@ -11,6 +11,7 @@ vi.mock("./vtigerFinancialReadService", () => ({
   retrieveCurrentVtigerFinancialRecord: m.retrieve,
   describeVtigerFinancialModuleFields: m.describe,
   queryCurrentVtigerFinancialRecords: m.query,
+  withVtigerFinancialReadSession: (operation: (session: { query: <T>(query: string) => Promise<T> }) => Promise<unknown>) => operation({ query: vi.fn() }),
 }));
 vi.mock("./financialCustomerContactSourceV2", () => ({
   readCurrentCustomerContactResolution: m.v2,

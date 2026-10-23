@@ -12,6 +12,7 @@ const { retrieve, preflight, recordPreview } = mocks;
 vi.mock("./vtigerFinancialReadService", () => ({
   retrieveCurrentVtigerFinancialRecord: mocks.retrieve,
   describeVtigerFinancialModuleFields: mocks.describe,
+  withVtigerFinancialReadSession: (operation: (session: { query: <T>(query: string) => Promise<T> }) => Promise<unknown>) => operation({ query: vi.fn() }),
 }));
 vi.mock("./financialReadOnlyXeroService", () => ({ preflightFinancialXeroIntents: mocks.preflight }));
 vi.mock("./financialMainCustomerInvoiceDb", () => ({

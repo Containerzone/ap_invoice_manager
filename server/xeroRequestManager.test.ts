@@ -22,7 +22,7 @@ import {
   setXeroApiCache,
   updateXeroRateLimitState,
 } from "./db";
-import { runBoundedXeroGet, runCachedXeroGet, runXeroRequest, XeroRateLimitError } from "./xeroRequestManager";
+import { runBoundedXeroGet, runCachedBoundedXeroGet, runCachedXeroGet, runXeroRequest, XeroRateLimitError } from "./xeroRequestManager";
 
 describe("central Xero request manager", () => {
   beforeEach(() => {
@@ -206,6 +206,8 @@ describe("bounded strict GET rate-limit handling", () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     vi.mocked(getXeroToken).mockResolvedValue(null);
+    vi.mocked(getXeroApiCache).mockResolvedValue(null);
+    vi.mocked(setXeroApiCache).mockResolvedValue(undefined);
     vi.mocked(updateXeroRateLimitState).mockResolvedValue(undefined);
   });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -229,9 +231,38 @@ describe("bounded strict GET rate-limit handling", () => {
     expect(updateXeroRateLimitState).toHaveBeenCalledWith(tenantId, expect.objectContaining({ rateLimitPausedUntil: null }));
   });
 
+  it("retries one short explicit 429 once for a cached GET and shares its cache write", async () => {
+    const tenantId = "tenant-cached-bounded";
+    const get = vi.spyOn(axios, "get")
+      .mockRejectedValueOnce(limit("1"))
+      .mockResolvedValueOnce({ data: { Invoices: [] }, headers: {} } as any);
+    const request = () => runCachedBoundedXeroGet(
+      auth(tenantId),
+      "financial-read:invoice:INV-1",
+      60_000,
+      "GET financial-read:invoice:INV-1",
+      "https://example.test/Invoices",
+      { headers: { Accept: "application/json" }, params: { InvoiceNumbers: "INV-1" }, timeout: 2_000 },
+    );
+
+    const results = Promise.all([request(), request()]);
+    await vi.runAllTimersAsync();
+
+    await expect(results).resolves.toEqual([{ Invoices: [] }, { Invoices: [] }]);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(setXeroApiCache).toHaveBeenCalledTimes(1);
+    expect(setXeroApiCache).toHaveBeenCalledWith(tenantId, "financial-read:invoice:INV-1", { Invoices: [] }, 60_000);
+  });
+
   it.each(["6", "72000", undefined, "not-a-number"])("does not retry a long/missing/invalid Retry-After (%s)", async seconds => {
     const get = vi.spyOn(axios, "get").mockRejectedValue(limit(seconds));
-    await expect(runBoundedXeroGet(auth(`tenant-long-${seconds}`), "GET exact evidence", "https://example.test/Invoices"))
+    await expect(runCachedBoundedXeroGet(
+      auth(`tenant-long-${seconds}`),
+      `financial-read:long-${seconds}`,
+      60_000,
+      "GET exact evidence",
+      "https://example.test/Invoices",
+    ))
       .rejects.toMatchObject({ name: "XeroRateLimitError", retryAfterSeconds: seconds === undefined ? 1 : /^\d+$/.test(seconds) ? Number(seconds) : 60, hasExplicitRetryAfter: seconds !== undefined && /^\d+$/.test(seconds) });
     expect(get).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
@@ -259,6 +290,9 @@ describe("bounded strict GET rate-limit handling", () => {
     await expect(runBoundedXeroGet(auth(method), `${method} forbidden` as any, "https://example.test/Invoices")).rejects.toThrow("only GET");
     await expect(runBoundedXeroGet(auth(method), "GET forbidden", callback as any)).rejects.toThrow("only GET");
     await expect(runBoundedXeroGet(auth(method), "GET forbidden", "https://example.test/Invoices", { method } as any)).rejects.toThrow("only GET");
+    await expect(runCachedBoundedXeroGet(auth(method), "financial-read:forbidden", 60_000, `${method} forbidden` as any, "https://example.test/Invoices")).rejects.toThrow("only GET");
+    await expect(runCachedBoundedXeroGet(auth(method), "financial-read:forbidden", 60_000, "GET forbidden", callback as any)).rejects.toThrow("only GET");
+    await expect(runCachedBoundedXeroGet(auth(method), "financial-read:forbidden", 60_000, "GET forbidden", "https://example.test/Invoices", { method } as any)).rejects.toThrow("only GET");
     if (false) {
       // @ts-expect-error A write operation is not accepted by the bounded GET API.
       void runBoundedXeroGet(auth(method), "POST forbidden", "https://example.test/Invoices");
@@ -266,6 +300,12 @@ describe("bounded strict GET rate-limit handling", () => {
       void runBoundedXeroGet(auth(method), "GET forbidden", callback);
       // @ts-expect-error Method overrides cannot be supplied in read configuration.
       void runBoundedXeroGet(auth(method), "GET forbidden", "https://example.test/Invoices", { method: "PUT" });
+      // @ts-expect-error A write operation is not accepted by the cached bounded GET API.
+      void runCachedBoundedXeroGet(auth(method), "financial-read:forbidden", 60_000, "POST forbidden", "https://example.test/Invoices");
+      // @ts-expect-error An arbitrary callback cannot be supplied as cached GET transport.
+      void runCachedBoundedXeroGet(auth(method), "financial-read:forbidden", 60_000, "GET forbidden", callback);
+      // @ts-expect-error Method overrides cannot be supplied in cached read configuration.
+      void runCachedBoundedXeroGet(auth(method), "financial-read:forbidden", 60_000, "GET forbidden", "https://example.test/Invoices", { method: "PUT" });
     }
     expect(get).not.toHaveBeenCalled(); expect(callback).not.toHaveBeenCalled();
   });

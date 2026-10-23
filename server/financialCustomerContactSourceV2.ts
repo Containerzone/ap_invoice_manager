@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
+import { retrieveCurrentVtigerFinancialRecord, withVtigerFinancialReadSession } from "./vtigerFinancialReadService";
 
 export type CustomerBillingKind = "organisation" | "individual";
 
@@ -105,6 +105,13 @@ function timestamp(record: Record<string, unknown>): string {
  * organisation-first billing authority; the Quote remains service authority.
  */
 export async function readCurrentCustomerContactResolution(
+  dealId: string,
+  expectedParty?: ExpectedCustomerBillingParty,
+): Promise<CustomerContactResolutionSource> {
+  return withVtigerFinancialReadSession(() => readCurrentCustomerContactResolutionInSession(dealId, expectedParty));
+}
+
+async function readCurrentCustomerContactResolutionInSession(
   dealId: string,
   expectedParty?: ExpectedCustomerBillingParty,
 ): Promise<CustomerContactResolutionSource> {

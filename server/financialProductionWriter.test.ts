@@ -124,14 +124,18 @@ describe("guarded financial production writer", () => {
     expect(isPermittedMainCustomerInvoiceLineAccount({ ItemCode: "Unexpected", AccountCode: "200" })).toBe(false);
   });
 
-  it("never permits a blind transient retry for automatic or reconciliation Main Invoice writes", () => {
+  it("never permits a blind transient retry for any financial Draft write", () => {
     expect(financialDraftWriteAllowsTransientRetry(completeAuthorisation({
       workflowType: "main_customer_invoice", mainCustomerInvoiceAutomaticEventId: 41, mainCustomerInvoiceReleaseKey: "MAIN-UNIT", mainCustomerInvoiceApprovedBy: 7, mainCustomerInvoiceToken: "token",
     }))).toBe(false);
     expect(financialDraftWriteAllowsTransientRetry(completeAuthorisation({
       workflowType: "main_customer_invoice", mainInvoiceReconciliationEventId: 42, mainInvoiceReconciliationReceiptId: 9, mainInvoiceReconciliationApprovedBy: 7, mainInvoiceReconciliationSourceHash: "s".repeat(64), mainInvoiceReconciliationPreflightHash: "p".repeat(64),
     }))).toBe(false);
-    expect(financialDraftWriteAllowsTransientRetry(completeAuthorisation({ workflowType: "initial_for_hire" }))).toBe(true);
+    expect(financialDraftWriteAllowsTransientRetry(completeAuthorisation({
+      workflowType: "deposit_invoice", approvalReference: "DEPOSIT-UNIT", depositInvoiceAutomaticEventId: 43,
+      depositInvoiceReleaseKey: "DEPOSIT-UNIT", depositInvoiceApprovedBy: 7,
+    }))).toBe(false);
+    expect(financialDraftWriteAllowsTransientRetry(completeAuthorisation({ workflowType: "initial_for_hire" }))).toBe(false);
   });
 
   it("creates a stable exact-Draft update request only after matching the verified identifier and number", () => {

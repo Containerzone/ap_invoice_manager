@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const m = vi.hoisted(() => ({ retrieve: vi.fn() }));
-vi.mock("./vtigerFinancialReadService", () => ({ retrieveCurrentVtigerFinancialRecord: m.retrieve }));
+vi.mock("./vtigerFinancialReadService", () => ({
+  retrieveCurrentVtigerFinancialRecord: m.retrieve,
+  withVtigerFinancialReadSession: (operation: (session: { query: <T>(query: string) => Promise<T> }) => Promise<unknown>) => operation({ query: vi.fn() }),
+}));
 import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
 
 const deal = {

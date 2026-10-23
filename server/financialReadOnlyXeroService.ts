@@ -1,6 +1,6 @@
 import axios from "axios";
 import { getXeroToken } from "./db";
-import { runCachedXeroGet, XERO_CACHE_TTL, type XeroRequestAuth } from "./xeroRequestManager";
+import { runCachedBoundedXeroGet, runCachedXeroGet, XERO_CACHE_TTL, type XeroRequestAuth } from "./xeroRequestManager";
 import type { ProposedFinancialDocument } from "./financialWorkflowEngine";
 import { EXPECTED_AP_XERO_TENANT_LABEL, getXeroReadAuthWithRefresh } from "./xeroService";
 import { assertFinalWeightReadback, type FinalWeightDirection, type FinalWeightXeroEvidence } from "./financialFinalWeightAdjustmentRules";
@@ -130,14 +130,16 @@ async function readOnlyAuth(): Promise<ReadOnlyAuth> {
  * fail review and keeps test evidence explicit.
  */
 async function xeroRead<T>(auth: ReadOnlyAuth, cacheKey: string, url: string, params?: Record<string, string>): Promise<T> {
-  return runCachedXeroGet<T>(
+  return runCachedBoundedXeroGet<T>(
     auth,
     `financial-read:${cacheKey}`,
     XERO_CACHE_TTL.invoiceSearch,
-    () => axios.get(url, {
+    `GET financial-read:${cacheKey}`,
+    url,
+    {
       headers: { Authorization: `Bearer ${auth.token}`, "Xero-tenant-id": auth.tenantId, Accept: "application/json" },
       params,
-    }),
+    },
     { forceRefresh: true },
   );
 }

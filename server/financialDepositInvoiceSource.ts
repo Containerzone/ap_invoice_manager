@@ -2,6 +2,7 @@ import {
   describeVtigerFinancialModuleFields,
   queryCurrentVtigerFinancialRecords,
   retrieveCurrentVtigerFinancialRecord,
+  withVtigerFinancialReadSession,
 } from "./vtigerFinancialReadService";
 import type { DepositInvoiceFacts } from "./financialDepositInvoiceDrafts";
 import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
@@ -74,6 +75,12 @@ async function resolveQuote(reference: string): Promise<{ quote: Record<string, 
 
 /** Read-only metadata plus the exact Deal, linked Quote and current customer. */
 export async function readDepositInvoiceFacts(
+  dealId: string
+): Promise<DepositInvoiceFacts> {
+  return withVtigerFinancialReadSession(() => readDepositInvoiceFactsInSession(dealId));
+}
+
+async function readDepositInvoiceFactsInSession(
   dealId: string
 ): Promise<DepositInvoiceFacts> {
   const deal = await exactRecord(dealId, "Deposit Deal");

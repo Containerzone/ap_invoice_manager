@@ -1,4 +1,5 @@
 import axios from "axios";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { retryReadOnceWhen } from "./transientReadRetry";
 
@@ -11,6 +12,15 @@ export type VtigerFinancialConnectionTest = VtigerFinancialConnectionStatus & {
   outcome: "passed" | "blocked" | "failed";
   checkedAt: Date;
   message: string;
+};
+
+/** A deliberately narrow authenticated capability for other financial read helpers. */
+export type VtigerFinancialReadSession = {
+  query<T>(query: string): Promise<T>;
+};
+
+type AuthenticatedVtigerFinancialReadSession = VtigerFinancialReadSession & {
+  request<T>(params: Record<string, string>): Promise<T>;
 };
 
 function config() {
@@ -52,21 +62,60 @@ function isTransientVtigerReadFailure(error: unknown): boolean {
   return error instanceof Error && /\b(?:ECONNRESET|ECONNABORTED|ETIMEDOUT|EAI_AGAIN)\b/i.test(error.message);
 }
 
+function retryAfterHeader(error: unknown): unknown {
+  const response = (error as { response?: { status?: unknown; headers?: unknown } })?.response;
+  // Do not infer throttling from any other response or a date-form header: this
+  // narrow exception exists only for a literal 429 Retry-After response.
+  if (response?.status !== 429 || !response.headers) return undefined;
+  const headers = response.headers as { get?: (name: string) => unknown } & Record<string, unknown>;
+  if (typeof headers.get === "function") {
+    const value = headers.get("retry-after");
+    if (value !== undefined && value !== null) return value;
+  }
+  return Object.entries(headers).find(([name]) => name.toLowerCase() === "retry-after")?.[1];
+}
+
+/** Returns a bounded delay only for an explicit numeric Retry-After value. */
+function retryAfterDelayMs(error: unknown): number | null {
+  const value = retryAfterHeader(error);
+  if ((typeof value !== "string" && typeof value !== "number") || !/^\d+(?:\.\d+)?$/.test(String(value))) return null;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 5) return null;
+  return Math.ceil(seconds * 1_000);
+}
+
+function financialReadRetryDelayMs(error: unknown): number | null {
+  const retryAfterDelay = retryAfterDelayMs(error);
+  if (retryAfterDelay !== null) return retryAfterDelay;
+  return isTransientVtigerReadFailure(error) ? 250 : null;
+}
+
 async function vtigerGetRead<T>(params: Record<string, string>): Promise<T> {
   const response = await axios.get(endpoint(), { params, timeout: 20_000 });
   if (!response.data?.success) throw new Error(response.data?.error?.message ?? "VTiger read request failed");
   return response.data.result as T;
 }
 
-/** Each idempotent VTiger GET may be retried once for a transport/gateway failure. */
+/**
+ * Executes an idempotent VTiger GET with at most one retry. Existing transport
+ * and gateway failures wait 250ms. A 429 gets the same one retry only when its
+ * literal Retry-After header is numeric and no more than five seconds.
+ */
 async function vtigerRequest<T>(params: Record<string, string>): Promise<T> {
-  return retryReadOnceWhen(() => vtigerGetRead<T>(params), isTransientVtigerReadFailure);
+  try {
+    return await vtigerGetRead<T>(params);
+  } catch (error) {
+    const retryDelayMs = financialReadRetryDelayMs(error);
+    if (retryDelayMs === null) throw error;
+    if (retryDelayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+    return vtigerGetRead<T>(params);
+  }
 }
 
 /**
  * VTiger's documented login endpoint requires form-urlencoded POST data. This
  * authenticates a short-lived session only; it does not create or alter a CRM
- * record, workflow URL or schedule.
+ * record, workflow URL or schedule. It is intentionally never transport-retried.
  */
 async function vtigerLogin<T>(params: Record<string, string>): Promise<T> {
   const response = await axios.post(endpoint(), new URLSearchParams(params).toString(), {
@@ -81,13 +130,8 @@ function isTransientVtigerLoginRejection(error: unknown): boolean {
   return error instanceof Error && /invalid username or password/i.test(error.message);
 }
 
-/**
- * Opens a short-lived read-only session. Each idempotent GET has its own
- * bounded transport/gateway retry. VTiger's known intermittent login rejection
- * receives at most one new challenge/login cycle; it cannot replay a CRM or
- * Xero write and the second rejection is returned as a hold.
- */
-async function readOnlyVtigerSession(): Promise<string> {
+/** Opens one fresh challenge/form-login cycle; only a known VTiger rejection can trigger a second cycle. */
+async function openReadOnlyVtigerSession(): Promise<string> {
   const { username, accessKey } = config();
   const status = getVtigerFinancialConnectionStatus();
   if (!status.configured || !username || !accessKey)
@@ -113,6 +157,56 @@ async function readOnlyVtigerSession(): Promise<string> {
   }, isTransientVtigerLoginRejection);
 }
 
+// A live lease is shared only by overlapping financial read operations. It
+// prevents concurrent source reads from opening duplicate sessions, but no token
+// is retained after the final caller completes.
+let activeReadOnlySession: Promise<string> | undefined;
+let activeReadOnlySessionUsers = 0;
+// Source helpers call the exported retrieve/query/describe functions rather
+// than receiving an authenticated transport. Keep the authenticated capability
+// private, but make it available to those nested calls for the lifetime of the
+// outer read scope only. This avoids treating an unrelated overlapping source
+// read as the parent of a nested operation.
+const financialReadSessionContext = new AsyncLocalStorage<AuthenticatedVtigerFinancialReadSession>();
+
+async function withAuthenticatedVtigerFinancialReadSession<T>(operation: (session: AuthenticatedVtigerFinancialReadSession) => Promise<T>): Promise<T> {
+  const contextualSession = financialReadSessionContext.getStore();
+  if (contextualSession) return operation(contextualSession);
+
+  if (!activeReadOnlySession) activeReadOnlySession = openReadOnlyVtigerSession();
+  const sessionPromise = activeReadOnlySession;
+  activeReadOnlySessionUsers += 1;
+  let sessionActive = false;
+  let sessionName: string | undefined;
+  try {
+    sessionName = await sessionPromise;
+    sessionActive = true;
+    const request = <Result>(params: Record<string, string>) => {
+      if (!sessionActive || !sessionName) throw new Error("VTiger financial read session scope has ended.");
+      return vtigerRequest<Result>({ ...params, sessionName });
+    };
+    const session: AuthenticatedVtigerFinancialReadSession = {
+      request,
+      query: <Result>(query: string) => request<Result>({ operation: "query", query }),
+    };
+    return await financialReadSessionContext.run(session, () => operation(session));
+  } finally {
+    sessionActive = false;
+    sessionName = undefined;
+    activeReadOnlySessionUsers -= 1;
+    if (activeReadOnlySessionUsers === 0 && activeReadOnlySession === sessionPromise) activeReadOnlySession = undefined;
+  }
+}
+
+/**
+ * Runs a bounded financial source read through the shared GET-only session.
+ * Callers receive query capability only: no endpoint, credentials, session name,
+ * or POST transport is exposed.
+ */
+export async function withVtigerFinancialReadSession<T>(operation: (session: VtigerFinancialReadSession) => Promise<T>): Promise<T> {
+  return withAuthenticatedVtigerFinancialReadSession(async (session) => operation({ query: session.query }));
+}
+
 function safeMessage(error: unknown): string {
   const response = (error as any)?.response;
   if (response?.status === 401 || response?.status === 403) return "VTiger rejected the configured AP Management credentials.";
@@ -132,7 +226,7 @@ export async function testVtigerFinancialConnection(): Promise<VtigerFinancialCo
   const checkedAt = new Date();
   if (!status.configured) return { ...status, outcome: "blocked", checkedAt, message: "VTiger read-only configuration is incomplete." };
   try {
-    await readOnlyVtigerSession();
+    await withAuthenticatedVtigerFinancialReadSession(async () => undefined);
     return { ...status, outcome: "passed", checkedAt, message: "Read-only VTiger challenge and documented form-login passed. No CRM record, workflow URL or schedule was changed." };
   } catch (error) {
     return { ...status, outcome: "failed", checkedAt, message: safeMessage(error) };
@@ -142,12 +236,11 @@ export async function testVtigerFinancialConnection(): Promise<VtigerFinancialCo
 /**
  * Retrieves the current VTiger record using the standard GET challenge,
  * form-POST login and GET retrieve API. It establishes no workflow or Xero side
- * effect. The session token is held in memory for this request only.
+ * effect. The session is shared only with overlapping financial source reads.
  */
 export async function retrieveCurrentVtigerFinancialRecord(recordId: string): Promise<Record<string, unknown>> {
   if (!validRecordId(recordId)) throw new Error("VTiger record ID must use the standard moduleId x recordId format");
-  const sessionName = await readOnlyVtigerSession();
-  return vtigerRequest<Record<string, unknown>>({ operation: "retrieve", id: recordId.trim(), sessionName });
+  return withAuthenticatedVtigerFinancialReadSession((session) => session.request<Record<string, unknown>>({ operation: "retrieve", id: recordId.trim() }));
 }
 
 /** One bounded, exact, read-only query for a human-readable VTiger reference. */
@@ -155,11 +248,12 @@ export async function queryCurrentVtigerFinancialRecords(moduleName: string, fie
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(moduleName) || !/^[A-Za-z][A-Za-z0-9_]*$/.test(fieldName)) throw new Error("VTiger query module or field is invalid.");
   const exactValue = value.trim();
   if (!exactValue || exactValue.length > 128 || /[\r\n]/.test(exactValue)) throw new Error("VTiger exact query value is invalid.");
-  const sessionName = await readOnlyVtigerSession();
   const escaped = exactValue.replace(/'/g, "''");
-  const result = await vtigerRequest<unknown>({ operation: "query", query: `select * from ${moduleName} where ${fieldName}='${escaped}';`, sessionName });
-  const records: unknown[] = Array.isArray((result as any)?.records) ? (result as any).records : Array.isArray(result) ? result : [];
-  return records.filter((record): record is Record<string, unknown> => Boolean(record) && typeof record === "object");
+  return withAuthenticatedVtigerFinancialReadSession(async (session) => {
+    const result = await session.request<unknown>({ operation: "query", query: `select * from ${moduleName} where ${fieldName}='${escaped}';` });
+    const records: unknown[] = Array.isArray((result as any)?.records) ? (result as any).records : Array.isArray(result) ? result : [];
+    return records.filter((record): record is Record<string, unknown> => Boolean(record) && typeof record === "object");
+  });
 }
 
 /**
@@ -180,16 +274,16 @@ export async function describeVtigerFinancialModuleFields(moduleName: string): P
 }> {
   const normalized = moduleName.trim();
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(normalized)) throw new Error("VTiger module name is invalid.");
-  const sessionName = await readOnlyVtigerSession();
-  const described = await vtigerRequest<{ name?: string; idPrefix?: string; fields?: Array<{ name?: string; label?: string; type?: Record<string, unknown>; mandatory?: boolean }> }>({
-    operation: "describe",
-    elementType: normalized,
-    sessionName,
+  return withAuthenticatedVtigerFinancialReadSession(async (session) => {
+    const described = await session.request<{ name?: string; idPrefix?: string; fields?: Array<{ name?: string; label?: string; type?: Record<string, unknown>; mandatory?: boolean }> }>({
+      operation: "describe",
+      elementType: normalized,
+    });
+    return {
+      name: typeof described?.name === "string" ? described.name : normalized,
+      ...(described?.idPrefix ? { idPrefix: String(described.idPrefix) } : {}),
+      fields: (described?.fields ?? []).filter((field): field is typeof field & { name: string } => typeof field?.name === "string" && Boolean(field.name))
+        .map((field) => ({ name: field.name, label: field.label ?? "", type: field.type ?? {}, mandatory: field.mandatory === true })),
+    };
   });
-  return {
-    name: typeof described?.name === "string" ? described.name : normalized,
-    ...(described?.idPrefix ? { idPrefix: String(described.idPrefix) } : {}),
-    fields: (described?.fields ?? []).filter((field): field is typeof field & { name: string } => typeof field?.name === "string" && Boolean(field.name))
-      .map((field) => ({ name: field.name, label: field.label ?? "", type: field.type ?? {}, mandatory: field.mandatory === true })),
-  };
 }

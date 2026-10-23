@@ -1,7 +1,7 @@
 import axios from "axios";
 import { createHash } from "node:crypto";
 import { getXeroReadAuthWithRefresh } from "./xeroService";
-import { runXeroRequest } from "./xeroRequestManager";
+import { runBoundedXeroGet, runXeroRequest } from "./xeroRequestManager";
 import {
   getFinancialCustomerContactEvent,
   reserveFinancialCustomerContactEvent,
@@ -122,21 +122,21 @@ export function classifyExactCustomerContactMatches(input: {
 }
 
 async function assertExpectedTenant(auth: { token: string; tenantId: string }): Promise<void> {
-  const response = await runXeroRequest(auth, "GET financial-customer-contact-tenant", () => axios.get(`${XERO_API_BASE}/Organisation`, { headers: safeHeaders(auth) }));
+  const response = await runBoundedXeroGet(auth, "GET financial-customer-contact-tenant", `${XERO_API_BASE}/Organisation`, { headers: safeHeaders(auth) });
   const name = text(response.data?.Organisations?.[0]?.Name).toUpperCase();
   if (!name.includes(EXPECTED_AP_TENANT_LABEL)) throw new Error("Connected Xero organisation does not match the expected AP tenant.");
 }
 
 async function findExactCustomerMatches(auth: { token: string; tenantId: string }, source: CustomerContactSource): Promise<{ nameMatches: XeroCustomerContact[]; emailMatches: XeroCustomerContact[] }> {
   const headers = safeHeaders(auth);
-  const nameResponse = await runXeroRequest(auth, "GET financial-customer-contact-name", () => axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: source.name.trim() } }));
+  const nameResponse = await runBoundedXeroGet(auth, "GET financial-customer-contact-name", `${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: source.name.trim() } });
   const nameMatches = (Array.isArray(nameResponse.data?.Contacts) ? nameResponse.data.Contacts : [])
     .map(toXeroCustomerContact)
     .filter((contact: XeroCustomerContact | null): contact is XeroCustomerContact => Boolean(contact))
     .filter((contact: XeroCustomerContact) => literal(contact.name) === literal(source.name));
   const email = normalEmail(source.email);
   if (!email) return { nameMatches, emailMatches: [] };
-  const emailResponse = await runXeroRequest(auth, "GET financial-customer-contact-email", () => axios.get(`${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: email } }));
+  const emailResponse = await runBoundedXeroGet(auth, "GET financial-customer-contact-email", `${XERO_API_BASE}/Contacts`, { headers, params: { searchTerm: email } });
   const emailMatches = (Array.isArray(emailResponse.data?.Contacts) ? emailResponse.data.Contacts : [])
     .map(toXeroCustomerContact)
     .filter((contact: XeroCustomerContact | null): contact is XeroCustomerContact => Boolean(contact))
@@ -156,7 +156,7 @@ function contactPayload(source: CustomerContactSource) {
 }
 
 async function readBackCreatedContact(auth: { token: string; tenantId: string }, source: CustomerContactSource, contactId: string): Promise<XeroCustomerContact> {
-  const response = await runXeroRequest(auth, "GET financial-customer-contact-readback", () => axios.get(`${XERO_API_BASE}/Contacts/${encodeURIComponent(contactId)}`, { headers: safeHeaders(auth) }));
+  const response = await runBoundedXeroGet(auth, "GET financial-customer-contact-readback", `${XERO_API_BASE}/Contacts/${encodeURIComponent(contactId)}`, { headers: safeHeaders(auth) });
   const contact = toXeroCustomerContact(response.data?.Contacts?.[0]);
   if (!contact || contact.contactId !== contactId || contact.status !== "ACTIVE" || !matchesSource(contact, source)) {
     throw new Error("Xero customer contact read-back did not confirm the exact active source identity.");
@@ -223,7 +223,7 @@ export async function resolveOrCreateAutomaticCustomerContact(source: CustomerCo
     const payload = contactPayload(source);
     const response = await runXeroRequest(auth, "POST financial-customer-contact", () => axios.post(`${XERO_API_BASE}/Contacts`, payload, {
       headers: { ...safeHeaders(auth), "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-    }), { retryTransientGatewayFailures: true });
+    }), { retryTransientGatewayFailures: false });
     const created = toXeroCustomerContact(response.data?.Contacts?.[0]);
     const errors = Array.isArray(response.data?.Contacts?.[0]?.ValidationErrors) ? response.data.Contacts[0].ValidationErrors : [];
     if (!created?.contactId || errors.length) throw new Error("Xero customer contact creation did not return one contact ID without validation errors.");

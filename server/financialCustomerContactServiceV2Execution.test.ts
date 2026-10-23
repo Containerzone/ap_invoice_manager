@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), auth: vi.fn(), run: vi.fn(), current: vi.fn(), requireLedger: vi.fn(), reserve: vi.fn(), complete: vi.fn(), hold: vi.fn() }));
+const m = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), auth: vi.fn(), boundedGet: vi.fn(), run: vi.fn(), current: vi.fn(), requireLedger: vi.fn(), reserve: vi.fn(), complete: vi.fn(), hold: vi.fn() }));
 vi.mock("axios", () => ({ default: { get: m.get, post: m.post } }));
 vi.mock("./xeroService", () => ({ getXeroReadAuthWithRefresh: m.auth }));
-vi.mock("./xeroRequestManager", () => ({ runXeroRequest: m.run }));
+vi.mock("./xeroRequestManager", () => ({ runBoundedXeroGet: m.boundedGet, runXeroRequest: m.run }));
 vi.mock("./financialCustomerContactSourceV2", () => ({
   normalizeCustomerEmail: (value: string | null | undefined) => value?.trim().toLocaleLowerCase("en-AU") ?? "",
   normalizeCustomerName: (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-AU"),
@@ -27,6 +27,7 @@ beforeEach(() => {
   vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED", "true");
   m.current.mockResolvedValue(source);
   m.auth.mockResolvedValue({ token: "token", tenantId: "tenant" });
+  m.boundedGet.mockImplementation(async (_auth: unknown, _name: string, url: string, config: unknown) => m.get(url, config));
   m.run.mockImplementation(async (_auth: unknown, _name: string, operation: () => Promise<unknown>) => operation());
   m.requireLedger.mockResolvedValue(undefined);
   m.reserve.mockResolvedValue({ kind: "reserved", event: { id: 90, status: "reserved" } });
@@ -54,6 +55,14 @@ describe("v2 customer contact execution", () => {
     const result = await executeCustomerContactCreationV2(plan());
     expect(result).toMatchObject({ status: "created", contactId: "customer-v2", contactWritesAttempted: 1 });
     expect(m.post).toHaveBeenCalledWith(expect.stringMatching(/\/Contacts$/), { Contacts: [{ Name: "Customer Pty Ltd", EmailAddress: "customer@example.test" }] }, expect.any(Object));
+    expect(m.boundedGet.mock.calls.map(([, name]) => name)).toEqual([
+      "GET customer-contact-v2-tenant",
+      "GET customer-contact-v2-tenant",
+      "GET customer-contact-v2-name",
+      "GET customer-contact-v2-email",
+      "GET customer-contact-v2-readback",
+    ]);
+    expect(m.run).toHaveBeenCalledWith(expect.any(Object), "POST customer-contact-v2", expect.any(Function), { retryTransientGatewayFailures: false });
     expect(m.complete).toHaveBeenCalledWith(90, expect.objectContaining({ status: "created", outcome: "created_contact" }));
   });
 

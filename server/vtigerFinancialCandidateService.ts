@@ -1,6 +1,4 @@
-import axios from "axios";
-import { createHash } from "node:crypto";
-import { retryReadOnceWhen } from "./transientReadRetry";
+import { withVtigerFinancialReadSession } from "./vtigerFinancialReadService";
 
 export type FinancialCandidateCategory = "deal" | "container_control";
 
@@ -55,19 +53,6 @@ export const DEFAULT_FINANCIAL_CANDIDATE_FINDER_CONFIG: FinancialCandidateFinder
   }],
 };
 
-function config() {
-  const url = process.env.VTIGER_URL?.trim().replace(/\/$/, "") ?? "";
-  const username = process.env.VTIGER_USERNAME?.trim() ?? "";
-  const accessKey = process.env.VTIGER_ACCESS_KEY?.trim() ?? "";
-  return { url, username, accessKey };
-}
-
-function endpoint() {
-  const { url } = config();
-  if (!url) throw new Error("VTiger is not configured for candidate discovery.");
-  return `${url}/webservice.php`;
-}
-
 function safeIdentifier(value: string): string | null {
   const normalized = value.trim();
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(normalized) ? normalized : null;
@@ -110,45 +95,6 @@ function normalizeRules(candidate: unknown): FinancialCandidateFinderConfig {
   return { deal: normalizeCategory("deal"), container_control: normalizeCategory("container_control") };
 }
 
-async function request<T>(params: Record<string, string>): Promise<T> {
-  const response = await axios.get(endpoint(), { params, timeout: 20_000 });
-  if (!response.data?.success) throw new Error(response.data?.error?.message ?? "VTiger read request failed");
-  return response.data.result as T;
-}
-
-/** VTiger requires form-urlencoded POST transport for session login only. */
-async function login<T>(params: Record<string, string>): Promise<T> {
-  const response = await axios.post(endpoint(), new URLSearchParams(params).toString(), {
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    timeout: 20_000,
-  });
-  if (!response.data?.success) throw new Error(response.data?.error?.message ?? "VTiger login request failed");
-  return response.data.result as T;
-}
-
-function isTransientVtigerLoginRejection(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    /invalid username or password/i.test(error.message)
-  );
-}
-
-async function readOnlySession(): Promise<string> {
-  const { username, accessKey } = config();
-  if (!username || !accessKey || !config().url) throw new Error("VTiger is not configured for AP-side candidate discovery.");
-  return retryReadOnceWhen(
-    async () => {
-      const challenge = await request<{ token?: string }>({ operation: "getchallenge", username });
-      if (!challenge?.token) throw new Error("VTiger challenge did not return a token.");
-      const accessKeyHash = createHash("md5").update(`${challenge.token}${accessKey}`).digest("hex");
-      const session = await login<{ sessionName?: string }>({ operation: "login", username, accessKey: accessKeyHash });
-      if (!session?.sessionName) throw new Error("VTiger read-only login did not return a session.");
-      return session.sessionName;
-    },
-    isTransientVtigerLoginRejection,
-  );
-}
-
 function sourceRefreshedAt(row: Record<string, unknown>): Date | null {
   for (const key of ["modifiedtime", "modifiedTime", "updated_at", "updatedAt", "createdtime"]) {
     const value = row[key];
@@ -184,7 +130,7 @@ export async function findExactFinancialCandidate(input: {
     return { outcome: "blocked", sourceCategory: input.sourceCategory, businessNumber, candidates: [], message: "No valid non-secret VTiger candidate finder rule is configured for this source category." };
   }
   try {
-    const sessionName = await readOnlySession();
+    return await withVtigerFinancialReadSession(async (session) => {
     const candidates = new Map<string, FinancialCandidate>();
     const queryProblems: string[] = [];
     let successfulQueries = 0;
@@ -193,7 +139,7 @@ export async function findExactFinancialCandidate(input: {
         const query = `SELECT ${rule.selectFields.join(",")} FROM ${rule.module} WHERE ${field} = ${exactLiteral(businessNumber)};`;
         let rows: Array<Record<string, unknown>>;
         try {
-          rows = await request<Array<Record<string, unknown>>>({ operation: "query", sessionName, query });
+          rows = await session.query<Array<Record<string, unknown>>>(query);
           successfulQueries += 1;
         } catch (error) {
           queryProblems.push(`${rule.module}.${field}`);
@@ -222,6 +168,7 @@ export async function findExactFinancialCandidate(input: {
     if (result.length === 0) return { outcome: "not_found", sourceCategory: input.sourceCategory, businessNumber, candidates: [], message: "No exact VTiger candidate matched this business number in the configured AP-side fields." };
     if (result.length > 1) return { outcome: "ambiguous", sourceCategory: input.sourceCategory, businessNumber, candidates: result, message: "More than one exact VTiger record matched. Select the correct record before creating shadow evidence." };
     return { outcome: "found", sourceCategory: input.sourceCategory, businessNumber, candidates: result, message: "Exact VTiger candidate found through AP Management's read-only lookup." };
+    });
   } catch (error) {
     return { outcome: "blocked", sourceCategory: input.sourceCategory, businessNumber, candidates: [], message: messageFor(error) };
   }
@@ -319,14 +266,14 @@ export async function findCurrentFinancialCandidates(input: {
   }
 
   try {
-    const sessionName = await readOnlySession();
+    return await withVtigerFinancialReadSession(async (session) => {
     const candidates = new Map<string, FinancialCandidate & { eligibilityReasons: string[] }>();
     const failures: string[] = [];
     let successfulQueries = 0;
     for (const query of configured) {
       let rows: Array<Record<string, unknown>>;
       try {
-        rows = await request<Array<Record<string, unknown>>>({ operation: "query", sessionName, query: currentQueryText(query) });
+        rows = await session.query<Array<Record<string, unknown>>>(currentQueryText(query));
         successfulQueries += 1;
       } catch {
         failures.push(`${query.module}.${query.sortField}`);
@@ -378,6 +325,7 @@ export async function findCurrentFinancialCandidates(input: {
       candidates: sorted,
       message: `Found ${sorted.length} bounded current review candidate${sorted.length === 1 ? "" : "s"}. Administrator selection is still required before Candidate Roster evidence can be created.`,
     };
+    });
   } catch (error) {
     return { outcome: "blocked", sourceCategory: input.sourceCategory, candidates: [], message: messageFor(error) };
   }

@@ -16,6 +16,7 @@ vi.mock("./xeroService", () => ({
 vi.mock("./xeroRequestManager", () => ({
   XERO_CACHE_TTL: { invoiceSearch: 1 },
   runCachedXeroGet: m.cached,
+  runCachedBoundedXeroGet: async (_auth: unknown, _cacheKey: string, _ttl: number, _operation: string, url: string, config: unknown) => (await m.get(url, config)).data,
 }));
 import { readExtraHireXeroEvidence } from "./financialExtraHireInvoiceXero";
 import { readBackFinancialDraft } from "./financialReadOnlyXeroService";

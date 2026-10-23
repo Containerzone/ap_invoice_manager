@@ -212,6 +212,51 @@ export async function runBoundedXeroGet<T = any>(
   }
 }
 
+/**
+ * Cached form of the strict bounded GET transport. The literal GET operation,
+ * URL, and limited Axios configuration keep a cached caller from supplying a
+ * write method or arbitrary callback, while preserving normal cache and fresh
+ * in-flight deduplication behavior.
+ */
+export async function runCachedBoundedXeroGet<T = any>(
+  auth: XeroRequestAuth,
+  cacheKey: string,
+  ttlMs: number,
+  operationName: `GET ${string}`,
+  url: string,
+  config: Pick<AxiosRequestConfig, "headers" | "params" | "timeout"> = {},
+  options: { forceRefresh?: boolean } = {},
+): Promise<T> {
+  // Check before consulting the cache, so untyped/cast callers cannot turn a
+  // cached helper into a write-shaped transport even when an entry exists.
+  if (!operationName.startsWith("GET ") || typeof url !== "string" || !config ||
+      Object.keys(config).some(key => !["headers", "params", "timeout"].includes(key))) {
+    throw new Error("Bounded Xero reads accept only GET requests; arbitrary writes/callbacks are forbidden.");
+  }
+  if (!options.forceRefresh) {
+    const cached = await getXeroApiCache<T>(auth.tenantId, cacheKey);
+    if (cached !== null) return cached;
+  }
+
+  // Use the same key as ordinary cached reads: callers requesting the same
+  // current resource share a single fresh request and cache write.
+  const inFlightKey = `${auth.tenantId}:${cacheKey}${options.forceRefresh ? ":fresh" : ""}`;
+  const existing = inFlightReads.get(inFlightKey) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const pending = (async () => {
+    const response = await runBoundedXeroGet<T>(auth, operationName, url, config);
+    await setXeroApiCache(auth.tenantId, cacheKey, response.data, ttlMs);
+    return response.data;
+  })();
+  inFlightReads.set(inFlightKey, pending);
+  try {
+    return await pending;
+  } finally {
+    inFlightReads.delete(inFlightKey);
+  }
+}
+
 export async function runCachedXeroGet<T>(
   auth: XeroRequestAuth,
   cacheKey: string,

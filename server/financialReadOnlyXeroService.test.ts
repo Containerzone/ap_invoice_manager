@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGet, mockPost, mockPut, mockPatch, mockDelete, mockRunCached } = vi.hoisted(() => ({
+const { mockGet, mockPost, mockPut, mockPatch, mockDelete, mockRunCached, mockRunCachedBounded } = vi.hoisted(() => ({
   mockGet: vi.fn(),
   mockPost: vi.fn(),
   mockPut: vi.fn(),
   mockPatch: vi.fn(),
   mockDelete: vi.fn(),
   mockRunCached: vi.fn(),
+  mockRunCachedBounded: vi.fn(),
 }));
 
 vi.mock("axios", () => ({
@@ -16,6 +17,7 @@ vi.mock("./db", () => ({ getXeroToken: vi.fn() }));
 vi.mock("./xeroRequestManager", () => ({
   XERO_CACHE_TTL: { invoiceSearch: 1 },
   runCachedXeroGet: mockRunCached,
+  runCachedBoundedXeroGet: mockRunCachedBounded,
 }));
 vi.mock("./xeroService", () => ({
   EXPECTED_AP_XERO_TENANT_LABEL: "CONTAINERZONE",
@@ -48,6 +50,14 @@ describe("financial read-only Xero service", () => {
     } as any);
     vi.mocked(getXeroReadAuthWithRefresh).mockResolvedValue({ token: "secret", tenantId: "tenant-1" });
     mockRunCached.mockImplementation(async (_auth: unknown, _key: string, _ttl: number, operation: () => Promise<any>) => (await operation()).data);
+    mockRunCachedBounded.mockImplementation(async (
+      _auth: unknown,
+      _key: string,
+      _ttl: number,
+      _operationName: string,
+      url: string,
+      config: object,
+    ) => (await mockGet(url, config)).data);
   });
 
   it("tests Xero connection using GET-only accounting requests and never mutates financial data", async () => {
@@ -104,6 +114,44 @@ describe("financial read-only Xero service", () => {
     expect(result?.itemChecks[0]).toMatchObject({ itemCode: "HC 20 E", found: true, purchaseUnitPrice: 8, nativeDescription: "Native HC 20 E", isSold: true, salesAccountCode: "312", salesAccountActive: null, salesTaxType: "OUTPUT" });
     expect(result?.contactCheck).toMatchObject({ found: true, contactId: "contact-hire" });
     expect(mockGet.mock.calls.some(([url]) => String(url).endsWith("/Accounts"))).toBe(false);
+    noMutationAssertions();
+  });
+
+  it("uses the strict cached GET transport with exact financial preflight operation, URL and read-only config", async () => {
+    mockGet
+      .mockResolvedValueOnce({ data: { Organisations: [{ Name: "ContainerZone Test" }] } })
+      .mockResolvedValueOnce({ data: { Invoices: [] } })
+      .mockResolvedValueOnce({ data: { Contacts: [] } });
+
+    await preflightFinancialXeroIntents([{
+      documentFamily: "customer_invoice", documentType: "storage_activation", proposedAction: "create_draft", proposedDocumentNumber: "INV-7000-A",
+      reference: null, partyName: "Customer", partySourceId: null, accountCode: "200", gstTreatment: "GST_EXCLUSIVE", currency: "AUD",
+      issueDate: null, dueDate: null, subtotal: 10, taxAmount: 1, total: 11,
+      lineItems: [], validationStatus: "valid", sourceWorkflow: "storage_activation", sourceRecordId: "5x1",
+    }]);
+
+    expect(mockRunCachedBounded).toHaveBeenCalledWith(
+      { token: "secret", tenantId: "tenant-1", tenantName: "ContainerZone Test" },
+      "financial-read:invoice:INV-7000-A",
+      1,
+      "GET financial-read:invoice:INV-7000-A",
+      "https://api.xero.com/api.xro/2.0/Invoices",
+      {
+        headers: { Authorization: "Bearer secret", "Xero-tenant-id": "tenant-1", Accept: "application/json" },
+        params: { InvoiceNumbers: "INV-7000-A" },
+      },
+      { forceRefresh: true },
+    );
+    expect(mockRunCachedBounded).toHaveBeenCalledWith(
+      expect.anything(),
+      "financial-read:contact:CUSTOMER",
+      1,
+      "GET financial-read:contact:CUSTOMER",
+      "https://api.xero.com/api.xro/2.0/Contacts",
+      expect.objectContaining({ params: { searchTerm: "Customer" } }),
+      { forceRefresh: true },
+    );
+    expect(mockRunCached).toHaveBeenCalledTimes(0);
     noMutationAssertions();
   });
 

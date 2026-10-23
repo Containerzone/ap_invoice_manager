@@ -22,7 +22,7 @@ import { preflightFinancialXeroIntents, type FinancialXeroPreflight } from "./fi
 import { financialSha256, sourceSnapshotHash } from "./financialProposalIntegrity";
 import { bindFinancialDraftPayloadIdempotencyKey, prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
-import { describeVtigerFinancialModuleFields, retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
+import { describeVtigerFinancialModuleFields, retrieveCurrentVtigerFinancialRecord, withVtigerFinancialReadSession } from "./vtigerFinancialReadService";
 import { readCurrentCustomerContactSource } from "./financialCustomerContactSource";
 import { resolveOrCreateAutomaticCustomerContact } from "./financialCustomerContactService";
 import { readCurrentCustomerContactResolution } from "./financialCustomerContactSourceV2";
@@ -155,6 +155,10 @@ async function nameForCustomer(reference: string, kind: "organisation" | "contac
 
 /** Re-reads the exact Deal, linked Quote and current Service descriptions. */
 export async function readMainCustomerInvoiceFacts(dealId: string): Promise<MainCustomerInvoiceFacts> {
+  return withVtigerFinancialReadSession(() => readMainCustomerInvoiceFactsInSession(dealId));
+}
+
+async function readMainCustomerInvoiceFactsInSession(dealId: string): Promise<MainCustomerInvoiceFacts> {
   const deal = await exactRecord(dealId, "Deal");
   const mapping = resolveMainCustomerInvoiceSourceMappings(
     await describeVtigerFinancialModuleFields(MAIN_CUSTOMER_INVOICE_VTIGER_MODULE),

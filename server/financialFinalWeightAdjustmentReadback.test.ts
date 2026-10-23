@@ -3,7 +3,7 @@ const m = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }));
 vi.mock("axios", () => ({ default: { get: m.get, post: m.post, put: m.put } }));
 vi.mock("./db", () => ({ getXeroToken: vi.fn().mockResolvedValue({ tenantName: "CONTAINERZONE" }) }));
 vi.mock("./xeroService", () => ({ EXPECTED_AP_XERO_TENANT_LABEL: "CONTAINERZONE", getXeroReadAuthWithRefresh: vi.fn().mockResolvedValue({ token: "synthetic", tenantId: "synthetic" }) }));
-vi.mock("./xeroRequestManager", () => ({ XERO_CACHE_TTL: { invoiceSearch: 1 }, runCachedXeroGet: vi.fn(async (_a, _b, _c, operation) => (await operation()).data) }));
+vi.mock("./xeroRequestManager", () => ({ XERO_CACHE_TTL: { invoiceSearch: 1 }, runCachedXeroGet: vi.fn(async (_a, _b, _c, operation) => (await operation()).data), runCachedBoundedXeroGet: async (_auth: unknown, _cacheKey: string, _ttl: number, _operation: string, url: string, config: unknown) => (await m.get(url, config)).data }));
 import { readBackFinancialDraft, readFinalWeightXeroEvidence } from "./financialReadOnlyXeroService";
 import { buildFinalWeightAdjustment, finalWeightDraftEvidence } from "./financialFinalWeightAdjustmentRules";
 import { facts, invoice, xero } from "./_test/finalWeightFixtures";

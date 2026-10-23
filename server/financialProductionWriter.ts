@@ -320,17 +320,13 @@ export function bindFinancialDraftPayloadIdempotencyKey(payload: FinancialDraftP
   };
 }
 
-/** Financial create/amend paths with uncertain-outcome recovery never resubmit a 5xx POST. */
-export function financialDraftWriteAllowsTransientRetry(context: FinancialWriteAuthorisation): boolean {
-  return context.mainCustomerInvoiceAutomaticEventId === undefined &&
-    context.mainInvoiceReconciliationEventId === undefined &&
-    context.finalWeightAutomaticEventId === undefined &&
-    context.d702946DepositMainDeductionRecoveryEventId === undefined &&
-    context.d702946AuthorisedDepositMainDeductionRecoveryEventId === undefined &&
-    context.workflowType !== "d702946_deposit_main_deduction_recovery" &&
-    context.workflowType !== "d702946_authorised_deposit_main_deduction_recovery" &&
-    context.depositMainDeductionAutomaticEventId === undefined &&
-    context.extraHireAutomaticEventId === undefined;
+/**
+ * Xero Draft POST/PUT outcomes can be uncertain after a transient gateway
+ * failure. Never resubmit them automatically, regardless of the authorised
+ * financial workflow; callers must reconcile the outcome instead.
+ */
+export function financialDraftWriteAllowsTransientRetry(_context: FinancialWriteAuthorisation): boolean {
+  return false;
 }
 
 /**
