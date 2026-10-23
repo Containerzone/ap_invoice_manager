@@ -105,6 +105,21 @@ const rateLimitExecution = (payload = rateLimitPayload(), patch: Record<string, 
   ...patch,
 } as any);
 
+const preflightRateLimitOriginal = (patch: Record<string, unknown> = {}) => ({
+  id: 420002,
+  dealId: "5x490735",
+  dealNumber: "D702950",
+  proposedInvoiceNumber: "INV-702950-D",
+  status: "held",
+  executionId: null,
+  xeroInvoiceId: null,
+  processingToken: null,
+  claimedDealId: null,
+  claimedInvoiceNumber: null,
+  holdReason: "Request failed with status code 429",
+  ...patch,
+} as any);
+
 beforeEach(() => {
   vi.clearAllMocks();
   m.selectRows = [];
@@ -186,6 +201,40 @@ describe("Deposit D702944 definitive 429 no-transport origin classifier", () => 
   ])("rejects %s before any source/Xero read or local recovery write", async (_name, original, executions) => {
     if (original.id === 210001) m.selectRows.push(executions);
     await expect(classifyDepositInvoiceReconciliationOrigin(original, 210001)).rejects.toThrow(/D702944|Only the immutable/);
+    expect(m.insert).not.toHaveBeenCalled();
+    expect(m.update).not.toHaveBeenCalled();
+    expect(m.preflight).not.toHaveBeenCalled();
+    expect(m.current).not.toHaveBeenCalled();
+  });
+});
+
+describe("Deposit D702950 preflight-only 429 no-writer origin classifier", () => {
+  it("allows only the exact unclaimed held receipt without querying writer evidence", async () => {
+    await expect(classifyDepositInvoiceReconciliationOrigin(preflightRateLimitOriginal(), 420002))
+      .resolves.toEqual({
+        kind: "preflight_rate_limit_429_no_writer",
+        dealNumber: "D702950",
+        invoiceNumber: "INV-702950-D",
+      });
+    expect(m.select).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["arbitrary event", preflightRateLimitOriginal({ id: 420003 }), 420002],
+    ["wrong event lookup", preflightRateLimitOriginal(), 420003],
+    ["changed hold status", preflightRateLimitOriginal({ status: "reconciliation_required" }), 420002],
+    ["altered hold text", preflightRateLimitOriginal({ holdReason: "Request failed with status code 429; retry later" }), 420002],
+    ["writer execution evidence", preflightRateLimitOriginal({ executionId: 1 }), 420002],
+    ["Xero receipt", preflightRateLimitOriginal({ xeroInvoiceId: "xero-id" }), 420002],
+    ["processing token", preflightRateLimitOriginal({ processingToken: "claimed" }), 420002],
+    ["Deal claim", preflightRateLimitOriginal({ claimedDealId: "5x490735" }), 420002],
+    ["invoice claim", preflightRateLimitOriginal({ claimedInvoiceNumber: "INV-702950-D" }), 420002],
+    ["different Deal", preflightRateLimitOriginal({ dealNumber: "D702951" }), 420002],
+    ["different invoice", preflightRateLimitOriginal({ proposedInvoiceNumber: "INV-702951-D" }), 420002],
+  ])("rejects %s before any writer/source/Xero operation", async (_name, original, originalEventId) => {
+    await expect(classifyDepositInvoiceReconciliationOrigin(original, originalEventId)).rejects
+      .toThrow(/D702950|Only the immutable/);
+    expect(m.select).not.toHaveBeenCalled();
     expect(m.insert).not.toHaveBeenCalled();
     expect(m.update).not.toHaveBeenCalled();
     expect(m.preflight).not.toHaveBeenCalled();

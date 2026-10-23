@@ -29,15 +29,16 @@ export type DepositInvoiceReconciliationPreview = {
 /**
  * GET-only recovery preview for a precisely classified immutable Deposit
  * origin. It does not call generic claim APIs and never alters the original
- * event or its unique Deal/-D-number claim. A 429 means Xero rejected the
- * Draft before a receipt: use exact current reconciliation, never a blind retry.
+ * event or its unique Deal/-D-number claim. The named 429 origins use exact
+ * current reconciliation rather than a blind retry, whether held in preflight
+ * or after a definitive no-receipt writer attempt.
  */
 export async function previewDepositInvoiceReconciliation(
   originalEventId: number,
 ): Promise<DepositInvoiceReconciliationPreview> {
   const original = await getDepositInvoiceReconciliationOriginal(originalEventId);
   if (!original) {
-    throw new Error("Only the immutable scoped Deposit recovery receipt or the exact D702944 definitive 429 no-transport receipt may be considered for recovery.");
+    throw new Error("Only the immutable scoped Deposit recovery receipt, the exact D702944 writer 429 receipt, or the exact D702950 preflight-429 receipt may be considered for recovery.");
   }
   const origin = await classifyDepositInvoiceReconciliationOrigin(original, originalEventId);
   const current = await previewDepositInvoice(

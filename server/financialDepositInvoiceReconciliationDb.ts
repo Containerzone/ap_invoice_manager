@@ -52,6 +52,19 @@ export const DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE = {
   holdReason: "Request failed with status code 429",
 } as const;
 
+/**
+ * This separate named origin was held during GET-only preflight, before a
+ * Deposit claim, payload binding or writer execution existed. It is not a
+ * general held-event or rate-limit retry path: every literal below is part of
+ * the one historical receipt's eligibility proof.
+ */
+export const DEPOSIT_INVOICE_PREFLIGHT_RATE_LIMIT_RECONCILIATION_SCOPE = {
+  originalEventId: 420002,
+  dealNumber: "D702950",
+  invoiceNumber: "INV-702950-D",
+  holdReason: "Request failed with status code 429",
+} as const;
+
 const affected = (result: any) =>
   Number(result?.[0]?.affectedRows ?? result?.rowsAffected ?? 0) === 1;
 
@@ -189,7 +202,7 @@ function originalAuthorisedDepositPayload(
 function isExactRateLimitOriginal(
   original: FinancialDepositInvoiceEvent | null,
   originalEventId: number,
-): original is FinancialDepositInvoiceEvent {
+): boolean {
   return originalEventId === DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE.originalEventId &&
     !!original &&
     original.id === originalEventId &&
@@ -202,6 +215,29 @@ function isExactRateLimitOriginal(
     original.claimedDealId === original.dealId &&
     original.claimedInvoiceNumber === original.proposedInvoiceNumber &&
     original.holdReason === DEPOSIT_INVOICE_RATE_LIMIT_RECONCILIATION_SCOPE.holdReason;
+}
+
+/**
+ * D702950 is intentionally distinct from D702944: its 429 occurred in
+ * preflight, not in a local writer execution. A writer-evidence lookup would
+ * therefore be both inapplicable and an unsafe broadening of this scope.
+ */
+function isExactPreflightRateLimitOriginal(
+  original: FinancialDepositInvoiceEvent | null,
+  originalEventId: number,
+): boolean {
+  return originalEventId === DEPOSIT_INVOICE_PREFLIGHT_RATE_LIMIT_RECONCILIATION_SCOPE.originalEventId &&
+    !!original &&
+    original.id === originalEventId &&
+    original.status === "held" &&
+    original.dealNumber === DEPOSIT_INVOICE_PREFLIGHT_RATE_LIMIT_RECONCILIATION_SCOPE.dealNumber &&
+    original.proposedInvoiceNumber === DEPOSIT_INVOICE_PREFLIGHT_RATE_LIMIT_RECONCILIATION_SCOPE.invoiceNumber &&
+    original.executionId === null &&
+    original.xeroInvoiceId === null &&
+    original.processingToken === null &&
+    original.claimedDealId === null &&
+    original.claimedInvoiceNumber === null &&
+    original.holdReason === DEPOSIT_INVOICE_PREFLIGHT_RATE_LIMIT_RECONCILIATION_SCOPE.holdReason;
 }
 
 function isExactRateLimitWriterEvidence(
@@ -226,12 +262,14 @@ function isExactRateLimitWriterEvidence(
 
 export type DepositInvoiceReconciliationOrigin =
   | { kind: "legacy"; dealNumber: string; invoiceNumber: string }
-  | { kind: "rate_limit_429"; dealNumber: string; invoiceNumber: string };
+  | { kind: "rate_limit_429"; dealNumber: string; invoiceNumber: string }
+  | { kind: "preflight_rate_limit_429_no_writer"; dealNumber: string; invoiceNumber: string };
 
 /**
- * Classifies the only two recovery origins before any source/Xero read. The
- * 429 path is deliberately definitive: it proves a failed local writer record
- * and no Xero identifier, rather than treating a rate limit as retryable.
+ * Classifies the only three recovery origins before any source/Xero read. The
+ * D702944 429 path proves a failed local writer record and no Xero identifier;
+ * D702950 proves the separately named unclaimed preflight-only 429 receipt.
+ * Neither treats a rate limit as retryable.
  */
 export async function classifyDepositInvoiceReconciliationOrigin(
   original: FinancialDepositInvoiceEvent | null,
@@ -244,22 +282,29 @@ export async function classifyDepositInvoiceReconciliationOrigin(
       invoiceNumber: original.proposedInvoiceNumber,
     };
   }
-  if (!isExactRateLimitOriginal(original, originalEventId)) {
-    throw new Error("Only the immutable scoped Deposit recovery receipt or the exact D702944 definitive 429 no-transport receipt may be considered for recovery.");
+  if (original && isExactRateLimitOriginal(original, originalEventId)) {
+    const authorised = originalAuthorisedDepositPayload(original);
+    if (!authorised) {
+      throw new Error("D702944 reconciliation requires its original complete hash-bound AUD inclusive Deposit Draft authorisation.");
+    }
+    const evidence = await getDepositInvoiceReconciliationWriterEvidence(authorised.payload.idempotencyKey);
+    if (evidence.length !== 1 || !isExactRateLimitWriterEvidence(evidence[0]!, authorised.payload)) {
+      throw new Error("D702944 reconciliation requires exactly one immutable failed 429 writer evidence record with no Xero receipt.");
+    }
+    return {
+      kind: "rate_limit_429",
+      dealNumber: original.dealNumber,
+      invoiceNumber: original.proposedInvoiceNumber,
+    };
   }
-  const authorised = originalAuthorisedDepositPayload(original);
-  if (!authorised) {
-    throw new Error("D702944 reconciliation requires its original complete hash-bound AUD inclusive Deposit Draft authorisation.");
+  if (original && isExactPreflightRateLimitOriginal(original, originalEventId)) {
+    return {
+      kind: "preflight_rate_limit_429_no_writer",
+      dealNumber: original.dealNumber,
+      invoiceNumber: original.proposedInvoiceNumber,
+    };
   }
-  const evidence = await getDepositInvoiceReconciliationWriterEvidence(authorised.payload.idempotencyKey);
-  if (evidence.length !== 1 || !isExactRateLimitWriterEvidence(evidence[0]!, authorised.payload)) {
-    throw new Error("D702944 reconciliation requires exactly one immutable failed 429 writer evidence record with no Xero receipt.");
-  }
-  return {
-    kind: "rate_limit_429",
-    dealNumber: original.dealNumber,
-    invoiceNumber: original.proposedInvoiceNumber,
-  };
+  throw new Error("Only the immutable scoped Deposit recovery receipt, the exact D702944 definitive 429 writer receipt, or the exact D702950 unclaimed preflight-429 receipt may be considered for recovery.");
 }
 
 export async function getDepositInvoiceReconciliationEvent(

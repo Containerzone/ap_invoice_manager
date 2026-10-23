@@ -174,6 +174,33 @@ describe("scoped Deposit immutable-claim reconciliation", () => {
     expect(m.writer).not.toHaveBeenCalled();
   });
 
+  it("makes D702950 a GET-only preview only after strict unclaimed preflight-429 classification", async () => {
+    m.original.mockResolvedValue(originalEvent({
+      id: 420002, dealId: "5x490735", dealNumber: "D702950", proposedInvoiceNumber: "INV-702950-D",
+      status: "held", holdReason: "Request failed with status code 429",
+      claimedDealId: null, claimedInvoiceNumber: null, executionId: null, xeroInvoiceId: null, processingToken: null,
+    }));
+    m.classify.mockResolvedValue({ kind: "preflight_rate_limit_429_no_writer", dealNumber: "D702950", invoiceNumber: "INV-702950-D" });
+    const document = proposal();
+    document.proposedDocumentNumber = "INV-702950-D";
+    document.reference = "D702950";
+    document.sourceRecordId = "5x490735";
+    m.preview.mockResolvedValue({
+      ...currentPreview(), facts: { dealId: "5x490735", dealNumber: "D702950" },
+      preview: { eligible: true, proposedInvoiceNumber: "INV-702950-D", document },
+      preflight: { documentNumber: "INV-702950-D", duplicateState: "not_found", contactCheck: { found: true, count: 1, contactId: "garren-hurle", partyName: "Garren Hurle" } },
+    });
+    const result = await previewDepositInvoiceReconciliation(420002);
+    expect(result).toMatchObject({ originalEventId: 420002, dealNumber: "D702950", invoiceNumber: "INV-702950-D", noWrites: true });
+    expect(m.classify).toHaveBeenCalledWith(expect.objectContaining({
+      id: 420002, status: "held", holdReason: "Request failed with status code 429",
+      executionId: null, xeroInvoiceId: null, processingToken: null, claimedDealId: null, claimedInvoiceNumber: null,
+    }), 420002);
+    expect(m.preview).toHaveBeenCalledWith("5x490735", "D702950");
+    expect(m.reserve).not.toHaveBeenCalled();
+    expect(m.writer).not.toHaveBeenCalled();
+  });
+
   it.each([
     { id: 180002 },
     { status: "held" },
