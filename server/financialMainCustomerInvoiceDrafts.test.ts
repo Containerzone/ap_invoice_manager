@@ -33,6 +33,44 @@ describe("Main Customer Invoice rules", () => {
     expect(result.document?.dueDate?.toISOString()).toBe("2026-10-13T00:00:00.000Z");
   });
 
+  it("matches Xero's per-line GST rounding for D702959-like hire and transport lines", () => {
+    const result = buildMainCustomerInvoice(facts({
+      dealNumber: "D702959",
+      quoteNumber: "Q531901",
+      containerSituation: "HIRED",
+      serviceLines: [
+        { serviceVtigerId: "14x9591", description: "20 Foot Standard Height Container Hire per 30 days", quantity: 1, unitAmount: 224.75 },
+        { serviceVtigerId: "14x9592", description: "Transport - Empty & Loaded Container", quantity: 1, unitAmount: 3596.57 },
+      ],
+    }));
+
+    expect(result.document).toMatchObject({
+      proposedDocumentNumber: "INV-702959",
+      subtotal: 3821.32,
+      taxAmount: 382.14,
+      total: 4203.46,
+      lineItems: [
+        { itemCode: "20' Hire", description: "20 Foot Standard Height Container Hire per 30 days", quantity: 1, unitAmount: 224.75, lineAmount: 224.75, taxRate: 10 },
+        { itemCode: "SER60", description: "Pending current Xero SER60 route description", quantity: 1, unitAmount: 3596.57, lineAmount: 3596.57, taxRate: 10 },
+      ],
+    });
+    expect(result.document?.taxAmount).not.toBe(382.13);
+    expect(result.document?.total).not.toBe(4203.45);
+  });
+
+  it("calculates a line from the cents-rounded Xero UnitAmount before GST", () => {
+    const result = buildMainCustomerInvoice(facts({
+      serviceLines: [{ serviceVtigerId: "14x100", description: "Container handling", quantity: 3, unitAmount: 33.333 }],
+    }));
+
+    expect(result.document).toMatchObject({
+      subtotal: 99.99,
+      taxAmount: 10,
+      total: 109.99,
+      lineItems: [expect.objectContaining({ unitAmount: 33.33, lineAmount: 99.99 })],
+    });
+  });
+
   it("uses the current pickup calendar date and normalized ON ACCOUNT status for the approved fourteen-day term", () => {
     const result = buildMainCustomerInvoice(facts({
       fullContainerPickupDate: "2026-10-04",

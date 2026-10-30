@@ -33,7 +33,7 @@ const approval = {
   id: 71,
   status: "approved",
   expiresAt: new Date(Date.now() + 10 * 60_000),
-  workflowType: "main_customer_invoice",
+  workflowType: "extra_hire",
   workflowRunId: 8,
   documentIntentId: 9,
   releaseManifestId: 10,
@@ -51,7 +51,7 @@ const approval = {
 
 const document = {
   documentFamily: "customer_invoice" as const,
-  documentType: "main_invoice",
+  documentType: "extra_hire",
   proposedAction: "create_draft" as const,
   proposedDocumentNumber: "INV-71",
   partyName: "Customer",
@@ -65,7 +65,7 @@ const document = {
   issueDate: null,
   dueDate: null,
   lineItems: [],
-  sourceWorkflow: "main_customer_invoice" as const,
+  sourceWorkflow: "extra_hire" as const,
   sourceRecordId: "4x71",
   validationStatus: "valid" as const,
 };
@@ -77,7 +77,7 @@ function applyAllGates() {
     manifest: { status: "approved" },
     families: [{ id: 11, releaseStatus: "included", legacyWriterIdentifier: "old-writer", legacyWriterOwner: "Operations", legacyDisableAction: "Disabled after handoff" }],
   });
-  mocks.getPack.mockResolvedValue({ state: "approved", workflowType: "main_customer_invoice" });
+  mocks.getPack.mockResolvedValue({ state: "approved", workflowType: approval.workflowType });
   mocks.revalidate.mockResolvedValue({
     matchesApproval: true,
     document,
@@ -99,7 +99,7 @@ describe("financial live execution coordinator", () => {
   const originalShadow = process.env.FINANCIAL_GLOBAL_SHADOW_MODE;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     applyAllGates();
   });
   afterEach(() => {
@@ -128,6 +128,19 @@ describe("financial live execution coordinator", () => {
       preview: { approvalEligible: false, blockers: ["Xero duplicate changed"], preflight: {} },
     });
     await expect(executeApprovedFinancialDraft({ approvalId: 71 })).rejects.toBeInstanceOf(FinancialWriteDisabledError);
+    expect(mocks.executeWriter).not.toHaveBeenCalled();
+  });
+
+  it("never lets a generic approval bypass the dedicated Main Invoice source/claim lifecycle", async () => {
+    process.env.FINANCIAL_LIVE_WRITES_ENABLED = "true";
+    process.env.FINANCIAL_GLOBAL_SHADOW_MODE = "false";
+    mocks.getApproval.mockResolvedValue({ ...approval, workflowType: "main_customer_invoice" });
+    mocks.getPack.mockResolvedValue({ state: "approved", workflowType: "main_customer_invoice" });
+
+    await expect(executeApprovedFinancialDraft({ approvalId: 71 })).rejects.toThrow(/dedicated guarded Main Invoice workflow/i);
+
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+    expect(mocks.preparePayload).not.toHaveBeenCalled();
     expect(mocks.executeWriter).not.toHaveBeenCalled();
   });
 

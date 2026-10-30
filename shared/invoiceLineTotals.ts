@@ -53,8 +53,12 @@ export function calculateInvoiceLineTotals(lines: InvoiceLineForTotals[]): Calcu
       : DEFAULT_AU_GST_RATE;
     if (suppliedRate === null || suppliedRate < 0) defaultTaxRateLineCount += 1;
 
-    subtotal += amount;
-    tax += amount * (taxRate / 100);
+    // Xero calculates GST for each line after that line has been rounded to
+    // cents. Summing unrounded tax across an invoice can otherwise differ by
+    // one cent from the Xero Draft (for example $224.75 + $3,596.57 at 10%).
+    const roundedAmount = roundToCents(amount);
+    subtotal += roundedAmount;
+    tax += roundToCents(roundedAmount * (taxRate / 100));
     validAmountLineCount += 1;
   }
 

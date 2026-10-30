@@ -3,7 +3,7 @@ import { Temporal } from "@js-temporal/polyfill";
 import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWorkflowEngine";
 
 export const MAIN_CUSTOMER_INVOICE_ACCOUNT_CODE = "200" as const;
-export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v7-optional-pickup-date-operations-fallback" as const;
+export const MAIN_CUSTOMER_INVOICE_RULES_VERSION = "main-customer-invoice-v8-per-line-gst-rounding" as const;
 export const MAIN_CUSTOMER_INVOICE_RULES_HASH = createHash("sha256").update(MAIN_CUSTOMER_INVOICE_RULES_VERSION).digest("hex");
 
 export type MainCustomerInvoiceServiceLineFacts = {
@@ -182,6 +182,10 @@ function toFinancialLine(line: MainCustomerInvoiceServiceLineFacts, transportIte
   const itemCode = isTransport
     ? transportItemCode
     : mainCustomerInvoiceContainerHireItemCode(line.description) ?? mainCustomerInvoiceContainerSaleItemCode(line.description);
+  // This is the exact UnitAmount sent to Xero. Build the local line total from
+  // that cents-rounded amount so proposal/header evidence has the same basis
+  // as Xero's own per-line GST calculation.
+  const unitAmount = money(line.unitAmount);
   return {
     // Only a transport description is temporary: it is rendered from the
     // current native Xero route template before writing. Other lines retain the
@@ -189,8 +193,8 @@ function toFinancialLine(line: MainCustomerInvoiceServiceLineFacts, transportIte
     itemCode: itemCode ?? "",
     description: isTransport ? `Pending current Xero ${transportItemCode} route description` : normal(line.description),
     quantity: line.quantity,
-    unitAmount: money(line.unitAmount),
-    lineAmount: money(line.quantity * line.unitAmount),
+    unitAmount,
+    lineAmount: money(line.quantity * unitAmount),
     accountCode: MAIN_CUSTOMER_INVOICE_ACCOUNT_CODE,
     taxRate: 10,
     gstTreatment: "GST_EXCLUSIVE",
@@ -258,6 +262,13 @@ export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, now = 
     : null;
   const lineItems = facts.serviceLines.map((line) => toFinancialLine(line, transportItemCode));
   const subtotal = money(lineItems.reduce((total, line) => total + line.lineAmount, 0));
+  // Xero rounds GST for each exclusive line, then sums those rounded taxes.
+  // Do not derive GST from the invoice subtotal: that can be one cent lower or
+  // higher than the actual Xero Draft for multi-line invoices.
+  const taxAmount = money(lineItems.reduce(
+    (total, line) => total + money(line.lineAmount * (line.taxRate / 100)),
+    0
+  ));
   const invoiceNumber = mainCustomerInvoiceNumber(facts.dealNumber);
   return {
     eligible: true,
@@ -275,8 +286,8 @@ export function buildMainCustomerInvoice(facts: MainCustomerInvoiceFacts, now = 
       gstTreatment: "GST_EXCLUSIVE",
       currency: "AUD",
       subtotal,
-      taxAmount: money(subtotal * 0.1),
-      total: money(subtotal * 1.1),
+      taxAmount,
+      total: money(subtotal + taxAmount),
       issueDate,
       dueDate,
       lineItems,

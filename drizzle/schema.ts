@@ -1121,6 +1121,58 @@ export const financialD702946DepositMainDeductionRecoveryEvents = mysqlTable("fi
 }));
 export type FinancialD702946DepositMainDeductionRecoveryEvent = typeof financialD702946DepositMainDeductionRecoveryEvents.$inferSelect;
 
+// Closed D702959 exception. Evidence/payload columns are written once at
+// reservation; only one-way outcome fields subsequently change. The separate
+// table deliberately cannot share or reopen the generic/D702946 ledgers.
+export const financialD702959AuthorisedDepositMainDeductionRecoveryEvents = mysqlTable("financial_d702959_authdep_deduction_recovery_events", {
+  id: int("id").autoincrement().primaryKey(),
+  scopeKey: varchar("scopeKey", { length: 128 }).notNull(),
+  recoveryKey: varchar("recoveryKey", { length: 64 }).notNull(),
+  dealId: varchar("dealId", { length: 128 }).notNull(),
+  dealNumber: varchar("dealNumber", { length: 128 }).notNull(),
+  originalMainEventId: int("originalMainEventId").notNull(),
+  failedMainWriterExecutionId: int("failedMainWriterExecutionId").notNull(),
+  depositEventId: int("depositEventId").notNull(),
+  depositWriterExecutionId: int("depositWriterExecutionId").notNull(),
+  mainInvoiceNumber: varchar("mainInvoiceNumber", { length: 128 }).notNull(),
+  mainXeroInvoiceId: varchar("mainXeroInvoiceId", { length: 128 }).notNull(),
+  depositInvoiceNumber: varchar("depositInvoiceNumber", { length: 128 }).notNull(),
+  depositXeroInvoiceId: varchar("depositXeroInvoiceId", { length: 128 }).notNull(),
+  anchorEvidenceHash: varchar("anchorEvidenceHash", { length: 64 }).notNull(),
+  anchorEvidence: json("anchorEvidence").notNull(),
+  sourceSnapshotHash: varchar("sourceSnapshotHash", { length: 64 }).notNull(),
+  sourceSnapshot: json("sourceSnapshot").notNull(),
+  xeroEvidenceHash: varchar("xeroEvidenceHash", { length: 64 }).notNull(),
+  mainXeroSnapshot: json("mainXeroSnapshot").notNull(),
+  depositXeroSnapshot: json("depositXeroSnapshot").notNull(),
+  payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
+  authorisedPayload: json("authorisedPayload").notNull(),
+  releaseKey: varchar("releaseKey", { length: 128 }).notNull(),
+  approvedBy: int("approvedBy").notNull(),
+  approvedAt: varchar("approvedAt", { length: 64 }).notNull(),
+  policyHash: varchar("policyHash", { length: 64 }).notNull(),
+  processingToken: varchar("processingToken", { length: 128 }),
+  status: mysqlEnum("status", ["reserved", "submitted", "draft_updated", "reconciliation_required"] as const).default("reserved").notNull(),
+  holdReason: text("holdReason"),
+  executionId: int("executionId"),
+  submittedAt: timestamp("submittedAt"),
+  readbackEvidence: json("readbackEvidence"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => ({
+  scopeUnique: uniqueIndex("financial_d702959_add_scope_unique").on(table.scopeKey),
+  keyUnique: uniqueIndex("financial_d702959_add_key_unique").on(table.recoveryKey),
+  invoiceUnique: uniqueIndex("financial_d702959_add_invoice_unique").on(table.mainInvoiceNumber),
+  mainIdUnique: uniqueIndex("financial_d702959_add_main_id_unique").on(table.mainXeroInvoiceId),
+  depositUnique: uniqueIndex("financial_d702959_add_deposit_unique").on(table.depositXeroInvoiceId),
+  pairUnique: uniqueIndex("financial_d702959_add_pair_unique").on(table.mainXeroInvoiceId, table.depositXeroInvoiceId),
+  originalReceiptUnique: uniqueIndex("financial_d702959_add_original_receipt_unique").on(table.originalMainEventId),
+  failedWriterUnique: uniqueIndex("financial_d702959_add_failed_writer_unique").on(table.failedMainWriterExecutionId),
+  depositReceiptUnique: uniqueIndex("financial_d702959_add_deposit_receipt_unique").on(table.depositEventId),
+  depositWriterUnique: uniqueIndex("financial_d702959_add_deposit_writer_unique").on(table.depositWriterExecutionId),
+}));
+export type FinancialD702959AuthorisedDepositMainDeductionRecoveryEvent = typeof financialD702959AuthorisedDepositMainDeductionRecoveryEvents.$inferSelect;
+
 // Final weight evidence never changes after insert. Both directions share a
 // per-document one-time exclusive claim, NOT Main Invoice's release or ledger.
 export const financialFinalWeightAdjustmentEvents = mysqlTable("financial_final_weight_adjustment_events", {

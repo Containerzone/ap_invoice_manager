@@ -29,6 +29,7 @@ import { verifyDepositInvoiceReconciliationWriteAccess } from "./financialDeposi
 import { verifyDepositMainDeductionWriteAccess } from "./financialDepositMainDeductionDb";
 import { verifyD702946DepositMainDeductionRecoveryWriteAccess } from "./financialD702946DepositMainDeductionRecoveryDb";
 import { verifyD702946AuthorisedDepositMainDeductionRecoveryWriteAccess } from "./financialD702946AuthorisedDepositMainDeductionRecoveryDb";
+import { verifyD702959AuthorisedDepositMainDeductionRecoveryWriteAccess } from "./financialD702959AuthorisedDepositMainDeductionRecoveryDb";
 import { verifyFinalWeightAutomaticWriteAccess } from "./financialFinalWeightAdjustmentDb";
 import { verifyFinalWeightReconciliationWriteAccess } from "./financialFinalWeightReconciliationDb";
 import { verifyFinalWeightReconciliationRemediationWriteAccess } from "./financialFinalWeightReconciliationRemediationDb";
@@ -159,7 +160,7 @@ export async function executeGuardedFinancialWriterCommand(
       financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedExactDraft])) {
       throw new Error("Deposit correction permits only its exact immutable Draft amendment and no CRM post-success action.");
     }
-  } else if (command.expectedExactDraft && command.authorisation.depositMainDeductionAutomaticEventId === undefined && command.authorisation.d702946DepositMainDeductionRecoveryEventId === undefined && command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryEventId === undefined) throw new Error("Exact Draft correction evidence requires its independent Deposit correction approval.");
+  } else if (command.expectedExactDraft && command.authorisation.depositMainDeductionAutomaticEventId === undefined && command.authorisation.d702946DepositMainDeductionRecoveryEventId === undefined && command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryEventId === undefined && command.authorisation.d702959AuthorisedDepositMainDeductionRecoveryEventId === undefined) throw new Error("Exact Draft correction evidence requires its independent Deposit correction approval.");
   if (command.authorisation.depositMainDeductionAutomaticEventId !== undefined) {
     if (command.workflowType !== "deposit_main_deduction" || command.proposedAction !== "update_draft" || command.postSuccessPlan?.length || command.sourceRecordId ||
       command.preparedBy !== command.authorisation.depositMainDeductionApprovedBy || !command.expectedExactDraft || command.expectedDraftDocument || command.expectedFinalWeightDraft ||
@@ -190,6 +191,19 @@ export async function executeGuardedFinancialWriterCommand(
       throw new Error("D702946 Authorised-Deposit recovery permits only its isolated exact Main Draft amendment/readback; the Deposit remains evidence only with no CRM or post-success actions.");
     await verifyD702946AuthorisedDepositMainDeductionRecoveryWriteAccess({ eventId: command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryEventId,
       token: command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryToken!, releaseKey: command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryReleaseKey!,
+      preparedBy: command.preparedBy, payload: command.payload });
+  }
+  if (command.authorisation.d702959AuthorisedDepositMainDeductionRecoveryEventId !== undefined) {
+    if (command.workflowType !== "d702959_authorised_deposit_main_deduction_recovery" || command.proposedAction !== "update_draft" ||
+      command.postSuccessPlan?.length || command.sourceRecordId || command.verifiedSourceData || command.approvalId ||
+      command.workflowRunId || command.documentIntentId || command.releaseManifestId || command.releaseFamilyId || command.cutoverPackId ||
+      command.preparedBy !== command.authorisation.d702959AuthorisedDepositMainDeductionRecoveryApprovedBy || !command.expectedExactDraft ||
+      command.expectedDraftDocument || command.expectedFinalWeightDraft ||
+      financialSha256(command.payload.body.Invoices) !== financialSha256([command.expectedExactDraft])) {
+      throw new Error("D702959 Authorised-Deposit recovery permits only its isolated exact Main Draft append/readback; the Authorised Deposit remains evidence only with no CRM or post-success actions.");
+    }
+    await verifyD702959AuthorisedDepositMainDeductionRecoveryWriteAccess({ eventId: command.authorisation.d702959AuthorisedDepositMainDeductionRecoveryEventId,
+      token: command.authorisation.d702959AuthorisedDepositMainDeductionRecoveryToken!, releaseKey: command.authorisation.d702959AuthorisedDepositMainDeductionRecoveryReleaseKey!,
       preparedBy: command.preparedBy, payload: command.payload });
   }
   if ((command.workflowType === "deposit_invoice" || /^INV-\d+-D$/i.test(command.payload.documentNumber)) && command.authorisation.depositInvoiceAutomaticEventId === undefined && command.authorisation.depositInvoiceReconciliationEventId === undefined && command.authorisation.depositDraftCorrectionKind === undefined) {
@@ -291,7 +305,10 @@ export async function executeGuardedFinancialWriterCommand(
     transportSucceeded = true;
     // The transport response alone never proves final success. Re-read the exact
     // Xero ID/number/status before marking the execution successful locally.
-    const recoveryReadbackEvidence = command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryEventId !== undefined
+    const recoveryReadbackEvidence = command.authorisation.d702959AuthorisedDepositMainDeductionRecoveryEventId !== undefined
+      ? await (await import("./financialD702959AuthorisedDepositMainDeductionRecoveryService")).readD702959AuthorisedDepositMainDeductionRecoveryReadback(
+        command.authorisation.d702959AuthorisedDepositMainDeductionRecoveryEventId, prepared.execution.id)
+      : command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryEventId !== undefined
       ? await (await import("./financialD702946AuthorisedDepositMainDeductionRecoveryService")).readD702946AuthorisedDepositMainDeductionRecoveryReadback(
         command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryEventId, prepared.execution.id)
       : command.authorisation.d702946DepositMainDeductionRecoveryEventId !== undefined
@@ -347,7 +364,7 @@ export async function executeGuardedFinancialWriterCommand(
     }
     return { outcome: "succeeded", executionId: prepared.execution.id, result, ...(recoveryReadbackEvidence ? { recoveryReadbackEvidence } : {}) };
   } catch (error) {
-    const uncertain = command.authorisation.d702946DepositMainDeductionRecoveryEventId !== undefined || command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryEventId !== undefined || transportSucceeded || financialWriteOutcomeIsUncertain(error);
+    const uncertain = command.authorisation.d702946DepositMainDeductionRecoveryEventId !== undefined || command.authorisation.d702946AuthorisedDepositMainDeductionRecoveryEventId !== undefined || command.authorisation.d702959AuthorisedDepositMainDeductionRecoveryEventId !== undefined || transportSucceeded || financialWriteOutcomeIsUncertain(error);
     await markFinancialWriterExecutionFailed(prepared.execution.id, error, uncertain);
     if (uncertain) {
       return {

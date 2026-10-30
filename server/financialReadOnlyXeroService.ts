@@ -448,6 +448,16 @@ export async function readBackFinancialDraft(input: {
   const expected = input.expectedDocument;
   if (expected) {
     const lines = Array.isArray(document.LineItems) ? document.LineItems : [];
+    const cents = (value: unknown): number | null => {
+      const parsed = numeric(value);
+      return parsed === null ? null : Math.round((parsed + Number.EPSILON) * 100);
+    };
+    const sameCents = (actual: unknown, wanted: unknown): boolean => {
+      const actualCents = cents(actual);
+      const wantedCents = cents(wanted);
+      return actualCents !== null && wantedCents !== null && actualCents === wantedCents;
+    };
+    const isMainInvoice = expected.sourceWorkflow === "main_customer_invoice";
     const dateOnly = (value: unknown) => {
       const raw = String(value ?? "");
       const ms = raw.match(/^\/Date\((\d+)(?:[+-]\d+)?\)\/$/);
@@ -456,6 +466,7 @@ export async function readBackFinancialDraft(input: {
     };
     if (document.Contact?.ContactID !== expected.partySourceId || document.LineAmountTypes !== (expected.gstTreatment === "GST_INCLUSIVE" ? "Inclusive" : "Exclusive") ||
       (["deposit_invoice", "extra_hire"].includes(expected.sourceWorkflow ?? "") && (document.CurrencyCode !== "AUD" || Math.abs(Number(document.TotalTax) - expected.taxAmount) > 0.01 || !Number.isFinite(Number(document.TotalTax)))) ||
+      (isMainInvoice && (!sameCents(document.SubTotal, expected.subtotal) || !sameCents(document.TotalTax, expected.taxAmount) || !sameCents(document.Total, expected.total) || !sameCents(Number(document.SubTotal) + Number(document.TotalTax), document.Total))) ||
       (expected.sourceWorkflow === "extra_hire" && (documentNumber !== expectedNumber || document.Reference !== expected.reference || document.DueDate || document.DueDateString)) ||
       (expected.documentFamily === "customer_invoice" && document.Type !== "ACCREC") ||
       (expected.issueDate && dateOnly(document.DateString ?? document.Date) !== expected.issueDate.toISOString().slice(0,10)) ||
@@ -466,6 +477,7 @@ export async function readBackFinancialDraft(input: {
         const wanted = expected.lineItems[index]!;
         return (["deposit_invoice", "extra_hire"].includes(expected.sourceWorkflow ?? "") && line.ItemCode !== wanted.itemCode) ||
           (expected.sourceWorkflow === "extra_hire" && (!Number.isFinite(Number(line.LineAmount)) || Math.abs(Number(line.LineAmount) - wanted.lineAmount) > 0.001 || !Number.isFinite(Number(line.TaxAmount)) || Math.abs(Number(line.TaxAmount) - expected.taxAmount) > 0.01)) ||
+          (isMainInvoice && (!sameCents(line.LineAmount, wanted.lineAmount) || !sameCents(line.TaxAmount, Math.round((wanted.lineAmount * (wanted.taxRate / 100) + Number.EPSILON) * 100) / 100))) ||
           line.Description !== wanted.description || String(line.AccountCode) !== String(wanted.accountCode) ||
           !Number.isFinite(Number(line.UnitAmount)) ||
           Number(line.Quantity) !== wanted.quantity || Math.abs(Number(line.UnitAmount) - wanted.unitAmount) > 0.001 ||

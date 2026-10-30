@@ -393,6 +393,13 @@
       "when": 1792473416690,
       "tag": "0055_deposit_main_deduction_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "5",
+      "when": 1793318951398,
+      "tag": "0056_d702959_authorised_deposit_recovery",
+      "breakpoints": true
     }
   ]
 }

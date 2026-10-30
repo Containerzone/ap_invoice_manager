@@ -147,6 +147,42 @@ describe("Main Customer Invoice current-source evidence", () => {
     expect(preflight).toHaveBeenCalledTimes(2);
   });
 
+  it("carries Xero per-line GST cents and verified accounts through a D702959-like Main preview", async () => {
+    retrieve.mockImplementation(async (id: string) => {
+      const records: Record<string, Record<string, unknown>> = {
+        "5x959": { id: "5x959", potential_no: "D702959", cf_potentials_quotereference: "20x959", related_to: "4x2", cf_potentials_containersituationselectone: "HIRED", cf_potentials_pickuplocation: "Origin", cf_potentials_deliverylocation: "Destination", cf_potentials_fullcontainercollectiondate: "2026-10-30", cf_potentials_depositstatus: "PENDING", modifiedtime: "2026-10-30T01:00:00Z" },
+        "20x959": { id: "20x959", quote_no: "Q531901", LineItems: { 1: { productid: "14x9591", quantity: "1", listprice: "224.75" }, 2: { productid: "14x9592", quantity: "1", listprice: "3596.57" } }, modifiedtime: "2026-10-30T01:00:00Z" },
+        "4x2": { id: "4x2", accountname: "Customer Pty Ltd" },
+        "14x9591": { id: "14x9591", servicename: "20 Foot Standard Height Container Hire per 30 days" },
+        "14x9592": { id: "14x9592", servicename: "Transport - Empty & Loaded Container" },
+      };
+      return records[id] ?? { id };
+    });
+    preflight.mockResolvedValue([{
+      duplicateState: "not_found", status: null,
+      contactCheck: { found: true, contactId: "xero-customer", count: 1, partyName: "Customer Pty Ltd" },
+      itemChecks: [
+        { itemCode: "20' Hire", found: true, isSold: true, salesAccountCode: "210", salesAccountActive: true, salesTaxType: "OUTPUT", nativeDescription: "20 Foot Container Hire" },
+        { itemCode: "SER60", found: true, isSold: true, salesAccountCode: "200", salesAccountActive: true, salesTaxType: "OUTPUT", nativeDescription: "Empty & Loaded Container from <> to <>" },
+      ],
+      accountChecks: [{ accountCode: "200", active: true }, { accountCode: "210", active: true }],
+    }]);
+
+    const result = await previewMainCustomerInvoice("5x959");
+
+    expect(result).toMatchObject({ state: "previewed", noWrites: true });
+    expect(result.preview.document).toMatchObject({
+      proposedDocumentNumber: "INV-702959",
+      subtotal: 3821.32,
+      taxAmount: 382.14,
+      total: 4203.46,
+      lineItems: [
+        expect.objectContaining({ itemCode: "20' Hire", accountCode: "210", description: "20 Foot Standard Height Container Hire per 30 days", unitAmount: 224.75, lineAmount: 224.75 }),
+        expect.objectContaining({ itemCode: "SER60", accountCode: "200", description: "Empty & Loaded Container from Origin to Destination", unitAmount: 3596.57, lineAmount: 3596.57 }),
+      ],
+    });
+  });
+
   it("holds before invoice execution when any current Main Invoice Xero sales account is inactive or ambiguous", async () => {
     preflight.mockResolvedValue([{ ...readyPreflight()[0], accountChecks: [{ accountCode: "200", active: false }] }]);
 

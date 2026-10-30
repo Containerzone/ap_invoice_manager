@@ -120,6 +120,14 @@ export async function executeApprovedFinancialDraft(input: {
   if (input.expectedWorkflowType && approval.workflowType !== input.expectedWorkflowType) {
     throw new FinancialWriteDisabledError("The named approval belongs to a different financial workflow family.");
   }
+  // Main Customer Invoices are owned exclusively by the dedicated VTiger
+  // source/claim/contact/read-back lifecycle. The generic approval bridge lacks
+  // that event token and must remain shadow/preparation-only for this family.
+  if (approval.workflowType === "main_customer_invoice") {
+    throw new FinancialWriteDisabledError(
+      "Main Customer Invoice execution must use the dedicated guarded Main Invoice workflow."
+    );
+  }
   if (input.expectedSourceRecordId && approval.sourceRecordId !== input.expectedSourceRecordId) {
     throw new FinancialWriteDisabledError("The named approval belongs to a different VTiger source record.");
   }

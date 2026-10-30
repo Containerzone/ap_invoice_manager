@@ -196,6 +196,7 @@ export async function runBoundedXeroGet<T = any>(
   operationName: `GET ${string}`,
   url: string,
   config: Pick<AxiosRequestConfig, "headers" | "params" | "timeout"> = {},
+  options: { retryRateLimitOnce?: boolean } = {},
 ): Promise<AxiosResponse<T>> {
   // Runtime guard as well as a type boundary for untyped/cast callers.
   if (!operationName.startsWith("GET ") || typeof url !== "string" ||
@@ -206,7 +207,7 @@ export async function runBoundedXeroGet<T = any>(
   try {
     return await read();
   } catch (error) {
-    if (!(error instanceof XeroRateLimitError) || error.tenantId !== auth.tenantId || !error.hasExplicitRetryAfter || !Number.isFinite(error.retryAfterSeconds) || error.retryAfterSeconds < 0 || error.retryAfterSeconds > 5) throw error;
+    if (options.retryRateLimitOnce === false || !(error instanceof XeroRateLimitError) || error.tenantId !== auth.tenantId || !error.hasExplicitRetryAfter || !Number.isFinite(error.retryAfterSeconds) || error.retryAfterSeconds < 0 || error.retryAfterSeconds > 5) throw error;
     await wait(error.retryAfterSeconds * 1000);
     return read(); // Deliberately outside the catch: never a third attempt.
   }

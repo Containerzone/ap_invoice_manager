@@ -75,6 +75,35 @@ describe("Main Invoice immutable payload binding", () => {
     }));
   });
 
+  it("binds the exact two-line D702959-like Main Invoice wire body while local totals use per-line GST", async () => {
+    const twoLineProposal = {
+      ...proposal,
+      subtotal: 3821.32,
+      taxAmount: 382.14,
+      total: 4203.46,
+      lineItems: [
+        { itemCode: "20' Hire", description: "20 Foot Standard Height Container Hire per 30 days", quantity: 1, unitAmount: 224.75, lineAmount: 224.75, accountCode: "210", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" },
+        { itemCode: "SER60", description: "Empty & Loaded Container from Origin to Destination", quantity: 1, unitAmount: 3596.57, lineAmount: 3596.57, accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" },
+      ],
+    };
+    const twoLinePayload = prepareFinancialDraftPayload({
+      ...twoLineProposal,
+      issueDate: new Date("2026-11-13T00:00:00.000Z"),
+      dueDate: new Date("2026-11-15T00:00:00.000Z"),
+    } as any, "d702959-test");
+    (twoLinePayload.body.Invoices as any[])[0].CurrencyCode = "AUD";
+    m.selectRows = [event({ proposal: twoLineProposal })];
+
+    await expect(bindMainCustomerInvoicePayload({ eventId: 51, token: "exclusive-token", releaseKey: "MAIN-INV-test", payload: twoLinePayload })).resolves.toBeUndefined();
+    expect((twoLinePayload.body.Invoices as any[])[0]).toMatchObject({
+      Type: "ACCREC", Status: "DRAFT", CurrencyCode: "AUD", LineAmountTypes: "Exclusive",
+      LineItems: [
+        { ItemCode: "20' Hire", UnitAmount: 224.75, AccountCode: "210", TaxType: "OUTPUT" },
+        { ItemCode: "SER60", UnitAmount: 3596.57, AccountCode: "200", TaxType: "OUTPUT" },
+      ],
+    });
+  });
+
   it("accepts the production builder body after CurrencyCode is appended after LineItems", async () => {
     const document = {
       ...proposal,

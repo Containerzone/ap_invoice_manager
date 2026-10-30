@@ -62,13 +62,24 @@ describe("calculateInvoiceLineTotals", () => {
     });
   });
 
-  it("rounds per-footer totals to cents", () => {
+  it("rounds each GST-exclusive line before summing the footer", () => {
     const totals = calculateInvoiceLineTotals([
       { amount: "33.333", taxRate: "10" },
       { amount: "33.333", taxRate: "10" },
       { amount: "33.334", taxRate: "10" },
     ]);
 
-    expect(totals).toMatchObject({ subtotal: 100, tax: 10, total: 110 });
+    expect(totals).toMatchObject({ subtotal: 99.99, tax: 9.99, total: 109.98 });
+  });
+
+  it("matches Xero per-line GST cents where invoice-level rounding differs", () => {
+    const totals = calculateInvoiceLineTotals([
+      { amount: "224.75", taxRate: "10" },
+      { amount: "3596.57", taxRate: "10" },
+    ]);
+
+    expect(totals).toMatchObject({ subtotal: 3821.32, tax: 382.14, total: 4203.46 });
+    expect(totals.tax).not.toBe(382.13);
+    expect(totals.total).not.toBe(4203.45);
   });
 });

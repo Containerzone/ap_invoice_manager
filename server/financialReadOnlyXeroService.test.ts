@@ -280,6 +280,37 @@ describe("financial read-only Xero service", () => {
     noMutationAssertions();
   });
 
+  it("requires exact per-line and header GST cents for a Main Invoice Draft", async () => {
+    const expected = {
+      documentFamily: "customer_invoice", documentType: "main_customer_invoice", sourceWorkflow: "main_customer_invoice", proposedAction: "create_draft", proposedDocumentNumber: "INV-702959", reference: "Q531901",
+      partyName: "Rees Davies", partySourceId: "contact-959", accountCode: "200", gstTreatment: "GST_EXCLUSIVE", currency: "AUD",
+      subtotal: 3821.32, taxAmount: 382.14, total: 4203.46,
+      issueDate: new Date("2026-10-30T00:00:00Z"), dueDate: new Date("2026-11-01T00:00:00Z"),
+      lineItems: [
+        { itemCode: "20' Hire", description: "20 Foot Standard Height Container Hire per 30 days", quantity: 1, unitAmount: 224.75, lineAmount: 224.75, accountCode: "210", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" },
+        { itemCode: "SER60", description: "Empty & Loaded Container from Origin to Destination", quantity: 1, unitAmount: 3596.57, lineAmount: 3596.57, accountCode: "200", taxRate: 10, gstTreatment: "GST_EXCLUSIVE" },
+      ], sourceRecordId: "5x959", validationStatus: "valid",
+    } as any;
+    const actual = {
+      InvoiceID: "main-959", InvoiceNumber: "INV-702959", Type: "ACCREC", Status: "DRAFT", CurrencyCode: "AUD", Contact: { ContactID: "contact-959" },
+      Date: "2026-10-30", DueDate: "2026-11-01", LineAmountTypes: "Exclusive", SubTotal: 3821.32, TotalTax: 382.14, Total: 4203.46,
+      LineItems: [
+        { ItemCode: "20' Hire", Description: "20 Foot Standard Height Container Hire per 30 days", Quantity: 1, UnitAmount: 224.75, LineAmount: 224.75, TaxAmount: 22.48, AccountCode: "210", TaxType: "OUTPUT" },
+        { ItemCode: "SER60", Description: "Empty & Loaded Container from Origin to Destination", Quantity: 1, UnitAmount: 3596.57, LineAmount: 3596.57, TaxAmount: 359.66, AccountCode: "200", TaxType: "OUTPUT" },
+      ],
+    };
+    const read = (invoice: Record<string, unknown>) => {
+      mockGet.mockResolvedValueOnce({ data: { Organisations: [{ Name: "CONTAINERZONE" }] } })
+        .mockResolvedValueOnce({ data: { Invoices: [invoice] } });
+      return readBackFinancialDraft({ documentFamily: "customer_invoice", documentNumber: "INV-702959", expectedXeroDocumentId: "main-959", expectedDocument: expected });
+    };
+
+    await expect(read(actual)).resolves.toMatchObject({ subtotal: 3821.32, total: 4203.46 });
+    await expect(read({ ...actual, TotalTax: 382.13, Total: 4203.45 })).rejects.toThrow(/does not match/);
+    await expect(read({ ...actual, LineItems: [{ ...actual.LineItems[0], TaxAmount: 22.47 }, actual.LineItems[1]] })).rejects.toThrow(/does not match/);
+    noMutationAssertions();
+  });
+
   it("resolves Deposit Required sales account/tax from the exact current item with GET-only evidence", async () => {
     mockGet.mockResolvedValueOnce({ data: { Organisations: [{ Name: "CONTAINERZONE" }] } })
       .mockResolvedValueOnce({ data: { Items: [{ Code: "Deposit Required", IsSold: true, SalesDetails: { AccountCode: "200", TaxType: "OUTPUT" } }] } })
