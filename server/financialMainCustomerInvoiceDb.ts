@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { financialMainCustomerInvoiceEvents, type FinancialMainCustomerInvoiceEvent } from "../drizzle/schema";
 import { getDb } from "./db";
 import { assertMainCustomerInvoiceRelease, getMainCustomerInvoiceReleasePolicy } from "./financialMainCustomerInvoiceRelease";
@@ -97,6 +97,29 @@ export async function recordMainCustomerInvoicePreview(input: {
   const saved = await getMainCustomerInvoiceEvent(input.dealId);
   if (!saved) throw new Error("Main Customer Invoice evidence receipt could not be read back from the AP ledger.");
   return saved;
+}
+
+/** Records a contact handoff failure only against the exact still-unclaimed preview. */
+export async function recordMainCustomerInvoiceContactHold(input: {
+  eventId: number;
+  sourceSnapshotHash: string;
+  reason: string;
+}): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("AP Main Customer Invoice lifecycle ledger is unavailable.");
+  const result = await db.update(financialMainCustomerInvoiceEvents).set({
+    status: "held", holdReason: input.reason.slice(0, 2000), updatedAt: new Date(),
+  }).where(and(
+    eq(financialMainCustomerInvoiceEvents.id, input.eventId),
+    eq(financialMainCustomerInvoiceEvents.sourceSnapshotHash, input.sourceSnapshotHash),
+    inArray(financialMainCustomerInvoiceEvents.status, ["previewed", "held"]),
+    isNull(financialMainCustomerInvoiceEvents.processingToken),
+    isNull(financialMainCustomerInvoiceEvents.authorisedPayload),
+    isNull(financialMainCustomerInvoiceEvents.releaseKey),
+    isNull(financialMainCustomerInvoiceEvents.executionId),
+    isNull(financialMainCustomerInvoiceEvents.xeroInvoiceId),
+  ));
+  return affected(result);
 }
 
 export async function claimMainCustomerInvoicePreview(eventId: number, token: string): Promise<boolean> {

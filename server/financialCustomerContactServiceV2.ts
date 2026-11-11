@@ -189,7 +189,8 @@ export async function executeCustomerContactCreationV2(plan: CustomerContactPlan
   if (plan.status === "matched") return { ...plan, status: "matched", contactEventId: null, contactWritesAttempted: 0 };
   if (plan.status === "held") return { ...plan, status: "held", contactEventId: null, contactWritesAttempted: 0 };
   if (process.env.FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED !== "true" || process.env.FINANCIAL_CUSTOMER_CONTACT_AUTOMATIC_ENABLED !== "true") {
-    return { ...plan, status: "would_create", contactEventId: null, contactWritesAttempted: 0 };
+    return { ...plan, status: "would_create", contactEventId: null, contactWritesAttempted: 0,
+      holdReason: "Automatic Xero customer-profile creation is disabled; both the customer-contact v2 and automatic-creation release gates must be enabled." };
   }
   const currentSource = await readCurrentCustomerContactResolution(
     plan.source.dealId,

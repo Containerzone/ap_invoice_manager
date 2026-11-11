@@ -7,10 +7,12 @@ vi.mock("./financialMainCustomerInvoiceRelease", () => ({ getMainCustomerInvoice
 import {
   bindMainCustomerInvoicePayload,
   mainCustomerInvoicePayloadHash,
+  recordMainCustomerInvoiceContactHold,
   verifyMainCustomerInvoiceAutomaticWriteAccess,
 } from "./financialMainCustomerInvoiceDb";
 import { prepareFinancialDraftPayload, type FinancialDraftPayload } from "./financialProductionWriter";
 import { financialSha256 } from "./financialProposalIntegrity";
+import { MySqlDialect } from "drizzle-orm/mysql-core";
 
 const payload = (): FinancialDraftPayload => ({
   endpoint: "/Invoices",
@@ -66,6 +68,24 @@ beforeEach(() => {
 });
 
 describe("Main Invoice immutable payload binding", () => {
+  it("writes a customer hold only to the exact unclaimed source, with no token or authorisation reset", async () => {
+    expect(await recordMainCustomerInvoiceContactHold({ eventId: 51, sourceSnapshotHash: "s".repeat(64), reason: "Customer source changed" })).toBe(true);
+    expect(m.updateSet).toHaveBeenCalledWith({ status: "held", holdReason: "Customer source changed", updatedAt: expect.any(Date) });
+    const query = new MySqlDialect().sqlToQuery(m.updateWhere.mock.calls[0]![0]);
+    for (const field of ["processingToken", "authorisedPayload", "releaseKey", "executionId", "xeroInvoiceId"]) expect(query.sql).toContain(`\`${field}\` is null`);
+    expect(query.params).toContain("previewed");
+    expect(query.params).toContain("held");
+    expect(query.params).toContain("s".repeat(64));
+    expect(query.params).not.toContain("reserved");
+    expect(query.params).not.toContain("drafts_created");
+    expect(query.params).not.toContain("reconciliation_required");
+  });
+
+  it("returns no change when another invocation already owns the invoice", async () => {
+    m.updateWhere.mockResolvedValueOnce([{ affectedRows: 0 }]);
+    expect(await recordMainCustomerInvoiceContactHold({ eventId: 51, sourceSnapshotHash: "s".repeat(64), reason: "Contact disabled" })).toBe(false);
+  });
+
   it("binds only the exact final AUD wire body to its exclusive reservation token", async () => {
     await bindMainCustomerInvoicePayload({ eventId: 51, token: "exclusive-token", releaseKey: "MAIN-INV-test", payload: payload() });
 

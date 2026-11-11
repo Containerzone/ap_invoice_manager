@@ -215,6 +215,21 @@ describe("Main Customer Invoice webhook contract", () => {
     expect(safeMainCustomerInvoiceWebhookFailure(new Error("x".repeat(501)))).toHaveLength(500);
   });
 
+  it("preserves a returned missing-customer failure string in both the webhook and operational alert", async () => {
+    process.env.FINANCIAL_AP_WEBHOOK_SECRET = "test-secret";
+    process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED = "true";
+    mocks.process.mockResolvedValue({ ok: false, status: "held", warning: "Customer creation source reread failed: token=test-secret", xeroWritesAttempted: 0 });
+    const res = response();
+
+    await registeredHandler()({ header: () => undefined, body: { id: "5x702877", secret: "test-secret" } }, res);
+
+    expect(res.status).toHaveBeenCalledWith(202);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ warning: "Customer creation source reread failed: token=[REDACTED]" }));
+    expect(mocks.alert).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: "Customer creation source reread failed: token=[REDACTED]" }));
+    expect(safeMainCustomerInvoiceWebhookFailure("x".repeat(501))).toHaveLength(500);
+    expect(safeMainCustomerInvoiceWebhookFailure({ secret: "test-secret" })).toBe("Main Customer Invoice processing could not be completed.");
+  });
+
   it.each(["disabled", "not_ready", "held", "reconciliation_required"])("durably alerts the exact deduction %s while keeping Main creation HTTP 200", async status => {
     process.env.FINANCIAL_AP_WEBHOOK_SECRET = "test-secret";
     process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_AUTOMATIC_ENABLED = "true";

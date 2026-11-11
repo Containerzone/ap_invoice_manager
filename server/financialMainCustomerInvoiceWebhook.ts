@@ -28,7 +28,9 @@ const MAIN_CUSTOMER_INVOICE_ERROR_LIMIT = 500;
 export function safeMainCustomerInvoiceWebhookFailure(error: unknown): string {
   let message = error instanceof Error
     ? error.message
-    : "Main Customer Invoice processing could not be completed.";
+    : typeof error === "string"
+      ? error
+      : "Main Customer Invoice processing could not be completed.";
   for (const secret of [
     process.env.FINANCIAL_AP_WEBHOOK_SECRET,
     process.env.FINANCIAL_MAIN_CUSTOMER_INVOICE_WEBHOOK_SECRET,
@@ -189,7 +191,11 @@ export function registerMainCustomerInvoiceWebhook(app: Express): void {
           recordKey: `main-customer-invoice:${recordId}`,
           title: "Main Customer Invoice held",
           errorMessage: warning ?? result.status,
-          details: { dealId: recordId, status: result.status },
+          details: { dealId: recordId, status: result.status,
+            ...("stage" in result ? { stage: result.stage } : {}),
+            ...("customerContactEventId" in result ? { customerContactEventId: result.customerContactEventId } : {}),
+            xeroWritesAttempted: result.xeroWritesAttempted,
+          },
           severity: "error",
         });
       }

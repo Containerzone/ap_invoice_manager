@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   describe: vi.fn(),
   preflight: vi.fn(),
   recordPreview: vi.fn().mockResolvedValue({ id: 51, status: "previewed" }),
-  getEvent: vi.fn(), claim: vi.fn(), bind: vi.fn(), complete: vi.fn(), hold: vi.fn(),
+  getEvent: vi.fn(), claim: vi.fn(), bind: vi.fn(), complete: vi.fn(), hold: vi.fn(), contactHold: vi.fn(),
   policy: vi.fn(), writer: vi.fn(), contactSource: vi.fn(), contactResolution: vi.fn(), contactV2Source: vi.fn(), contactV2Preview: vi.fn(), contactV2Execute: vi.fn(), deduction: vi.fn(),
 }));
 const { retrieve, preflight, recordPreview } = mocks;
@@ -18,6 +18,7 @@ vi.mock("./financialReadOnlyXeroService", () => ({ preflightFinancialXeroIntents
 vi.mock("./financialMainCustomerInvoiceDb", () => ({
   recordMainCustomerInvoicePreview: mocks.recordPreview, getMainCustomerInvoiceEvent: mocks.getEvent, getMainCustomerInvoiceEvents: vi.fn(),
   bindMainCustomerInvoicePayload: mocks.bind, claimMainCustomerInvoicePreview: mocks.claim, completeMainCustomerInvoiceDraft: mocks.complete, holdMainCustomerInvoiceExecution: mocks.hold,
+  recordMainCustomerInvoiceContactHold: mocks.contactHold,
 }));
 vi.mock("./financialProposalIntegrity", () => ({ financialSha256: () => "f".repeat(64), sourceSnapshotHash: () => "a".repeat(64) }));
 vi.mock("./financialMainCustomerInvoiceRelease", () => ({ assertMainCustomerInvoiceRelease: vi.fn(), getMainCustomerInvoiceReleasePolicy: mocks.policy }));
@@ -49,6 +50,7 @@ const readyPreflight = () => [{
 
 beforeEach(() => {
   retrieve.mockReset(); mocks.describe.mockReset(); preflight.mockReset(); recordPreview.mockClear(); mocks.getEvent.mockReset(); mocks.claim.mockReset(); mocks.bind.mockReset(); mocks.complete.mockReset(); mocks.hold.mockReset(); mocks.policy.mockReset(); mocks.writer.mockReset(); mocks.contactSource.mockReset(); mocks.contactResolution.mockReset(); mocks.contactV2Source.mockReset(); mocks.contactV2Preview.mockReset(); mocks.contactV2Execute.mockReset(); vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "");
+  mocks.contactHold.mockReset(); mocks.contactHold.mockResolvedValue(true);
   mocks.deduction.mockReset(); mocks.deduction.mockResolvedValue({ status: "disabled", reason: "independently gated", xeroWritesAttempted: 0 });
   mocks.describe.mockResolvedValue(currentMetadata());
   retrieve.mockImplementation(async (id: string) => {
@@ -242,6 +244,7 @@ describe("Main Customer Invoice current-source evidence", () => {
     const matched = { ...wouldCreate, status: "matched", outcome: "matched_by_name", contactId: "v2-contact", contactName: "Customer Pty Ltd", includeEmailOnCreate: false };
     mocks.contactV2Preview.mockResolvedValueOnce(wouldCreate).mockResolvedValueOnce(wouldCreate).mockResolvedValueOnce(matched);
     mocks.contactV2Execute.mockResolvedValue({ ...matched, status: "created", outcome: "created_contact", contactEventId: 99, contactWritesAttempted: 1 });
+    preflight.mockResolvedValue([{ ...readyPreflight()[0], contactCheck: { found: true, contactId: "v2-contact", count: 1, partyName: "Customer Pty Ltd" } }]);
 
     const preview = await previewMainCustomerInvoice("5x77");
     expect(preview).toMatchObject({ state: "held", noWrites: true, customerContactPlan: { outcome: "would_create_contact" } });
@@ -251,6 +254,47 @@ describe("Main Customer Invoice current-source evidence", () => {
     expect(mocks.contactV2Execute).toHaveBeenCalledTimes(1);
     expect(preflight).toHaveBeenCalledTimes(6);
     expect(mocks.writer.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.contactV2Execute.mock.invocationCallOrder[0]!);
+  });
+
+  it.each(["contactId", "customerSource"])("holds if refreshed %s differs from the customer profile just verified", async mode => {
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const source = await mocks.contactV2Source();
+    const plan = { source, status: "would_create", outcome: "would_create_contact", contactId: null, contactName: source.name, includeEmailOnCreate: true, lookupOrder: ["name", "email"], nameMatchCount: 0, emailMatchCount: 0, holdReason: null };
+    mocks.contactV2Preview.mockResolvedValueOnce(plan).mockResolvedValueOnce({ ...plan, status: "matched", contactId: mode === "contactId" ? "other-contact" : "v2-contact", source: mode === "customerSource" ? { ...source, sourceSnapshotHash: "changed" } : source });
+    mocks.contactV2Execute.mockResolvedValue({ ...plan, status: "created", contactId: "v2-contact", contactEventId: 99, contactWritesAttempted: 1 });
+    preflight.mockResolvedValue([{ ...readyPreflight()[0], contactCheck: { found: true, contactId: mode === "contactId" ? "other-contact" : "v2-contact", count: 1, partyName: source.name } }]);
+
+    const result = await processAutomaticMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ status: "held", stage: "post_contact_invoice_preflight", xeroWritesAttempted: 1, customerContactEventId: 99 });
+    expect(mocks.contactHold).toHaveBeenCalledTimes(1);
+    expect(mocks.claim).not.toHaveBeenCalled();
+    expect(mocks.writer).not.toHaveBeenCalled();
+  });
+
+  it("records the actual zero-write customer-creation hold before the invoice is claimed", async () => {
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const source = await mocks.contactV2Source();
+    const plan = { source, status: "would_create", outcome: "would_create_contact", contactId: null, contactName: source.name, includeEmailOnCreate: true, lookupOrder: ["name", "email"], nameMatchCount: 0, emailMatchCount: 0, holdReason: null };
+    mocks.contactV2Preview.mockResolvedValue(plan);
+    mocks.contactV2Execute.mockResolvedValue({ ...plan, status: "held", holdReason: "Current VTiger customer identity changed after preview; no Xero contact will be created.", contactEventId: null, contactWritesAttempted: 0 });
+
+    const result = await processAutomaticMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ status: "held", stage: "customer_profile_creation", xeroWritesAttempted: 0, warning: expect.stringContaining("identity changed") });
+    expect(mocks.contactHold).toHaveBeenCalledWith({ eventId: 51, sourceSnapshotHash: "a".repeat(64), reason: result.warning });
+    expect(mocks.claim).not.toHaveBeenCalled();
+    expect(mocks.writer).not.toHaveBeenCalled();
+  });
+
+  it("does not create any additional customer while the Main Invoice already has an immutable reservation", async () => {
+    mocks.getEvent.mockResolvedValue({ id: 51, status: "reserved" });
+
+    expect(await processAutomaticMainCustomerInvoice("5x77")).toMatchObject({ status: "held", xeroWritesAttempted: 0, warning: expect.stringContaining("already processing") });
+    expect(mocks.contactV2Execute).not.toHaveBeenCalled();
+    expect(mocks.contactResolution).not.toHaveBeenCalled();
+    expect(mocks.contactHold).not.toHaveBeenCalled();
+    expect(mocks.writer).not.toHaveBeenCalled();
   });
 
   it("does not create a missing contact when the target invoice number is already occupied", async () => {
@@ -264,6 +308,40 @@ describe("Main Customer Invoice current-source evidence", () => {
 
     expect(result).toMatchObject({ status: "held", xeroWritesAttempted: 0, warning: expect.stringContaining("Exact Xero invoice") });
     expect(mocks.contactV2Execute).not.toHaveBeenCalled();
+    expect(mocks.writer).not.toHaveBeenCalled();
+  });
+
+  it("does not let a missing contact mask an inactive account and enter contact creation", async () => {
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const wouldCreate = { source: await mocks.contactV2Source(), status: "would_create", outcome: "would_create_contact", contactId: null, contactName: "Customer Pty Ltd", includeEmailOnCreate: true, lookupOrder: ["name", "email"], nameMatchCount: 0, emailMatchCount: 0, holdReason: null };
+    mocks.contactV2Preview.mockResolvedValue(wouldCreate);
+    preflight.mockResolvedValueOnce(readyPreflight()).mockResolvedValueOnce([{
+      ...readyPreflight()[0],
+      contactCheck: { found: false, contactId: null, count: 0, partyName: "Customer Pty Ltd" },
+      accountChecks: [{ accountCode: "200", active: false }],
+    }]);
+
+    const result = await processAutomaticMainCustomerInvoice("5x77");
+
+    expect(result).toMatchObject({ status: "held", xeroWritesAttempted: 0, warning: expect.stringContaining("sales account") });
+    expect(mocks.contactV2Execute).not.toHaveBeenCalled();
+    expect(mocks.claim).not.toHaveBeenCalled();
+    expect(mocks.writer).not.toHaveBeenCalled();
+  });
+
+  it("does not mistake a failed transport template for a customer-only hold", async () => {
+    vi.stubEnv("FINANCIAL_CUSTOMER_CONTACT_V2_ENABLED", "true");
+    const source = await mocks.contactV2Source();
+    mocks.contactV2Preview.mockResolvedValue({ source, status: "would_create", outcome: "would_create_contact", contactId: null, contactName: source.name, includeEmailOnCreate: true, lookupOrder: ["name", "email"], nameMatchCount: 0, emailMatchCount: 0, holdReason: null });
+    preflight.mockResolvedValue([{
+      ...readyPreflight()[0],
+      contactCheck: { found: false, contactId: null, count: 0, partyName: source.name },
+      itemChecks: [{ ...readyPreflight()[0]!.itemChecks[0], nativeDescription: "Unusable route template" }],
+    }]);
+
+    expect(await processAutomaticMainCustomerInvoice("5x77")).toMatchObject({ status: "held", xeroWritesAttempted: 0, warning: expect.stringContaining("route template") });
+    expect(mocks.contactV2Execute).not.toHaveBeenCalled();
+    expect(mocks.claim).not.toHaveBeenCalled();
     expect(mocks.writer).not.toHaveBeenCalled();
   });
 
@@ -295,10 +373,12 @@ describe("Main Customer Invoice current-source evidence", () => {
       .mockResolvedValueOnce({ id: "14x1", servicename: "Transport - Loaded Container" })
       .mockRejectedValueOnce(new Error("VTiger GET getchallenge failed with ECONNRESET"));
 
-    await expect(processAutomaticMainCustomerInvoice("5x77"))
-      .rejects.toThrow("VTiger GET getchallenge failed with ECONNRESET");
+    const result = await processAutomaticMainCustomerInvoice("5x77");
+    expect(result).toMatchObject({ status: "held", stage: "post_contact_invoice_preflight", customerContactEventId: 99, xeroWritesAttempted: 1,
+      warning: expect.stringContaining("VTiger GET getchallenge failed with ECONNRESET") });
 
     expect(mocks.contactV2Execute).toHaveBeenCalledTimes(1);
+    expect(mocks.claim).not.toHaveBeenCalled();
     expect(mocks.writer).not.toHaveBeenCalled();
   });
 
