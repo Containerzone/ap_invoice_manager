@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   record: vi.fn(),
   schedules: vi.fn(),
   releasePolicy: vi.fn(),
+  opening: vi.fn(),
+  revalidate: vi.fn(),
 }));
 
 vi.mock("./vtigerFinancialReadService", () => ({ retrieveCurrentVtigerFinancialRecord: mocks.retrieve }));
@@ -21,6 +23,8 @@ vi.mock("./financialForHireDb", () => ({
 vi.mock("./financialWorkflowDb", () => ({ getFinancialWorkflowSchedules: mocks.schedules }));
 vi.mock("./financialForHireRelease", () => ({ getForHireReleasePolicy: mocks.releasePolicy }));
 
+vi.mock("./financialForHireManualHandoverService", () => ({ revalidateManualForHireOpeningPoint: mocks.revalidate }));
+vi.mock("./financialForHireManualHandoverDb", () => ({ getManualForHireHandover: mocks.opening }));
 import { previewInitialForHirePo, previewRecurringForHirePo } from "./financialForHireService";
 
 const control = {
@@ -74,6 +78,7 @@ describe("For Hire AP-only previews", () => {
     freezeBusinessDay("2026-10-01");
     useControl(control);
     mocks.list.mockResolvedValue([]);
+    mocks.opening.mockResolvedValue(null);
     mocks.last.mockResolvedValue(null);
     mocks.record.mockResolvedValue({ id: 1 });
   });
@@ -289,4 +294,23 @@ describe("For Hire AP-only previews", () => {
     expect(mocks.preflight).not.toHaveBeenCalled();
     expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ status: "held", proposal: null }));
   });
+});
+
+
+it("manual-opening recurring preview uses approved coverage ahead of an older AP initial and never consults lastVerified", async () => {
+  vi.resetAllMocks(); useControl({ ...control, cf_vtcmcontainercontrols_status: "ON HIRE" });
+  mocks.list.mockResolvedValue([]); mocks.record.mockResolvedValue({ id: 1 });
+  mocks.last.mockRejectedValue(new Error("Older AP anchor must not be chosen"));
+  mocks.revalidate.mockResolvedValue({ row: { id: 9 }, plan: { planHash: "a".repeat(64), coveredThrough: "2026-10-30", manualSuffix: 1, numberingConvention: "legacy_suffix_zero_initial" } });
+  useExtensionRate("HC 20 E", 4.5);
+  const result = await previewRecurringForHirePo(control.id, "2026-10-31", 9);
+  expect(result).toMatchObject({ state: "previewed", preview: { proposedPoNumber: "HC1860-2", periodStart: "2026-10-31", periodEnd: "2026-11-29" } });
+  expect(mocks.last).not.toHaveBeenCalled(); expect(mocks.revalidate).toHaveBeenCalledWith(expect.objectContaining({ recordId: control.id, handoverId: 9 }));
+});
+it.each(["approved", "reserved", "reconciliation_required", "dehired"])("normal preview cannot bypass a %s manual opening even with an AP initial", async status => {
+  vi.resetAllMocks(); useControl({ ...control, cf_vtcmcontainercontrols_status: "ON HIRE" });
+  mocks.opening.mockResolvedValue({ id: 9, status, firstApEventId: null }); mocks.list.mockResolvedValue([]);
+  mocks.last.mockResolvedValue({ periodEnd: "2026-10-30", suffix: null });
+  await expect(previewRecurringForHirePo(control.id, "2026-10-31")).rejects.toThrow(/manual opening point/);
+  expect(mocks.last).not.toHaveBeenCalled(); expect(mocks.preflight).not.toHaveBeenCalled(); expect(mocks.record).not.toHaveBeenCalled();
 });

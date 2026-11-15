@@ -10,7 +10,7 @@ import { manualForHireHandoverRouter } from "./manualForHireHandoverRouter";
 function context(user: Record<string, any> | null = { role: "admin", id: 7, status: "active" }): TrpcContext {
   return { user: user ? { openId: "offline", name: "Offline Accounts", email: "test@example.invalid", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(), ...user } as any : null, req: { headers: {} } as any, res: {} as any };
 }
-const input = () => ({ exactContainerControl: "C1929", manualPoNumber: "HC1929", coveredThrough: "2026-12-13", effectiveFrom: "2026-12-14", confirmedLatestCoverage: true as const, confirmedNoOtherFutureCoverage: true as const });
+const input = () => ({ exactContainerControl: "C1929", manualPoNumber: "HC1929", coveredThrough: "2026-12-13", effectiveFrom: "2026-12-14", confirmedLatestCoverage: true as const, confirmedNoOtherFutureCoverage: true as const, confirmedCoveredThrough: true as const });
 const approval = () => ({ ...input(), expectedPlanHash: "a".repeat(64), manualCreationStopped: true as const, acknowledgement: "FUTURE_ONLY_MANUAL_PO_HANDOVER" as const });
 function noLookupOrApproval() { expect(m.exact).not.toHaveBeenCalled(); expect(m.preview).not.toHaveBeenCalled(); expect(m.approve).not.toHaveBeenCalled(); }
 beforeEach(() => {
@@ -74,6 +74,39 @@ describe("standalone manual hire Accounts-admin router", () => {
     noLookupOrApproval();
     await c.preview({ ...input(), confirmedLatestCoverage: false, confirmedNoOtherFutureCoverage: false }); expect(m.preview).toHaveBeenCalledWith(expect.objectContaining({ confirmedLatestCoverage: false, confirmedNoOtherFutureCoverage: false }));
   });
+  it("accepts the existing legacy first extension HC1920-1 without treating it as an initial receipt", async () => {
+    const c = manualForHireHandoverRouter.createCaller(context());
+    const values = { ...approval(), exactContainerControl: "79x489745", manualPoNumber: "HC1920-1" };
+    await c.preview(values); await c.approve(values);
+    expect(m.approve).toHaveBeenCalledWith(expect.objectContaining({ recordId: "79x489745", manualPoNumber: "HC1920-1", confirmedCoveredThrough: true, reviewedBy: 7 }));
+    expect(m.exact).not.toHaveBeenCalled();
+  });
+  it("requires the separate literal coverage-date attestation before any approval lookup", async () => {
+    const c = manualForHireHandoverRouter.createCaller(context());
+    for (const value of [undefined, false, "true", 1]) await expect(c.approve({ ...approval(), confirmedCoveredThrough: value } as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    noLookupOrApproval();
+  });
+  it("rejects zero, leading-zero, negative, decimal and noncanonical suffixes before source lookup", async () => {
+    const c = manualForHireHandoverRouter.createCaller(context());
+    for (const number of ["HC1920-0", "HC1920-01", "HC1920--1", "HC1920-1.5", "HC01920-1"]) await expect(c.preview({ ...input(), manualPoNumber: number })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    noLookupOrApproval();
+  });
+  it("forwards explicit historical line 0/net139.50 and strips a forged reviewer without substituting future net135", async () => {
+    const c = manualForHireHandoverRouter.createCaller(context());
+    await c.approve({ ...approval(), exactContainerControl: "79x489745", manualPoNumber: "HC1920-1", lumpSumManual: { confirmed: true, lineIndex: 0, amount: 139.5, reviewedBy: 999 } } as any);
+    expect(m.approve).toHaveBeenCalledWith(expect.objectContaining({ reviewedBy: 7, approvedBy: 7, lumpSumManual: { confirmed: true, lineIndex: 0, amount: 139.5 } }));
+    expect(m.approve.mock.calls[0][0].lumpSumManual).not.toHaveProperty("reviewedBy");
+  });
+  it("invalid legacy acknowledgements fail schema before any source lookup or approval", async () => {
+    const c = manualForHireHandoverRouter.createCaller(context());
+    for (const lumpSumManual of [
+      { confirmed: false, lineIndex: 0, amount: 139.5 }, { confirmed: "true", lineIndex: 0, amount: 139.5 },
+      { confirmed: true, lineIndex: -1, amount: 139.5 }, { confirmed: true, lineIndex: 0.5, amount: 139.5 },
+      { confirmed: true, lineIndex: 200, amount: 139.5 }, { confirmed: true, lineIndex: 0, amount: 0 },
+      { confirmed: true, lineIndex: 0, amount: -139.5 }, { confirmed: true, lineIndex: 0, amount: "139.50" },
+    ]) await expect(c.approve({ ...approval(), lumpSumManual } as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    noLookupOrApproval();
+  });
   it("list is bounded and exposes audit summaries rather than stored evidence/tokens, readiness cannot activate billing", async () => {
     const c = manualForHireHandoverRouter.createCaller(context());
     m.list.mockResolvedValue([{ id: 9, containerControlNumber: "C1929", manualPoNumber: "HC1929", coveredThrough: "2026-12-13", nextBillingDate: "2026-12-14", status: "approved", planHash: "a".repeat(64), approvedAt: new Date("2026-11-15"), holdReason: null, processingToken: "secret", evidence: { tenantId: "secret" }, plan: { secret: true } }]);
@@ -89,6 +122,8 @@ describe("standalone manual hire Accounts-admin router", () => {
     const ui = readFileSync(new URL("../client/src/components/ManualForHireHandover.tsx", import.meta.url), "utf8");
     expect(ui).toMatch(/confirmedLatestCoverage:\s*boolean/); expect(ui).toMatch(/confirmedLatestCoverage:\s*false/);
     expect(ui).toMatch(/confirmedNoOtherFutureCoverage:\s*boolean/); expect(ui).toMatch(/confirmedNoOtherFutureCoverage:\s*false/);
+    expect(ui).toMatch(/confirmedCoveredThrough:\s*boolean/); expect(ui).toMatch(/confirmedCoveredThrough:\s*false/);
+    expect(ui).toMatch(/confirmedCoveredThrough:\s*true/);
     expect(ui).toMatch(/expectedPlanHash:\s*plan\.planHash/); expect(ui).toMatch(/manualCreationStopped:\s*true/);
     expect(ui).toMatch(/acknowledgement:\s*"FUTURE_ONLY_MANUAL_PO_HANDOVER"/);
     expect(ui).toMatch(/verified\.revision\s*!==\s*revision\.current/);

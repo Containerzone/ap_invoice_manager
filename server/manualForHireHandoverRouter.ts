@@ -11,11 +11,17 @@ const accountsAdmin = protectedProcedure.use(({ ctx, next }) => {
 });
 const previewInput = z.object({
   exactContainerControl: z.string().trim().regex(/^(?:C\d{1,12}|\d+x\d{1,12})$/i),
-  manualPoNumber: z.string().trim().regex(/^HC\d{1,12}(?:-[2-9]\d*|-1\d+)?$/i),
+  manualPoNumber: z.string().trim().regex(/^HC[1-9]\d{0,11}(?:-[1-9]\d*)?$/i),
   coveredThrough: z.string().trim().min(8).max(10),
   effectiveFrom: z.string().trim().min(8).max(10),
   confirmedLatestCoverage: z.boolean(),
   confirmedNoOtherFutureCoverage: z.boolean(),
+  confirmedCoveredThrough: z.boolean(),
+  lumpSumManual: z.object({
+    confirmed: z.literal(true),
+    lineIndex: z.number().int().min(0).max(199),
+    amount: z.number().finite().positive(),
+  }).optional(),
 });
 async function resolveControl(exactContainerControl: string) {
   if (/^\d+x\d+$/i.test(exactContainerControl)) return exactContainerControl.replace(/X/, "x");
@@ -38,6 +44,7 @@ export const manualForHireHandoverRouter = router({
   approve: accountsAdmin.input(previewInput.extend({
     confirmedLatestCoverage: z.literal(true),
     confirmedNoOtherFutureCoverage: z.literal(true),
+    confirmedCoveredThrough: z.literal(true),
     expectedPlanHash: z.string().regex(/^[a-f0-9]{64}$/),
     manualCreationStopped: z.literal(true),
     acknowledgement: z.literal("FUTURE_ONLY_MANUAL_PO_HANDOVER"),

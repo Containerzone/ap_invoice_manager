@@ -15,8 +15,10 @@ import { preflightFinancialXeroIntents, type FinancialXeroPreflight } from "./fi
 import { financialSha256, rulesSnapshotHash, sourceSnapshotHash } from "./financialProposalIntegrity";
 import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
 import { getFinancialWorkflowSchedules } from "./financialWorkflowDb";
-import { getForHireReleasePolicy } from "./financialForHireRelease";
+import { assertForHireRelease, getForHireReleasePolicy } from "./financialForHireRelease";
 import { revalidateManualForHireOpeningPoint } from "./financialForHireManualHandoverService";
+import { getManualForHireHandover } from "./financialForHireManualHandoverDb";
+import { assertForHireOpeningSuccessorChain } from "./financialForHireMixedAnchor";
 import { FOR_HIRE_RECURRING_CRON, FOR_HIRE_RECURRING_CADENCE, FOR_HIRE_RECURRING_TIMEZONE, FOR_HIRE_RECURRING_CHECK_TIME, isForHireDailySchedule } from "./financialForHireSchedule";
 export { FOR_HIRE_RECURRING_CRON } from "./financialForHireSchedule";
 
@@ -120,6 +122,7 @@ function holdRecord(input: {
   sourceHash: string;
   reason: string;
   preflight?: FinancialXeroPreflight | null;
+  manualOpeningPoint?: { id: number; planHash: string };
 }): Promise<void> {
   const periodStart = input.preview.periodStart ?? safeHoldPeriod(input.facts.collectionDate);
   const periodEnd = input.preview.periodEnd ?? periodStart;
@@ -143,6 +146,7 @@ function holdRecord(input: {
     xeroPreflight: input.preflight ?? null,
     status: normalized(input.facts.status) === "DEHIRED" ? "dehired" : "held",
     holdReason: input.reason,
+    manualOpeningPoint: input.manualOpeningPoint,
   }).then(() => undefined);
 }
 
@@ -158,6 +162,7 @@ export type ForHirePreviewResult = {
   state: ForHirePreviewState;
   holdReason: string | null;
   noWrites: true;
+  manualOpeningPoint?: { id: number; planHash: string };
 };
 
 async function preflightPreview(input: {
@@ -165,11 +170,12 @@ async function preflightPreview(input: {
   facts: ForHireContainerControlFacts;
   sourceHash: string;
   preview: ForHirePoPreview;
+  manualOpeningPoint?: { id: number; planHash: string };
 }): Promise<ForHirePreviewResult> {
   const lifecycle = await getForHireEventsForControl(input.facts.recordId);
   if (!input.preview.eligible || !input.preview.document) {
     const reason = input.preview.holdReason ?? "For Hire PO source eligibility is incomplete.";
-    await holdRecord({ facts: input.facts, kind: input.kind, preview: input.preview, sourceHash: input.sourceHash, reason });
+    await holdRecord({ facts: input.facts, kind: input.kind, preview: input.preview, sourceHash: input.sourceHash, reason, manualOpeningPoint: input.manualOpeningPoint });
     return { kind: input.kind, facts: input.facts, lifecycle, sourceSnapshotHash: input.sourceHash, rulesSnapshotHash: FOR_HIRE_RULES_HASH,
       xeroPreflightHash: null, preview: input.preview, preflight: null, state: normalized(input.facts.status) === "DEHIRED" ? "dehired" : "held", holdReason: reason, noWrites: true };
   }
@@ -177,7 +183,7 @@ async function preflightPreview(input: {
     const [preflight] = await preflightFinancialXeroIntents([input.preview.document]);
     const reason = preflightReason(input.preview.document, preflight ?? null);
     if (reason || !preflight) {
-      await holdRecord({ facts: input.facts, kind: input.kind, preview: input.preview, sourceHash: input.sourceHash, reason: reason ?? "Xero GET-only preflight was not completed.", preflight: preflight ?? null });
+      await holdRecord({ facts: input.facts, kind: input.kind, preview: input.preview, sourceHash: input.sourceHash, reason: reason ?? "Xero GET-only preflight was not completed.", preflight: preflight ?? null, manualOpeningPoint: input.manualOpeningPoint });
       return { kind: input.kind, facts: input.facts, lifecycle, sourceSnapshotHash: input.sourceHash, rulesSnapshotHash: FOR_HIRE_RULES_HASH,
         xeroPreflightHash: preflight ? financialSha256(preflight) : null, preview: input.preview, preflight: preflight ?? null, state: "held", holdReason: reason ?? "Xero GET-only preflight was not completed.", noWrites: true };
     }
@@ -191,12 +197,13 @@ async function preflightPreview(input: {
       sourceRefreshedAt: input.facts.sourceRefreshedAt ? new Date(input.facts.sourceRefreshedAt) : null,
       sourceSnapshotHash: input.sourceHash, rulesSnapshotHash: FOR_HIRE_RULES_HASH, xeroPreflightHash,
       proposal: input.preview.document, xeroPreflight: preflight, status: "previewed", holdReason: null,
+      manualOpeningPoint: input.manualOpeningPoint,
     });
     return { kind: input.kind, facts: input.facts, lifecycle, sourceSnapshotHash: input.sourceHash, rulesSnapshotHash: FOR_HIRE_RULES_HASH,
-      xeroPreflightHash, preview: input.preview, preflight, state: "previewed", holdReason: null, noWrites: true };
+      xeroPreflightHash, preview: input.preview, preflight, state: "previewed", holdReason: null, noWrites: true, manualOpeningPoint: input.manualOpeningPoint };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Xero GET-only preflight could not be completed.";
-    await holdRecord({ facts: input.facts, kind: input.kind, preview: input.preview, sourceHash: input.sourceHash, reason });
+    await holdRecord({ facts: input.facts, kind: input.kind, preview: input.preview, sourceHash: input.sourceHash, reason, manualOpeningPoint: input.manualOpeningPoint });
     return { kind: input.kind, facts: input.facts, lifecycle, sourceSnapshotHash: input.sourceHash, rulesSnapshotHash: FOR_HIRE_RULES_HASH,
       xeroPreflightHash: null, preview: input.preview, preflight: null, state: "held", holdReason: reason, noWrites: true };
   }
@@ -205,6 +212,7 @@ async function preflightPreview(input: {
 /** Administrator-invoked, current-source, GET-only initial Request PO preview. */
 export async function previewInitialForHirePo(recordId: string): Promise<ForHirePreviewResult> {
   const facts = await readForHireContainerControl(recordId);
+  if (await getManualForHireHandover(recordId)) throw new Error("This control has an immutable manual opening point; a new initial AP PO cannot bypass it.");
   const sourceHash = sourceSnapshotHash({ ...facts, rulesVersion: FOR_HIRE_RULES_VERSION });
   return preflightPreview({ kind: "initial", facts, sourceHash, preview: buildInitialForHirePo(facts) });
 }
@@ -213,11 +221,24 @@ export async function previewInitialForHirePo(recordId: string): Promise<ForHire
 export async function previewRecurringForHirePo(recordId: string, now?: string, manualHandoverId?: number): Promise<ForHirePreviewResult> {
   const facts = await readForHireContainerControl(recordId);
   const sourceHash = sourceSnapshotHash({ ...facts, rulesVersion: FOR_HIRE_RULES_VERSION });
-  let prior = await lastVerifiedForHirePeriod(recordId);
+  let prior: { periodEnd: string; suffix: number | null } | null;
+  let numberingConvention: import("./financialForHireNumbering").ForHireNumberingConvention | undefined;
+  let manualOpeningPoint: { id: number; planHash: string } | undefined;
   if (manualHandoverId !== undefined) {
-    if (prior) throw new Error("A verified AP predecessor already exists; manual history cannot replace it.");
-    const { plan } = await revalidateManualForHireOpeningPoint({ recordId, handoverId: manualHandoverId, facts, now });
-    prior = { periodEnd: plan.coveredThrough, suffix: plan.manualSuffix === 1 ? null : plan.manualSuffix };
+    const { row, plan } = await revalidateManualForHireOpeningPoint({ recordId, handoverId: manualHandoverId, facts, now });
+    manualOpeningPoint = { id: row.id, planHash: plan.planHash };
+    prior = { periodEnd: plan.coveredThrough, suffix: plan.manualSuffix };
+    numberingConvention = plan.numberingConvention;
+  } else {
+    const opening = await getManualForHireHandover(recordId);
+    if (opening) {
+      const events = await getForHireEventsForControl(recordId);
+      const latest = events.filter(event => event.status === "drafts_created").sort((a, b) => b.billingPeriodEnd.localeCompare(a.billingPeriodEnd) || b.id - a.id)[0];
+      assertForHireOpeningSuccessorChain(events, opening, latest?.id ?? 0);
+      const suffix = /-(\d+)$/.exec(latest!.proposedPoNumber);
+      prior = { periodEnd: latest!.billingPeriodEnd, suffix: suffix ? Number(suffix[1]) : null };
+      numberingConvention = "legacy_suffix_zero_initial";
+    } else prior = await lastVerifiedForHirePeriod(recordId);
   }
   const rules = resolveFinancialAutomationRules();
   const feet = /\b20\b/.test(facts.containerType) ? 20 : /\b40\b/.test(facts.containerType) ? 40 : null;
@@ -227,7 +248,7 @@ export async function previewRecurringForHirePo(recordId: string, now?: string, 
   // Ask Xero for the current extension item only after the source and an AP
   // previous receipt make a single next period meaningful. No broad source scan.
   if (prior && itemCode) {
-    const stub = buildRecurringForHirePo({ facts, priorPeriodEnd: prior.periodEnd, lastVerifiedExtensionSuffix: prior.suffix, purchaseRate: 1, now });
+    const stub = buildRecurringForHirePo({ facts, priorPeriodEnd: prior.periodEnd, lastVerifiedExtensionSuffix: prior.suffix, numberingConvention, purchaseRate: 1, now });
     if (stub.document) {
       try {
         const [preflight] = await preflightFinancialXeroIntents([stub.document]);
@@ -239,8 +260,53 @@ export async function previewRecurringForHirePo(recordId: string, now?: string, 
       }
     }
   }
-  const preview = buildRecurringForHirePo({ facts, priorPeriodEnd: prior?.periodEnd ?? null, lastVerifiedExtensionSuffix: prior?.suffix ?? null, purchaseRate: rate, itemNativeDescription: nativeDescription, now });
-  return preflightPreview({ kind: "recurring", facts, sourceHash, preview });
+  const preview = buildRecurringForHirePo({ facts, priorPeriodEnd: prior?.periodEnd ?? null, lastVerifiedExtensionSuffix: prior?.suffix ?? null, numberingConvention, purchaseRate: rate, itemNativeDescription: nativeDescription, now });
+  return preflightPreview({ kind: "recurring", facts, sourceHash, preview, manualOpeningPoint });
+}
+
+/** Fresh evidence/body check only: never calls a preview persistence path in transport. */
+export async function verifyCurrentOrdinaryForHireDraft(input: {
+  event: import("../drizzle/schema").FinancialForHirePoEvent;
+  payload: import("./financialProductionWriter").FinancialDraftPayload;
+  priorEventId?: number;
+}): Promise<void> {
+  const event = input.event;
+  const facts = await readForHireContainerControl(event.containerControlId);
+  if (sourceSnapshotHash({ ...facts, rulesVersion: FOR_HIRE_RULES_VERSION }) !== event.sourceSnapshotHash || event.rulesSnapshotHash !== FOR_HIRE_RULES_HASH) {
+    throw new Error("Current For Hire source or rules changed before transport; re-preview without adopting another body.");
+  }
+  let rebuilt: ForHirePoPreview;
+  if (event.eventKind === "initial") {
+    if (await getManualForHireHandover(event.containerControlId)) throw new Error("Initial For Hire write cannot bypass a manual opening point.");
+    rebuilt = buildInitialForHirePo(facts);
+  } else {
+    const events = await getForHireEventsForControl(event.containerControlId);
+    const prior = events.filter(row => row.status === "drafts_created").sort((a, b) => b.billingPeriodEnd.localeCompare(a.billingPeriodEnd) || b.id - a.id)[0];
+    if (!prior || prior.id !== input.priorEventId || prior.processingToken) throw new Error("For Hire current verified predecessor changed before transport.");
+    const opening = await getManualForHireHandover(event.containerControlId);
+    if (opening) assertForHireOpeningSuccessorChain(events, opening, prior.id);
+    const suffix = /-(\d+)$/.exec(prior.proposedPoNumber);
+    const base = { facts, priorPeriodEnd: prior.billingPeriodEnd, lastVerifiedExtensionSuffix: suffix ? Number(suffix[1]) : null,
+      ...(opening ? { numberingConvention: "legacy_suffix_zero_initial" as const } : {}) };
+    const stub = buildRecurringForHirePo({ ...base, purchaseRate: 1 });
+    if (!stub.document) throw new Error(stub.holdReason ?? "Current recurring period cannot be rebuilt.");
+    const [ratePreflight] = await preflightFinancialXeroIntents([stub.document]);
+    const item = ratePreflight?.itemChecks.find(row => row.itemCode === stub.document!.lineItems[0]!.itemCode && row.found);
+    rebuilt = buildRecurringForHirePo({ ...base, purchaseRate: item?.purchaseUnitPrice ?? null, itemNativeDescription: item?.nativeDescription });
+  }
+  if (!rebuilt.document || rebuilt.periodStart !== event.billingPeriodStart || rebuilt.periodEnd !== event.billingPeriodEnd || rebuilt.proposedPoNumber !== event.proposedPoNumber) {
+    throw new Error(rebuilt.holdReason ?? "Current For Hire exact period/number changed before transport.");
+  }
+  const [preflight] = await preflightFinancialXeroIntents([rebuilt.document]);
+  const reason = preflightReason(rebuilt.document, preflight ?? null);
+  if (reason || !preflight || financialSha256(preflight) !== event.xeroPreflightHash) throw new Error(reason ?? "Current For Hire rate/contact/item preflight changed before transport.");
+  applyPreflightContact(rebuilt.document, preflight);
+  const { prepareFinancialDraftPayload } = await import("./financialProductionWriter");
+  const expected = prepareFinancialDraftPayload(rebuilt.document, `${event.containerControlId}:${event.eventKind}:${event.billingPeriodStart}`);
+  (expected.body.PurchaseOrders as Record<string, unknown>[])[0].CurrencyCode = "AUD";
+  if (financialSha256(rebuilt.document) !== financialSha256(event.proposal) || financialSha256(expected) !== financialSha256(input.payload)) {
+    throw new Error("Current For Hire supplier, purchase rate, description or exact Draft body changed before transport.");
+  }
 }
 
 /** Status-only contract for UI; it exposes neither secret nor an activation control. */
@@ -253,7 +319,9 @@ export async function getForHireReadiness() {
   const schedule = schedules.find((item) => item.workflowType === "recurring_for_hire");
   const writerEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true" && policy.initialEnabled;
   const recurringScheduleMatchesCadence = isForHireDailySchedule(schedule);
-  const recurringEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true" && policy.recurringEnabled && policy.recurringOperationsHandoff && recurringScheduleMatchesCadence;
+  let recurringAuthorityReady = false;
+  try { assertForHireRelease(policy, "recurring"); recurringAuthorityReady = true; } catch { /* Default-deny status only. */ }
+  const recurringEnabled = recurringAuthorityReady && recurringScheduleMatchesCadence;
   return {
     module: FOR_HIRE_VTIGER_MODULE,
     futureWebhookPath: FOR_HIRE_FUTURE_WEBHOOK_PATH,
@@ -277,6 +345,7 @@ export async function getForHireReadiness() {
       initialOperationsHandoff: policy.initialOperationsHandoff,
       recurringOperationsHandoff: policy.recurringOperationsHandoff,
       migrationScope: policy.migrationScope,
+      recurringControlIds: policy.recurringControlIds,
     },
     sharedOperationsActionUntouched: true,
     legacyRecurringTask: { uid: "PtaAhkr5tHtixG7E4DTZhC", name: "forHireMonthlyPo", callback: "/api/scheduled/forHireMonthlyPo", cadence: "0 0 0 1 * *" },

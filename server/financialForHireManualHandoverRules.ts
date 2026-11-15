@@ -3,13 +3,27 @@ import type { ForHireContainerControlFacts } from "./financialForHireDrafts";
 import { financialSha256, stableFinancialJson } from "./financialProposalIntegrity";
 
 /** Version changes require a new owner verification; this is not a Draft receipt. */
-export const MANUAL_FOR_HIRE_HANDOVER_RULES_HASH = financialSha256("manual-for-hire-handover/2026-11-15/v1");
+export const MANUAL_FOR_HIRE_HANDOVER_RULES_HASH = financialSha256("manual-for-hire-handover/2026-11-15/v2");
+
+/** Server-reviewed historical lump sum, never a rate or a quantity-derived period. */
+export type ManualForHireLumpSumEvidence = {
+  confirmed: true;
+  reviewedBy: number;
+  /** Zero-based index in the untouched manual PO LineItems. */
+  lineIndex: number;
+  /** Exact positive AUD net amount as supplied on the selected line, not calculated. */
+  amount: number;
+};
 
 /**
  * The caller must freshly verify the vendor/contact mapping. The current Xero
  * API cannot automatically prove scoped history; Accounts must attest coverage
  * unless a genuinely complete scoped source is available. Never turn unknown
- * history/empty results into complete:true. reviewedBy is set by the admin service.
+ * history/empty results into complete:true. All reviewedBy values and explicit
+ * confirmations are populated by the trusted server after reviewer authorization,
+ * never accepted as client-supplied reviewer IDs. This pure module cannot itself
+ * authenticate an actor. Missing native dates additionally require a separately
+ * confirmed coveredThrough, even when complete scoped history is available.
  */
 export type ManualForHireEvidence = {
   manualPo: Record<string, any>;
@@ -21,7 +35,12 @@ export type ManualForHireEvidence = {
     confirmedLatestCoverage: true;
     confirmedNoOtherFutureCoverage: true;
     reviewedBy: number;
+    confirmedCoveredThrough?: true;
+    /** Strict ISO or day-first DD/MM/YY/YYYY; normalized only for comparison. */
+    coveredThrough?: string;
   };
+  /** Required for recognized legacy-code lump sums or recurring HC E quantity 1. */
+  lumpSumManual?: ManualForHireLumpSumEvidence;
 };
 
 export type ManualForHireHandoverPlan = {
@@ -35,12 +54,15 @@ export type ManualForHireHandoverPlan = {
   manualPoId: string;
   manualPoNumber: string;
   manualPoStatus: string;
-  manualPeriodStart: string;
+  /** Unknown for Accounts-attested legacy coverage; never back-calculated. */
+  manualPeriodStart: string | null;
+  coverageSource: "native_description" | "accounts_attested";
+  numberingConvention: "legacy_suffix_zero_initial" | "ap_initial_ordinal_one";
   coveredThrough: string;
   nextPeriodStart: string;
   nextPeriodEnd: string;
   nextPoNumber: string;
-  /** The unsuffixed opening PO is ordinal 1; extensions are 2, 3, ... . */
+  /** Unsuffixed opening PO is suffix 0; extensions are 1, 2, 3, ... . */
   manualSuffix: number;
   nextSuffix: number;
   effectiveFrom: string;
@@ -57,6 +79,7 @@ function requireFact(condition: unknown, message: string): asserts condition {
 const text = (value: unknown): string => typeof value === "string" ? value.trim() : "";
 const normalized = (value: unknown): string => text(value).toUpperCase().replace(/\s+/g, " ");
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const positiveReviewer = (value: unknown): boolean => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
 /**
  * Strict plain business dates only. Slash dates are explicitly day-first, never
@@ -122,11 +145,12 @@ export function manualForHireEvidenceHash(evidence: ManualForHireEvidence): stri
   });
   return financialSha256({ tenantId: evidence.tenantId, supplierContactId: evidence.supplierContactId,
     complete: evidence.complete, coverageAttestation: stableBusinessValue(evidence.coverageAttestation),
+    lumpSumManual: stableBusinessValue(evidence.lumpSumManual),
     manualPo: poBusinessEvidence(evidence.manualPo), relatedPurchaseOrders: related });
 }
 
 function containerFeet(type: string): 20 | 40 {
-  const sizes = new Set(type.match(/\b(?:20|40)\b/g));
+  const sizes = new Set(type.match(/\b(?:20|40)(?!\d)/g));
   requireFact(sizes.size === 1, "A single supported 20-foot or 40-foot container type is required.");
   return sizes.has("20") ? 20 : 40;
 }
@@ -135,15 +159,30 @@ function itemCode(line: Record<string, any>): string {
   return normalized(line.ItemCode).replace(/\s+/g, "");
 }
 
+function legacyHireSize(line: Record<string, any>): 20 | 40 | null {
+  // Purchase-side allowlist only. No approximate match or sales/storage aliases.
+  const code = normalized(line.ItemCode);
+  if (code === "20' HIRE" || code === "HIRE 20HC") return 20;
+  if (code === "40' HIRE" || code === "HIRE 40HC") return 40;
+  return null;
+}
+
 function isHireOrContainerLine(line: Record<string, any>): boolean {
   const code = itemCode(line);
-  if (/^(?:HC|JD|GD|A|C)\d/.test(code)) return true;
+  // Explicit coverage codes cannot be disguised as an optional fee by their text.
+  if (/^(?:HC|JD|GD|A|C)\d/.test(code) || legacyHireSize(line) !== null) return true;
   const description = text(line.Description);
-  if (/\b(?:hire|hiring|rental|rent)\b/i.test(description)) return true;
-  // Optional transport/lift/booking fees are not hire coverage or container sales.
-  if (/\b(?:lift|booking|delivery|transport|freight)\b/i.test(description)
-    && !/\b(?:sale|purchase|storage)\b/i.test(description)) return false;
-  return /\bcontainer\b/i.test(description) || /\b[A-Z]{4}\d{7}\b/i.test(description);
+  const withoutPrepaidDehire = description.replace(/\b(?:pre[\s-]*paid\s+)?de[\s-]*hire\s+(?:fees?|charges?)\b/gi, "");
+  const coverageCode = normalized(line.ItemCode).replace(/\b(?:pre[\s-]*paid\s+)?de[\s-]*hire\s+(?:fees?|charges?)\b/gi, "");
+  const actualCoverage = /\b(?:hire|hiring|rental|rent|sale|sales|purchase|storage)\b/i.test(`${withoutPrepaidDehire} ${coverageCode}`)
+    || /^(?:HIRE|HIRING|RENTAL|RENT|SALE|SALES|STORAGE)\d/.test(code);
+  const feeCode = /^(?:LIFTFEE|BOOKINGFEE|DELIVERYFEE|TRANSPORT|FREIGHT|PREPAIDDEHIRE(?:CHARGES|FEES)|DEHIREFEE|RETURNLIFTFEE)/.test(code.replace(/[^A-Z0-9]/g, ""));
+  const feeDescription = /\b(?:lift|booking|delivery|transport|freight)\b/i.test(description)
+    || /\b(?:pre[\s-]*paid\s+)?de[\s-]*hire\s+(?:fees?|charges?)\b/i.test(description);
+  // Fee container tokens and any dates on fees are not coverage. A mixed actual
+  // rental/sales/storage line is never ignored merely because it mentions a fee.
+  if ((feeCode || feeDescription) && !actualCoverage) return false;
+  return actualCoverage || /\bcontainer\b/i.test(description) || /\b[A-Z]{4}\d{7}\b/i.test(description);
 }
 
 type HirePeriod = { start: Temporal.PlainDate; end: Temporal.PlainDate };
@@ -162,16 +201,31 @@ function hirePeriod(description: unknown): HirePeriod {
   return { start, end };
 }
 
+/** Only a genuinely date-free legacy description may use the fallback. */
+function hasAnyPeriodSignal(description: string): boolean {
+  return /\b(?:from|to|date|duedate|period)\b/i.test(description)
+    || /\b\d{1,4}\s*[/-]\s*\d{1,4}(?:\s*[/-]\s*\d{1,4})?\b/.test(description)
+    || /\b\d{1,4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,4}\b/.test(description)
+    || /\b(?:19|20)\d{2}\b/.test(description)
+    || /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.test(description);
+}
+
 function exactToken(description: string, token: string): boolean {
   return new RegExp(`(?<![A-Za-z0-9])${escapeRegex(token)}(?![A-Za-z0-9])`).test(description);
 }
 
 function suffixFor(number: string, base: string): number | null {
-  if (number === base) return 1;
+  if (number === base) return 0;
   const suffix = new RegExp(`^${escapeRegex(base)}-([1-9]\\d*)$`).exec(number);
   if (!suffix) return null;
   const ordinal = Number(suffix[1]);
-  return Number.isSafeInteger(ordinal) && ordinal >= 2 ? ordinal : null;
+  return Number.isSafeInteger(ordinal) && ordinal >= 1 ? ordinal : null;
+}
+
+function canonicalBase(controlNumber: string): string {
+  const match = /^C([1-9]\d*)$/.exec(controlNumber);
+  requireFact(match && Number.isSafeInteger(Number(match[1])) && String(Number(match[1])) === match[1], "Container Control number must be canonical C<positive safe-integer digits>, without zero or leading zeros.");
+  return `H${controlNumber}`;
 }
 
 function hasErrors(row: Record<string, any>): boolean {
@@ -181,6 +235,30 @@ function hasErrors(row: Record<string, any>): boolean {
 
 function periodsOverlap(a: HirePeriod, b: HirePeriod): boolean {
   return Temporal.PlainDate.compare(a.start, b.end) <= 0 && Temporal.PlainDate.compare(b.start, a.end) <= 0;
+}
+
+function numericQuantity(line: Record<string, any>): number | null {
+  if (typeof line.Quantity === "number" && Number.isFinite(line.Quantity)) return line.Quantity;
+  if (typeof line.Quantity === "string" && /^(?:1|30)$/.test(line.Quantity)) return Number(line.Quantity);
+  return null;
+}
+
+function verifyLumpSum(evidence: ManualForHireEvidence, line: Record<string, any>, lineIndex: number): void {
+  const lump = evidence.lumpSumManual;
+  requireFact(lump?.confirmed === true && positiveReviewer(lump.reviewedBy)
+    && lump.reviewedBy === evidence.coverageAttestation?.reviewedBy,
+  "A confirmed lumpSumManual with the same positive trusted Accounts reviewer is required.");
+  requireFact(Number.isSafeInteger(lump.lineIndex) && lump.lineIndex >= 0 && lump.lineIndex === lineIndex,
+    "lumpSumManual must explicitly identify the exact selected hire line index.");
+  requireFact(typeof lump.amount === "number" && Number.isFinite(lump.amount) && lump.amount > 0,
+    "lumpSumManual must explicitly state a positive finite historical net amount.");
+  requireFact(evidence.manualPo.LineAmountTypes === "Exclusive", "Legacy lump-sum net amount requires explicit Exclusive line amounts; tax is not inferred.");
+  // Quantity is already exactly 1. Compare a supplied amount; never multiply,
+  // derive a daily rate, assume a 30-day term or alter the historical line.
+  const amount = line.LineAmount === undefined ? line.UnitAmount : line.LineAmount;
+  requireFact((typeof amount === "number" && Number.isFinite(amount))
+    || (typeof amount === "string" && /^\d+(?:\.\d+)?$/.test(amount)), "The selected lump-sum line must supply its explicit net amount.");
+  requireFact(Number(amount) === lump.amount, "lumpSumManual amount must exactly match the selected line's supplied net amount.");
 }
 
 /**
@@ -207,16 +285,15 @@ export function buildManualForHireHandoverPlan(input: {
   const size = containerFeet(text(facts.containerType));
   const attestation = evidence?.coverageAttestation;
   const attested = attestation?.confirmedLatestCoverage === true
-    && attestation.confirmedNoOtherFutureCoverage === true
-    && Number.isSafeInteger(attestation.reviewedBy) && attestation.reviewedBy > 0;
+    && attestation.confirmedNoOtherFutureCoverage === true && positiveReviewer(attestation.reviewedBy);
   requireFact(evidence && (evidence.complete === true || attested),
     "Complete current scoped-series evidence or explicit Accounts latest/no-future-coverage attestation with a positive reviewer is required.");
   requireFact(text(evidence.tenantId) && text(evidence.supplierContactId), "An exact tenant and expected supplier ContactID are required.");
   requireFact(evidence.manualPo && typeof evidence.manualPo === "object" && !Array.isArray(evidence.manualPo)
     && Array.isArray(evidence.relatedPurchaseOrders), "Manual PO and complete related PO records are required.");
-  const base = `H${text(facts.controlNumber)}`;
+  const base = canonicalBase(facts.controlNumber);
   const manualSuffix = typeof input.manualPoNumber === "string" ? suffixFor(input.manualPoNumber, base) : null;
-  requireFact(manualSuffix !== null && Number.isSafeInteger(manualSuffix + 1), "Manual PO number must be the exact canonical H<ControlNumber> or -N (N >= 2), with a safe next suffix.");
+  requireFact(manualSuffix !== null && Number.isSafeInteger(manualSuffix + 1), "Manual PO number must be the exact canonical H<ControlNumber> or -N (N >= 1), with a safe next suffix.");
   const manual = evidence.manualPo;
   requireFact(text(manual.PurchaseOrderID), "Exact manual PurchaseOrderID is required.");
   requireFact(manual.PurchaseOrderNumber === input.manualPoNumber, "Exact manual PurchaseOrderNumber must match the selected canonical Container Control number.");
@@ -230,28 +307,62 @@ export function buildManualForHireHandoverPlan(input: {
   const hireLines = manual.LineItems.filter(isHireOrContainerLine);
   requireFact(hireLines.length === 1, "Exactly one hire line and no other hire/container lines are allowed.");
   const line = hireLines[0] as Record<string, any>;
-  const recurring = manualSuffix >= 2;
-  requireFact(itemCode(line) === `HC${size}${recurring ? "E" : ""}`, "Hire item must match the exact container size and initial/recurring suffix.");
-  requireFact((typeof line.Quantity === "number" || typeof line.Quantity === "string")
-    && Number(line.Quantity) === (recurring ? 30 : 1), "Initial hire quantity must be 1; recurring hire quantity must be 30.");
+  const lineIndex = manual.LineItems.indexOf(line);
   requireFact(line.AccountCode === "312" && line.TaxType === "INPUT", "Hire line must use account 312 and INPUT GST.");
-  const period = hirePeriod(line.Description);
+  requireFact(typeof line.Description === "string" && text(line.Description), "The hire line must have a native period description or an explicit date-free legacy description.");
   const description = text(line.Description);
-  const oppositeSize = size === 20 ? 40 : 20;
-  requireFact(!new RegExp(`\\b${oppositeSize}\\s*(?:['′’]|ft\\b|foot\\b|feet\\b)`, "i").test(description), "Hire description has a mismatched container size.");
-  if (recurring) {
-    requireFact(exactToken(description, text(facts.containerNumber)), "Recurring description must contain the exact current container token.");
-    requireFact(exactToken(description, text(facts.containerType)), "Recurring description must contain the exact current container type.");
+  const recurring = manualSuffix >= 1;
+  const nativeCode = itemCode(line) === `HC${size}${recurring ? "E" : ""}`;
+  const legacyCode = legacyHireSize(line);
+  const period = hasAnyPeriodSignal(description) ? hirePeriod(description) : null;
+  const coveredThrough = normalizeHandoverDate(input.coveredThrough);
+  // An explicit confirmation is not allowed to contradict native dates either.
+  if (attestation?.confirmedCoveredThrough !== undefined || attestation?.coveredThrough !== undefined) {
+    requireFact(attested && attestation.confirmedCoveredThrough === true && typeof attestation.coveredThrough === "string",
+      "Explicit Accounts coveredThrough requires confirmation, both coverage flags and a positive trusted reviewer.");
+    requireFact(normalizeHandoverDate(attestation.coveredThrough) === coveredThrough,
+      "Accounts-attested coveredThrough must exactly match owner-entered coveredThrough.");
   }
+  const oppositeSize = size === 20 ? 40 : 20;
+  requireFact(!new RegExp(`\\b${oppositeSize}\\s*(?:['′’]|ft\\b|foot\\b|feet\\b|HC\\b|GP\\b|DC\\b|standard\\b|high\\b)`, "i").test(description), "Hire description has a mismatched container size.");
   const describedContainers = description.match(/\b[A-Z]{4}\d{7}\b/gi) ?? [];
   requireFact(describedContainers.every((token) => token === text(facts.containerNumber)), "Hire description contains a different or additional container.");
-  requireFact(period.end.equals(period.start.add({ days: recurring ? 29 : 30 })), "Manual hire period must end exactly start +30 days initially or +29 days recurring.");
-  const coveredThrough = normalizeHandoverDate(input.coveredThrough);
-  requireFact(period.end.toString() === coveredThrough, "Owner-entered coveredThrough must exactly match the native hire-line end date.");
+  let coverageSource: ManualForHireHandoverPlan["coverageSource"];
+  if (period) {
+    coverageSource = "native_description";
+    requireFact(nativeCode, "Hire item must match the exact container size and initial/recurring suffix.");
+    requireFact(numericQuantity(line) === (recurring ? 30 : 1), "Initial hire quantity must be 1; recurring hire quantity must be 30.");
+    if (recurring) {
+      requireFact(exactToken(description, text(facts.containerNumber)), "Recurring description must contain the exact current container token.");
+      requireFact(exactToken(description, text(facts.containerType)), "Recurring description must contain the exact current container type.");
+    }
+    requireFact(period.end.equals(period.start.add({ days: recurring ? 29 : 30 })), "Manual hire period must end exactly start +30 days initially or +29 days recurring.");
+    requireFact(period.end.toString() === coveredThrough, "Owner-entered coveredThrough must exactly match the native hire-line end date.");
+  } else {
+    coverageSource = "accounts_attested";
+    requireFact(attested && attestation?.confirmedCoveredThrough === true && typeof attestation.coveredThrough === "string",
+      "Missing native period dates require explicit Accounts confirmedCoveredThrough, matching coveredThrough, both coverage flags and a positive trusted reviewer.");
+    requireFact(nativeCode || legacyCode === size, "Date-free legacy hire item must be an exact native HC item or recognized purchase-side legacy hire code of the same size.");
+    requireFact(exactToken(description, text(facts.containerNumber)), "Legacy description must contain the exact current container token.");
+    // The actual historical descriptor may differ from the current VTiger
+    // subtype. Preserve both source identity and exact Xero text in the hashes;
+    // Accounts/UI must review that difference, never rewrite either record.
+    const quantity = numericQuantity(line);
+    if (!nativeCode || (recurring && quantity === 1)) {
+      requireFact(quantity === 1, "Legacy lump-sum manual hire quantity must be exactly 1; a duration is not inferred.");
+      verifyLumpSum(evidence, line, lineIndex);
+    } else {
+      requireFact(quantity === (recurring ? 30 : 1), "Initial hire quantity must be 1; recurring hire quantity must be 30.");
+      if (recurring) {
+        requireFact(exactToken(description, text(facts.containerType)), "Recurring description must contain the exact current container type.");
+      }
+    }
+  }
   const effectiveFrom = normalizeHandoverDate(input.effectiveFrom);
   const now = normalizeHandoverDate(input.now);
   requireFact(Temporal.PlainDate.compare(effectiveFrom, now) >= 0, "effectiveFrom must not be historical; no catch-up is allowed.");
-  const nextStart = period.end.add({ days: 1 });
+  const coveredEnd = Temporal.PlainDate.from(coveredThrough);
+  const nextStart = coveredEnd.add({ days: 1 });
   const nextEnd = nextStart.add({ days: 29 });
   requireFact(Temporal.PlainDate.compare(nextStart, effectiveFrom) >= 0 && Temporal.PlainDate.compare(nextStart, now) >= 0,
     "The next consecutive period must be on/after effectiveFrom and now; no catch-up, skipped periods or rolling forward.");
@@ -282,9 +393,13 @@ export function buildManualForHireHandoverPlan(input: {
     for (const otherLine of related.LineItems) {
       requireFact(otherLine && typeof otherLine === "object" && !Array.isArray(otherLine), "Malformed scoped PO line evidence.");
       if (!isHireOrContainerLine(otherLine)) continue;
+      // No fallback for a different selected ID. An attestation for the selected
+      // manual PO cannot establish the dates of other legacy coverage.
       const otherPeriod = hirePeriod(otherLine.Description);
-      requireFact(!periodsOverlap(otherPeriod, period) && !periodsOverlap(otherPeriod, nextPeriod),
-        "Another active PO hire period overlaps the manual/next period or extends manual coverage beyond coveredThrough.");
+      requireFact(period !== null, "Unknown manual period start cannot safely exclude overlaps with another active hire period.");
+      requireFact(!periodsOverlap(otherPeriod, period) && !periodsOverlap(otherPeriod, nextPeriod)
+        && Temporal.PlainDate.compare(otherPeriod.end, coveredEnd) <= 0,
+      "Another active PO hire period overlaps the manual/next period or extends manual coverage beyond coveredThrough.");
     }
   }
   const plan: Omit<ManualForHireHandoverPlan, "planHash"> = {
@@ -293,8 +408,9 @@ export function buildManualForHireHandoverPlan(input: {
     supplierVtigerId: text(facts.supplierVtigerId), supplierName: text(facts.supplierName),
     supplierContactId: evidence.supplierContactId, manualPoId: manual.PurchaseOrderID,
     manualPoNumber: input.manualPoNumber, manualPoStatus: manual.Status,
-    manualPeriodStart: period.start.toString(), coveredThrough, nextPeriodStart: nextStart.toString(),
-    nextPeriodEnd: nextEnd.toString(), nextPoNumber, manualSuffix, nextSuffix, effectiveFrom,
+    manualPeriodStart: period?.start.toString() ?? null, coverageSource, numberingConvention: "legacy_suffix_zero_initial",
+    coveredThrough, nextPeriodStart: nextStart.toString(), nextPeriodEnd: nextEnd.toString(),
+    nextPoNumber, manualSuffix, nextSuffix, effectiveFrom,
     sourceIdentityHash: manualForHireSourceIdentityHash(facts), xeroEvidenceHash: manualForHireEvidenceHash(evidence),
     rulesHash: MANUAL_FOR_HIRE_HANDOVER_RULES_HASH,
   };

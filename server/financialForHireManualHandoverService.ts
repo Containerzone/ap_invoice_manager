@@ -3,34 +3,39 @@ import { readForHireContainerControl } from "./financialForHireService";
 import { getForHireEventsForControl } from "./financialForHireDb";
 import { readManualForHireHandoverXeroEvidence, preflightFinancialXeroIntents } from "./financialReadOnlyXeroService";
 import { buildRecurringForHirePo, type ForHireContainerControlFacts } from "./financialForHireDrafts";
-import { buildManualForHireHandoverPlan, manualForHireSourceIdentityHash, manualForHireEvidenceHash, MANUAL_FOR_HIRE_HANDOVER_RULES_HASH, type ManualForHireHandoverPlan } from "./financialForHireManualHandoverRules";
+import { buildManualForHireHandoverPlan, normalizeHandoverDate, manualForHireSourceIdentityHash, manualForHireEvidenceHash, MANUAL_FOR_HIRE_HANDOVER_RULES_HASH, type ManualForHireHandoverPlan, type ManualForHireEvidence } from "./financialForHireManualHandoverRules";
 import { financialSha256 } from "./financialProposalIntegrity";
 import { isManualForHireHandoverEnabled, getManualForHireHandover, approveManualForHireHandover } from "./financialForHireManualHandoverDb";
 import type { FinancialDraftPayload } from "./financialProductionWriter";
+import { latestForHireApAnchor, bindManualForHireMixedHistory, assertManualForHireApHistory, type MixedManualForHireHandoverPlan } from "./financialForHireMixedAnchor";
+export type { MixedManualForHireHandoverPlan, PriorForHireApAnchor } from "./financialForHireMixedAnchor";
 
-export type ManualForHirePreviewInput = { recordId: string; manualPoNumber: string; coveredThrough: string; effectiveFrom: string; confirmedLatestCoverage: boolean; confirmedNoOtherFutureCoverage: boolean; reviewedBy: number; expectedControlNumber?: string };
+export type ManualForHirePreviewInput = { recordId: string; manualPoNumber: string; coveredThrough: string; effectiveFrom: string; confirmedCoveredThrough?: boolean; confirmedLatestCoverage: boolean; confirmedNoOtherFutureCoverage: boolean; reviewedBy: number; expectedControlNumber?: string; lumpSumManual?: { confirmed: true; lineIndex: number; amount: number } };
 const today = () => Temporal.Now.zonedDateTimeISO("Australia/Sydney").toPlainDate().toString();
 const safeError = (error: unknown) => error instanceof Error ? error.message : "Manual hire coverage could not be verified; no financial write occurred.";
 
-async function assertNoCompetingApReceipt(recordId: string, allowedEventId?: number | null) {
-  const events = await getForHireEventsForControl(recordId);
-  if (events.some(event => ["reserved", "drafts_created", "reconciliation_required"].includes(event.status) && event.id !== allowedEventId)) {
-    throw new Error("An AP-created, claimed or uncertain hire receipt already exists. Use its verified lifecycle or reconcile it; do not replace it with manual history.");
-  }
-}
 async function collectManualForHirePlan(input: ManualForHirePreviewInput, now = today()) {
   const facts = await readForHireContainerControl(input.recordId);
   if (input.expectedControlNumber && facts.controlNumber !== input.expectedControlNumber) throw new Error("Current Container Control number changed after the exact lookup; no handover was saved.");
-  await assertNoCompetingApReceipt(input.recordId);
+  const events = await getForHireEventsForControl(input.recordId);
+  const anchor = latestForHireApAnchor(events);
   const existing = await getManualForHireHandover(input.recordId);
   if (existing) throw new Error("This Container Control already has an immutable manual hire handover. It cannot be overwritten or re-enrolled.");
   const rawEvidence = await readManualForHireHandoverXeroEvidence({ manualPoNumber: input.manualPoNumber.trim().toUpperCase(), controlNumber: facts.controlNumber, supplierName: facts.supplierName });
-  const evidence = { ...rawEvidence, coverageAttestation: input.confirmedLatestCoverage === true && input.confirmedNoOtherFutureCoverage === true && Number.isSafeInteger(input.reviewedBy) && input.reviewedBy > 0 ? { confirmedLatestCoverage: input.confirmedLatestCoverage, confirmedNoOtherFutureCoverage: input.confirmedNoOtherFutureCoverage, reviewedBy: input.reviewedBy } : undefined };
-  const plan = buildManualForHireHandoverPlan({ facts, evidence, manualPoNumber: input.manualPoNumber, coveredThrough: input.coveredThrough, effectiveFrom: input.effectiveFrom, now });
+  const coveredThrough = normalizeHandoverDate(input.coveredThrough);
+  const evidence: ManualForHireEvidence = { ...rawEvidence, coverageAttestation: input.confirmedLatestCoverage === true && input.confirmedNoOtherFutureCoverage === true && Number.isSafeInteger(input.reviewedBy) && input.reviewedBy > 0 ? { confirmedLatestCoverage: input.confirmedLatestCoverage, confirmedNoOtherFutureCoverage: input.confirmedNoOtherFutureCoverage, reviewedBy: input.reviewedBy, ...(input.confirmedCoveredThrough === true ? { confirmedCoveredThrough: true as const, coveredThrough } : {}) } : undefined };
+  // Never retain an API/caller-supplied reviewer or automatically infer that a
+  // quantity-1 line has approved lump-sum coverage. Rules compare the exact
+  // positive supplied amount/index to the untouched PO and hash that evidence.
+  evidence.lumpSumManual = input.confirmedCoveredThrough === true && evidence.coverageAttestation && input.lumpSumManual?.confirmed === true
+    ? { confirmed: true, reviewedBy: input.reviewedBy, lineIndex: input.lumpSumManual.lineIndex, amount: input.lumpSumManual.amount } : undefined;
+  const basePlan = buildManualForHireHandoverPlan({ facts, evidence, manualPoNumber: input.manualPoNumber, coveredThrough, effectiveFrom: input.effectiveFrom, now });
+  const plan = bindManualForHireMixedHistory(basePlan, anchor, evidence.manualPo.Contact);
+  assertManualForHireApHistory(events, plan);
   return { facts, evidence, plan };
 }
 async function indicativeNextProposal(facts: ForHireContainerControlFacts, plan: ManualForHireHandoverPlan) {
-  const stub = buildRecurringForHirePo({ facts, priorPeriodEnd: plan.coveredThrough, lastVerifiedExtensionSuffix: plan.manualSuffix === 1 ? null : plan.manualSuffix, purchaseRate: 1, now: plan.nextPeriodStart });
+  const stub = buildRecurringForHirePo({ facts, priorPeriodEnd: plan.coveredThrough, lastVerifiedExtensionSuffix: plan.manualSuffix, numberingConvention: plan.numberingConvention, purchaseRate: 1, now: plan.nextPeriodStart });
   if (!stub.document) throw new Error(stub.holdReason ?? "Manual handover cannot form the next consecutive 30-day period.");
   const [preflight] = await preflightFinancialXeroIntents([stub.document]);
   const code = stub.document.lineItems[0]!.itemCode;
@@ -38,7 +43,7 @@ async function indicativeNextProposal(facts: ForHireContainerControlFacts, plan:
   if (preflight?.duplicateState !== "not_found" || !preflight.contactCheck.found || preflight.contactCheck.contactId !== plan.supplierContactId || !item || !Number.isFinite(item.purchaseUnitPrice) || Number(item.purchaseUnitPrice) <= 0) {
     throw new Error("Next manual-handover PO number, exact supplier or current purchase-side daily rate is not clear. No collision bypass is allowed.");
   }
-  const built = buildRecurringForHirePo({ facts, priorPeriodEnd: plan.coveredThrough, lastVerifiedExtensionSuffix: plan.manualSuffix === 1 ? null : plan.manualSuffix, purchaseRate: item.purchaseUnitPrice, itemNativeDescription: item.nativeDescription, now: plan.nextPeriodStart });
+  const built = buildRecurringForHirePo({ facts, priorPeriodEnd: plan.coveredThrough, lastVerifiedExtensionSuffix: plan.manualSuffix, numberingConvention: plan.numberingConvention, purchaseRate: item.purchaseUnitPrice, itemNativeDescription: item.nativeDescription, now: plan.nextPeriodStart });
   if (!built.document || built.proposedPoNumber !== plan.nextPoNumber || built.periodStart !== plan.nextPeriodStart || built.periodEnd !== plan.nextPeriodEnd) throw new Error("Manual hire next-period proposal does not match the verified opening point.");
   built.document.partySourceId = plan.supplierContactId;
   return built.document;
@@ -72,20 +77,20 @@ export async function revalidateManualForHireOpeningPoint(input: { recordId: str
   if (reserved ? row.status !== "reserved" || row.firstApEventId !== input.allowReservedEventId || row.processingToken !== input.token : row.status !== "approved" || row.processingToken || row.firstApEventId) {
     throw new Error("Manual hire opening point is claimed, completed, dehired or awaiting reconciliation; it cannot be replayed.");
   }
-  const plan = row.plan as ManualForHireHandoverPlan;
+  const plan = row.plan as MixedManualForHireHandoverPlan;
   const { planHash: _planHash, ...unsignedPlan } = plan;
   if (plan.planHash !== row.planHash || financialSha256(unsignedPlan) !== row.planHash || plan.rulesHash !== MANUAL_FOR_HIRE_HANDOVER_RULES_HASH || plan.manualPoId !== row.manualPoId || plan.manualPoNumber !== row.manualPoNumber || plan.coveredThrough !== row.coveredThrough || (row.status === "approved" && row.nextBillingDate !== plan.nextPeriodStart)) throw new Error("Manual hire opening point integrity verification failed.");
   const facts = input.facts ?? await readForHireContainerControl(input.recordId);
   if (facts.acquisition.trim().toUpperCase() !== "FOR HIRE" || !["ON HIRE", "IDLE"].includes(facts.status.trim().toUpperCase()) || manualForHireSourceIdentityHash(facts) !== plan.sourceIdentityHash) throw new Error("Current container, acquisition or assigned supplier differs from the approved opening point.");
-  await assertNoCompetingApReceipt(input.recordId, input.allowReservedEventId);
+  assertManualForHireApHistory(await getForHireEventsForControl(input.recordId), plan, reserved ? { eventId: input.allowReservedEventId!, token: input.token! } : undefined);
   const now = input.now ?? today();
   if (now < plan.effectiveFrom || now > plan.nextPeriodEnd) throw new Error("Manual hire handover is not effective or its first period has expired. No historical catch-up is permitted.");
   const rawEvidence = await readManualForHireHandoverXeroEvidence({ manualPoNumber: plan.manualPoNumber, controlNumber: facts.controlNumber, supplierName: facts.supplierName });
-  const evidence = { ...rawEvidence, coverageAttestation: (row.evidence as any)?.coverageAttestation };
+  const evidence: ManualForHireEvidence = { ...rawEvidence, coverageAttestation: (row.evidence as any)?.coverageAttestation, lumpSumManual: (row.evidence as any)?.lumpSumManual };
   if (evidence.supplierContactId !== plan.supplierContactId || manualForHireEvidenceHash(evidence) !== plan.xeroEvidenceHash) throw new Error("Manual PO coverage, current Xero supplier or retained Accounts confirmation changed after approval; hold for reconciliation.");
   // Rebuild at the approved date to prove business evidence, without interpreting
   // a delayed due callback as authorisation to create older catch-up periods.
-  const rebuilt = buildManualForHireHandoverPlan({ facts, evidence, manualPoNumber: plan.manualPoNumber, coveredThrough: plan.coveredThrough, effectiveFrom: plan.effectiveFrom, now: plan.effectiveFrom });
+  const rebuilt = bindManualForHireMixedHistory(buildManualForHireHandoverPlan({ facts, evidence, manualPoNumber: plan.manualPoNumber, coveredThrough: plan.coveredThrough, effectiveFrom: plan.effectiveFrom, now: plan.effectiveFrom }), plan.priorApAnchor, evidence.manualPo.Contact);
   if (rebuilt.planHash !== plan.planHash) throw new Error("Manual opening point no longer reconstructs the exact approved plan.");
   return { row, plan, facts };
 }

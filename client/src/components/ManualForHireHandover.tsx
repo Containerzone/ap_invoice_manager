@@ -25,6 +25,10 @@ type HandoverInput = {
   effectiveFrom: string;
   confirmedLatestCoverage: boolean;
   confirmedNoOtherFutureCoverage: boolean;
+  confirmedCoveredThrough: boolean;
+  legacyRentalLineNumber: string;
+  legacyRentalNetAmount: string;
+  confirmedLegacyRental: boolean;
 };
 
 const emptyInput: HandoverInput = {
@@ -34,9 +38,13 @@ const emptyInput: HandoverInput = {
   effectiveFrom: "",
   confirmedLatestCoverage: false,
   confirmedNoOtherFutureCoverage: false,
+  confirmedCoveredThrough: false,
+  legacyRentalLineNumber: "",
+  legacyRentalNetAmount: "",
+  confirmedLegacyRental: false,
 };
 
-// Bind all four exact field values and the Accounts attestation. The revision
+// Bind every exact field value and Accounts attestation. The revision
 // also rejects an old response when a user changes a value and changes it back.
 const inputKey = (input: HandoverInput) =>
   JSON.stringify([
@@ -46,7 +54,40 @@ const inputKey = (input: HandoverInput) =>
     input.effectiveFrom,
     input.confirmedLatestCoverage,
     input.confirmedNoOtherFutureCoverage,
+    input.confirmedCoveredThrough,
+    input.legacyRentalLineNumber,
+    input.legacyRentalNetAmount,
+    input.confirmedLegacyRental,
   ]);
+const legacyRentalAcknowledgement = (
+  input: HandoverInput
+): { confirmed: true; lineIndex: number; amount: number } | undefined => {
+  if (!input.confirmedLegacyRental) return undefined;
+  const lineNumber = Number(input.legacyRentalLineNumber);
+  const amount = Number(input.legacyRentalNetAmount);
+  if (
+    !Number.isInteger(lineNumber) ||
+    lineNumber < 1 ||
+    lineNumber > 200 ||
+    !Number.isFinite(amount) ||
+    amount <= 0
+  )
+    return undefined;
+  return { confirmed: true, lineIndex: lineNumber - 1, amount };
+};
+const toRequest = (input: HandoverInput) => {
+  const lumpSumManual = legacyRentalAcknowledgement(input);
+  return {
+    exactContainerControl: input.exactContainerControl,
+    manualPoNumber: input.manualPoNumber,
+    coveredThrough: input.coveredThrough,
+    effectiveFrom: input.effectiveFrom,
+    confirmedLatestCoverage: input.confirmedLatestCoverage,
+    confirmedNoOtherFutureCoverage: input.confirmedNoOtherFutureCoverage,
+    confirmedCoveredThrough: input.confirmedCoveredThrough,
+    ...(lumpSumManual ? { lumpSumManual } : {}),
+  };
+};
 const money = (value: number) =>
   new Intl.NumberFormat("en-AU", {
     style: "currency",
@@ -81,6 +122,9 @@ export function ManualForHireHandover() {
       ? verified.data
       : null;
   const plan = result?.plan;
+  const lumpSumManual = legacyRentalAcknowledgement(input);
+  const hasValidLegacyInputs =
+    !input.confirmedLegacyRental || Boolean(lumpSumManual);
   const enrollmentEnabled =
     readiness.data?.implementationReady === true &&
     readiness.data.enrollmentEnabled === true &&
@@ -94,6 +138,8 @@ export function ManualForHireHandover() {
       plan?.planHash &&
       input.confirmedLatestCoverage &&
       input.confirmedNoOtherFutureCoverage &&
+      input.confirmedCoveredThrough &&
+      hasValidLegacyInputs &&
       manualCreationStopped &&
       !checking &&
       !approve.isPending &&
@@ -114,10 +160,14 @@ export function ManualForHireHandover() {
     const next = { ...currentInput.current, [field]: value };
     if (
       field !== "confirmedLatestCoverage" &&
-      field !== "confirmedNoOtherFutureCoverage"
+      field !== "confirmedNoOtherFutureCoverage" &&
+      field !== "confirmedCoveredThrough" &&
+      field !== "confirmedLegacyRental"
     ) {
       next.confirmedLatestCoverage = false;
       next.confirmedNoOtherFutureCoverage = false;
+      next.confirmedCoveredThrough = false;
+      next.confirmedLegacyRental = false;
     }
     currentInput.current = next;
     revision.current += 1;
@@ -135,8 +185,14 @@ export function ManualForHireHandover() {
 
   async function previewHandover(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!hasInputs || checking || approve.isPending) return;
+    if (!hasInputs || !hasValidLegacyInputs || checking || approve.isPending)
+      return;
     const submitted = { ...currentInput.current };
+    if (
+      submitted.confirmedLegacyRental &&
+      !legacyRentalAcknowledgement(submitted)
+    )
+      return;
     const submittedKey = inputKey(submitted);
     const submittedRevision = ++revision.current;
     setVerified(null);
@@ -152,7 +208,7 @@ export function ManualForHireHandover() {
       revision.current === submittedRevision &&
       inputKey(currentInput.current) === submittedKey;
     try {
-      const data = await preview.mutateAsync(submitted);
+      const data = await preview.mutateAsync(toRequest(submitted));
       if (isCurrent())
         setVerified({ key: submittedKey, revision: submittedRevision, data });
     } catch (error) {
@@ -177,6 +233,9 @@ export function ManualForHireHandover() {
       !plan ||
       !currentInput.current.confirmedLatestCoverage ||
       !currentInput.current.confirmedNoOtherFutureCoverage ||
+      !currentInput.current.confirmedCoveredThrough ||
+      (currentInput.current.confirmedLegacyRental &&
+        !legacyRentalAcknowledgement(currentInput.current)) ||
       verified.revision !== revision.current ||
       verified.key !== inputKey(currentInput.current)
     )
@@ -185,9 +244,10 @@ export function ManualForHireHandover() {
     setApprovalError(null);
     try {
       await approve.mutateAsync({
-        ...currentInput.current,
+        ...toRequest(currentInput.current),
         confirmedLatestCoverage: true,
         confirmedNoOtherFutureCoverage: true,
+        confirmedCoveredThrough: true,
         expectedPlanHash: plan.planHash,
         manualCreationStopped: true,
         acknowledgement: "FUTURE_ONLY_MANUAL_PO_HANDOVER",
@@ -243,7 +303,10 @@ export function ManualForHireHandover() {
         <p className="text-sm text-muted-foreground">
           Verify an existing manually created / Operations PO and record a
           future-only handover. This is a separate manual handover record, not
-          AP-created PO history; historical POs remain unmodified.
+          an AP import or adoption of old POs. Mixed history is supported: an
+          existing AP-created initial receipt remains immutable, while the
+          latest manual extension may bridge coverage into a future period.
+          Historical POs and AP receipts remain unmodified.
         </p>
         <p className="text-sm text-muted-foreground">
           Preview re-reads current source data and performs read-only Xero
@@ -252,11 +315,15 @@ export function ManualForHireHandover() {
           separate.
         </p>
         <p className="text-sm text-muted-foreground">
-          The app checks the exact PO, supplier and dates. The PurchaseOrders
-          API cannot reliably prove the full container PO series: Accounts must
-          provide two separate attestations: this is the latest manual hire PO
-          and no later or overlapping period already exists. These are explicit
-          human attestations, not automatic proof of complete coverage history.
+          The app checks the exact PO, supplier and any native hire dates. The
+          PurchaseOrders API cannot reliably prove the full container PO series;
+          unknown coverage or missing native description dates are not proof of
+          a paid hire period. Accounts must explicitly provide the
+          covered-through date and three separate attestations: this is the
+          latest manual hire PO, no later or overlapping period already exists,
+          and covered-through is the last hire date already paid/billed under
+          that PO, not its issue date. These are human attestations, not
+          automatic proof of complete history.
         </p>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -324,7 +391,7 @@ export function ManualForHireHandover() {
                 onChange={event =>
                   changeInput("manualPoNumber", event.target.value)
                 }
-                placeholder="HC1911-2"
+                placeholder="HC1911-1"
                 autoComplete="off"
                 maxLength={60}
                 disabled={approve.isPending}
@@ -371,9 +438,86 @@ export function ManualForHireHandover() {
             className="text-xs text-muted-foreground"
           >
             Australian date order: DD/MM/YY or DD/MM/YYYY; ISO YYYY-MM-DD is
-            also accepted. Enter the last date already covered by the manual PO.
-            All four inputs must be verified together.
+            also accepted. Accounts must enter the last hire date already
+            paid/billed under the selected manual PO, even when its native
+            description has no hire dates. Do not infer coverage from the PO
+            issue date. All four inputs must be verified together.
           </p>
+          <fieldset className="space-y-3 rounded-lg border p-3">
+            <legend className="px-1 text-sm font-medium">
+              Optional — original fixed-sum rental acknowledgment
+            </legend>
+            <p
+              id="manual-handover-legacy-help"
+              className="text-xs text-muted-foreground"
+            >
+              Use only after reviewing the exact original rental line on the
+              selected manual PO. Preserve the old fixed sum: enter its original
+              line number and historical net amount (excluding GST), not a
+              current or future amount or daily rate. This does not infer hire
+              dates or a paid period, rewrite the old PO, or create a PO. Leave
+              unchecked for the native hire-date flow.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-sm font-medium">
+                Original rental line number (1–200, starting at 1)
+                <Input
+                  type="number"
+                  className="mt-1 font-mono"
+                  value={input.legacyRentalLineNumber}
+                  onChange={event =>
+                    changeInput("legacyRentalLineNumber", event.target.value)
+                  }
+                  min={input.confirmedLegacyRental ? 1 : undefined}
+                  max={input.confirmedLegacyRental ? 200 : undefined}
+                  step={input.confirmedLegacyRental ? 1 : "any"}
+                  aria-describedby="manual-handover-legacy-help"
+                  autoComplete="off"
+                  disabled={approve.isPending}
+                  required={input.confirmedLegacyRental}
+                />
+              </label>
+              <label className="text-sm font-medium">
+                Historical fixed-sum rental net amount (AUD, excluding GST)
+                <Input
+                  type="number"
+                  className="mt-1 font-mono"
+                  value={input.legacyRentalNetAmount}
+                  onChange={event =>
+                    changeInput("legacyRentalNetAmount", event.target.value)
+                  }
+                  min={input.confirmedLegacyRental ? 0 : undefined}
+                  step="any"
+                  aria-describedby="manual-handover-legacy-help"
+                  autoComplete="off"
+                  disabled={approve.isPending}
+                  required={input.confirmedLegacyRental}
+                />
+              </label>
+            </div>
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <Checkbox
+                className="mt-0.5"
+                checked={input.confirmedLegacyRental}
+                onCheckedChange={checked =>
+                  changeInput("confirmedLegacyRental", checked === true)
+                }
+                disabled={approve.isPending}
+              />
+              <span>
+                I have reviewed this exact original fixed-sum rental line and
+                amount; this is not the future daily rate.
+              </span>
+            </label>
+            {!hasValidLegacyInputs && (
+              <p role="alert" className="text-xs text-red-800">
+                To preview or save with this acknowledgment, enter a whole line
+                number from 1 to 200 and a finite historical net amount greater
+                than zero. Otherwise, leave the optional acknowledgment
+                unchecked.
+              </p>
+            )}
+          </fieldset>
           <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm">
             <Checkbox
               className="mt-0.5"
@@ -401,17 +545,38 @@ export function ManualForHireHandover() {
               created for this container.
             </span>
           </label>
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm">
+            <Checkbox
+              className="mt-0.5"
+              checked={input.confirmedCoveredThrough}
+              onCheckedChange={checked =>
+                changeInput("confirmedCoveredThrough", checked === true)
+              }
+              disabled={approve.isPending}
+            />
+            <span>
+              I confirm the covered-through date is the last hire date already
+              paid/billed under the selected manual PO; it is not inferred from
+              the PO issue date.
+            </span>
+          </label>
           <p className="text-xs text-muted-foreground">
-            Both Accounts attestations are required to save. You may preview
-            unchecked to inspect the held result. Changing either confirmation
-            invalidates the preview; changing any of the four inputs also clears
-            both confirmations and the separate manual-creation-stopped
-            acknowledgement.
+            All three Accounts attestations are required to save. You may
+            preview unchecked to inspect the held result. Changing any
+            confirmation invalidates the preview and clears the separate
+            manual-creation-stopped acknowledgement. Changing any text or
+            numeric input also clears all three coverage confirmations and the
+            optional legacy rental confirmation.
           </p>
           <Button
             type="submit"
             variant="outline"
-            disabled={!hasInputs || checking || approve.isPending}
+            disabled={
+              !hasInputs ||
+              !hasValidLegacyInputs ||
+              checking ||
+              approve.isPending
+            }
           >
             {checking
               ? "Checking manual handover…"
@@ -517,7 +682,9 @@ export function ManualForHireHandover() {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-muted-foreground">Supplier</dt>
+                  <dt className="text-xs text-muted-foreground">
+                    Current checked supplier for the planned future period
+                  </dt>
                   <dd>
                     <BusinessText value={plan.supplierName} />
                   </dd>
@@ -530,6 +697,28 @@ export function ManualForHireHandover() {
                     <BusinessText
                       value={formatSydneyDate(plan.coveredThrough)}
                     />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">
+                    Manual coverage source
+                  </dt>
+                  <dd className="font-medium">
+                    {plan.coverageSource === "native_description"
+                      ? "Existing manual PO native description"
+                      : "Accounts-attested covered-through date"}
+                  </dd>
+                  <dd className="text-xs text-muted-foreground">
+                    {plan.manualPeriodStart ? (
+                      <>
+                        Native hire period starts{" "}
+                        <BusinessText
+                          value={formatSydneyDate(plan.manualPeriodStart)}
+                        />
+                      </>
+                    ) : (
+                      "No native hire-period start; Accounts supplies covered-through, not the PO issue date."
+                    )}
                   </dd>
                 </div>
                 <div>
@@ -561,6 +750,23 @@ export function ManualForHireHandover() {
                   </dd>
                 </div>
               </dl>
+            )}
+            {plan && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                {plan.coverageSource === "accounts_attested" && (
+                  <>
+                    Native description dates do not establish this coverage;
+                    Accounts is accountable for the supplied covered-through
+                    date.{" "}
+                  </>
+                )}
+                Existing manual PO native descriptions and historical amounts
+                are not rewritten to match the planned future period. Any
+                historical description or amount mismatch must be reviewed, not
+                treated as permission to edit old POs. An existing AP-created
+                initial receipt remains immutable; the latest manual extension
+                may bridge future coverage without AP import or adoption.
+              </p>
             )}
             {result.proposal && (
               <div className="rounded-lg border bg-background p-4 text-sm">
@@ -618,10 +824,13 @@ export function ManualForHireHandover() {
                   </span>
                 </label>
                 <p className="text-xs text-muted-foreground">
-                  Changing any input clears the preview and both attestations.
-                  This record establishes future coverage only; it neither
-                  adopts old POs into the AP-created ledger nor starts recurring
-                  creation.
+                  Changing any confirmation invalidates the preview. Changing
+                  any text or numeric input also clears all three Accounts
+                  coverage attestations and the optional legacy rental
+                  confirmation. This record establishes future coverage only; it
+                  neither adopts old POs into the AP-created ledger nor starts
+                  recurring creation. Existing AP-created initial receipts and
+                  historical manual POs remain immutable.
                 </p>
                 <Button
                   type="button"
@@ -654,11 +863,15 @@ export function ManualForHireHandover() {
               </AlertDialogTitle>
               <AlertDialogDescription>
                 Save only the verified handover record below. Older manual /
-                Operations POs stay untouched. No PO is created and future
-                recurring activation remains separate. Accounts has provided two
-                separate human attestations: this is the latest manual hire PO,
-                and no later or overlapping period already exists. These are not
-                automatic proof of the full PO series.
+                Operations POs and any existing AP-created initial receipt stay
+                untouched; a latest manual extension may bridge future coverage
+                without AP import or adoption. No PO is created and future
+                recurring activation remains separate. Accounts has provided
+                three separate human attestations: this is the latest manual
+                hire PO, no later or overlapping period already exists, and
+                covered-through is the last hire date already paid/billed under
+                the selected manual PO, not inferred from its issue date. These
+                are not automatic proof of the full PO series.
               </AlertDialogDescription>
             </AlertDialogHeader>
             {plan && (
@@ -679,6 +892,23 @@ export function ManualForHireHandover() {
                     <BusinessText value={plan.manualPoNumber} />
                   </dd>
                 </div>
+                {lumpSumManual && (
+                  <div>
+                    <dt className="text-xs text-muted-foreground">
+                      Explicit original fixed-sum rental acknowledgment
+                    </dt>
+                    <dd>
+                      Original line{" "}
+                      <BusinessText value={lumpSumManual.lineIndex + 1} /> ·
+                      Historical net amount (excluding GST){" "}
+                      <BusinessText value={money(lumpSumManual.amount)} />
+                    </dd>
+                    <dd className="text-xs text-muted-foreground">
+                      Original fixed sum only, not the current or future daily
+                      rate. The historical PO stays unchanged; no PO is created.
+                    </dd>
+                  </div>
+                )}
                 <div>
                   <dt className="text-xs text-muted-foreground">
                     Last covered date
@@ -687,6 +917,16 @@ export function ManualForHireHandover() {
                     <BusinessText
                       value={formatSydneyDate(plan.coveredThrough)}
                     />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">
+                    Coverage source
+                  </dt>
+                  <dd>
+                    {plan.coverageSource === "native_description"
+                      ? "Existing manual PO native description"
+                      : "Accounts-attested covered-through date"}
                   </dd>
                 </div>
                 <div>

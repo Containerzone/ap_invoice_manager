@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   initial: vi.fn(), recurring: vi.fn(),
-  getPolicy: vi.fn(), assertPolicy: vi.fn(),
+  getPolicy: vi.fn(), assertPolicy: vi.fn(), assertScope: vi.fn(),
   getEvent: vi.fn(), claim: vi.fn(), bind: vi.fn(), complete: vi.fn(), due: vi.fn(), latest: vi.fn(), hold: vi.fn(), clearDue: vi.fn(),
   execute: vi.fn(), report: vi.fn(),
   source: vi.fn(), manualGet: vi.fn(), manualDue: vi.fn(), manualClaim: vi.fn(), manualComplete: vi.fn(), manualHold: vi.fn(),
 }));
 
 vi.mock("./financialForHireService", () => ({ previewInitialForHirePo: mocks.initial, previewRecurringForHirePo: mocks.recurring, readForHireContainerControl: mocks.source }));
-vi.mock("./financialForHireRelease", () => ({ getForHireReleasePolicy: mocks.getPolicy, assertForHireRelease: mocks.assertPolicy }));
+vi.mock("./financialForHireRelease", () => ({ getForHireReleasePolicy: mocks.getPolicy, assertForHireRelease: mocks.assertPolicy, assertForHireRecurringControlAllowed: mocks.assertScope }));
 vi.mock("./financialForHireDb", () => ({
   bindForHirePayload: mocks.bind, claimForHirePreview: mocks.claim, clearForHireNextBillingDate: mocks.clearDue,
   completeForHireDraft: mocks.complete, dueForHireRecurringRoots: mocks.due, getForHireEventForPeriod: mocks.getEvent,
@@ -26,7 +26,7 @@ vi.mock("./financialForHireManualHandoverDb", () => ({
 import { processAutomaticInitialForHire, processAutomaticRecurringForHire, processAutomaticManualForHireOpening, runAutomaticRecurringForHire } from "./financialForHireLiveService";
 import { buildRecurringForHirePo } from "./financialForHireDrafts";
 
-const policy = { releaseKey: "FOR-HIRE-UNIT-TEST", approvedBy: 9 };
+const policy = { releaseKey: "FOR-HIRE-UNIT-TEST", approvedBy: 9, recurringControlIds: ["24x901", "79x494313"] };
 const document = {
   documentFamily: "purchase_order", documentType: "initial_for_hire", proposedAction: "create_draft", proposedDocumentNumber: "HC1860",
   reference: "C1860", partyName: "Hire Supplier", partySourceId: "contact-hire", accountCode: "312", gstTreatment: "GST_EXCLUSIVE",
@@ -36,7 +36,7 @@ const document = {
 } as any;
 const preview = (kind: "initial" | "recurring" = "initial") => ({
   kind, state: "previewed", holdReason: null, noWrites: true, sourceSnapshotHash: "s".repeat(64), rulesSnapshotHash: "r".repeat(64), xeroPreflightHash: "p".repeat(64),
-  facts: { recordId: "24x901" }, lifecycle: [], preflight: {}, preview: { periodStart: "2026-10-01", periodEnd: "2026-10-31", proposedPoNumber: "HC1860", document: { ...document, documentType: kind === "initial" ? "initial_for_hire" : "recurring_for_hire", proposedDocumentNumber: kind === "initial" ? "HC1860" : "HC1860-2" } },
+  facts: { recordId: "24x901" }, lifecycle: [], preflight: {}, preview: { periodStart: "2026-10-01", periodEnd: "2026-10-31", proposedPoNumber: kind === "initial" ? "HC1860" : "HC1860-2", document: { ...document, documentType: kind === "initial" ? "initial_for_hire" : "recurring_for_hire", proposedDocumentNumber: kind === "initial" ? "HC1860" : "HC1860-2" } },
 });
 const event = (overrides: Record<string, unknown> = {}) => ({ id: 14, containerControlId: "24x901", containerControlNumber: "C1860", eventKind: "initial", billingPeriodStart: "2026-10-01", billingPeriodEnd: "2026-10-31", proposedPoNumber: "HC1860", status: "previewed", ...overrides });
 
@@ -46,8 +46,10 @@ beforeEach(() => {
   vi.stubEnv("FINANCIAL_FOR_HIRE_MANUAL_HANDOVER_ENABLED", "false");
   mocks.getPolicy.mockResolvedValue(policy);
   mocks.assertPolicy.mockImplementation(() => undefined);
+  mocks.assertScope.mockImplementation(() => undefined);
   mocks.initial.mockResolvedValue(preview());
-  mocks.recurring.mockResolvedValue(preview("recurring"));
+  mocks.recurring.mockImplementation(async (_id: string, _now: string, handoverId?: number) => ({ ...preview("recurring"),
+    ...(handoverId !== undefined ? { manualOpeningPoint: { id: handoverId, planHash: "a".repeat(64) } } : {}) }));
   mocks.getEvent.mockResolvedValue(event());
   mocks.claim.mockResolvedValue(true);
   mocks.bind.mockResolvedValue(undefined);
@@ -56,7 +58,7 @@ beforeEach(() => {
   mocks.latest.mockResolvedValue(event({ id: 13, status: "drafts_created" }));
   mocks.due.mockResolvedValue([]);
   mocks.source.mockResolvedValue({ recordId: "24x901", status: "ON HIRE" });
-  mocks.manualGet.mockResolvedValue({ id: 7, planHash: "a".repeat(64), status: "approved" });
+  mocks.manualGet.mockResolvedValue({ id: 7, planHash: "a".repeat(64), status: "approved", plan: { priorApAnchor: null } });
   mocks.manualDue.mockResolvedValue([]);
   mocks.manualClaim.mockResolvedValue(true);
   mocks.manualComplete.mockResolvedValue(undefined);
@@ -69,7 +71,8 @@ describe("automatic For Hire AP lifecycle", () => {
   it("creates only a fresh current preflighted Draft PO and stores the next due date", async () => {
     const result = await processAutomaticInitialForHire("24x901");
     expect(result).toMatchObject({ ok: true, status: "drafts_created", poNumber: "HC1860", xeroWritesAttempted: 1 });
-    expect(mocks.bind).toHaveBeenCalledWith(14, policy.releaseKey, expect.objectContaining({ endpoint: "/PurchaseOrders", method: "POST", documentNumber: "HC1860" }), undefined);
+    expect(mocks.bind).toHaveBeenCalledWith(14, policy.releaseKey, expect.objectContaining({ endpoint: "/PurchaseOrders", method: "POST", documentNumber: "HC1860" }),
+      expect.objectContaining({ token: expect.any(String), preparedDocument: document, expectedPreview: expect.objectContaining({ sourceSnapshotHash: "s".repeat(64), proposedPoNumber: "HC1860" }) }), undefined, null);
     expect(mocks.execute).toHaveBeenCalledWith(expect.objectContaining({
       workflowType: "initial_for_hire", preparedBy: 9,
       authorisation: expect.objectContaining({ forHireAutomaticEventId: 14, forHireReleaseKey: policy.releaseKey, forHireApprovedBy: 9 }),
@@ -84,6 +87,12 @@ describe("automatic For Hire AP lifecycle", () => {
     expect(mocks.execute).not.toHaveBeenCalled();
   });
 
+  it("holds an internally inconsistent caller preview number without a claim or writer", async () => {
+    const result = preview(); result.preview.proposedPoNumber = "HC1860-9"; mocks.initial.mockResolvedValue(result);
+    expect(await processAutomaticInitialForHire("24x901")).toMatchObject({ status: "held", xeroWritesAttempted: 0 });
+    expect(mocks.claim).not.toHaveBeenCalled(); expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
   it("keeps manual opening execution disabled even when the regular For Hire family is enabled", async () => {
     await expect(processAutomaticManualForHireOpening("24x901", 7, "2026-11-01")).rejects.toThrow("not enabled");
     expect(mocks.source).not.toHaveBeenCalled();
@@ -96,10 +105,10 @@ describe("automatic For Hire AP lifecycle", () => {
     expect(result.status).toBe("drafts_created");
     expect(mocks.recurring).toHaveBeenCalledWith("24x901", "2026-11-01", 7);
     expect(mocks.manualClaim).toHaveBeenCalledWith({ id: 7, planHash: "a".repeat(64), token: expect.any(String), eventId: 14 });
-    expect(mocks.bind).toHaveBeenCalledWith(14, policy.releaseKey, expect.anything(), { id: 7, planHash: "a".repeat(64) });
+    expect(mocks.bind).toHaveBeenCalledWith(14, policy.releaseKey, expect.anything(), expect.objectContaining({ token: expect.any(String) }), { id: 7, planHash: "a".repeat(64) }, null);
     expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ eventId: 14, priorEventId: null }));
-    expect(mocks.manualComplete).toHaveBeenCalledWith({ containerControlId: "24x901", id: 7, token: expect.any(String), eventId: 14 });
-    expect(mocks.complete.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualComplete.mock.invocationCallOrder[0]);
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ manualOpeningPoint: { id: 7, planHash: "a".repeat(64), token: expect.any(String) }, token: expect.any(String) }));
+    expect(mocks.manualComplete).not.toHaveBeenCalled();
     expect(mocks.execute).toHaveBeenCalledOnce();
     expect(mocks.clearDue).not.toHaveBeenCalled();
   });
@@ -139,7 +148,7 @@ describe("automatic For Hire AP lifecycle", () => {
     mocks.manualDue.mockResolvedValue([{ id: 7, containerControlId: "24x901", containerControlNumber: "C1860" }]);
     const result = await runAutomaticRecurringForHire("2026-11-01", 0, 0);
     expect(result).toMatchObject({ considered: 10, lastVisitedEventId: 10, lastVisitedManualHandoverId: 0, retryRemainingBatch: true, xeroWritesAttempted: 0 });
-    expect(mocks.manualDue).toHaveBeenCalledWith("2026-11-01", 1, 0);
+    expect(mocks.manualDue).toHaveBeenCalledWith("2026-11-01", 1, 0, policy.recurringControlIds);
     expect(mocks.manualClaim).not.toHaveBeenCalled();
   });
 
@@ -160,7 +169,7 @@ describe("automatic For Hire AP lifecycle", () => {
     mocks.recurring.mockResolvedValue({ ...preview("recurring"), preview: { ...preview("recurring").preview, proposedPoNumber: "HC1860-2", document: { ...document, documentType: "recurring_for_hire", proposedDocumentNumber: "HC1860-2" } } });
     mocks.execute.mockResolvedValue({ outcome: "succeeded", executionId: 44, result: { xeroDocumentId: "xero-po-2", documentNumber: "HC1860-2", status: "DRAFT" } });
     const result = await runAutomaticRecurringForHire("2026-11-01");
-    expect(mocks.due).toHaveBeenCalledWith("2026-11-01", 10, 0);
+    expect(mocks.due).toHaveBeenCalledWith("2026-11-01", 10, 0, policy.recurringControlIds);
     expect(result).toMatchObject({ ok: true, considered: 1, xeroWritesAttempted: 1 });
     expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ priorEventId: 13, nextBillingDate: "2026-11-01" }));
   });
@@ -199,7 +208,7 @@ describe("automatic For Hire AP lifecycle", () => {
   it("uses the Sydney date after UTC midnight boundaries instead of the UTC day", async () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-12-13T13:05:00Z"));
     await runAutomaticRecurringForHire();
-    expect(mocks.due).toHaveBeenCalledWith("2026-12-14", 10, 0);
+    expect(mocks.due).toHaveBeenCalledWith("2026-12-14", 10, 0, policy.recurringControlIds);
     vi.useRealTimers();
   });
 
@@ -207,7 +216,7 @@ describe("automatic For Hire AP lifecycle", () => {
     const roots = Array.from({ length: 10 }, (_, index) => event({ id: 13, containerControlNumber: `C${1900 + index}`, status: "drafts_created", nextBillingDate: "2026-11-01" }));
     mocks.due.mockResolvedValueOnce(roots).mockResolvedValueOnce([event({ status: "drafts_created" })]);
     expect((await runAutomaticRecurringForHire("2026-11-01")).retryRemainingBatch).toBe(true);
-    expect(mocks.due).toHaveBeenLastCalledWith("2026-11-01", 1, 13);
+    expect(mocks.due).toHaveBeenLastCalledWith("2026-11-01", 1, 13, policy.recurringControlIds);
   });
 
   it("does not retry a holds-only batch or invoke a financial writer", async () => {
@@ -240,5 +249,34 @@ describe("automatic For Hire AP lifecycle", () => {
     expect((await runAutomaticRecurringForHire("2026-11-01")).xeroWritesAttempted).toBe(0);
     expect(mocks.clearDue).toHaveBeenCalledWith(13);
     expect(mocks.execute).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("strict controlled recurring release scope", () => {
+  it("requires exact control authority before either normal or manual preview and transport", async () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_MANUAL_HANDOVER_ENABLED", "true");
+    mocks.assertScope.mockImplementation(() => { throw new Error("outside explicitly approved recurring scope"); });
+    await expect(processAutomaticRecurringForHire("79x999", 13, "2026-11-01")).rejects.toThrow(/scope/);
+    await expect(processAutomaticManualForHireOpening("79x999", 7, "2026-11-01")).rejects.toThrow(/scope/);
+    expect(mocks.source).not.toHaveBeenCalled(); expect(mocks.recurring).not.toHaveBeenCalled(); expect(mocks.claim).not.toHaveBeenCalled(); expect(mocks.execute).not.toHaveBeenCalled();
+  });
+  it("queue selectors receive actual allowlist before limits and reject a leaked nonapproved candidate", async () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_MANUAL_HANDOVER_ENABLED", "true");
+    mocks.getPolicy.mockResolvedValue({ ...policy, recurringControlIds: ["79x489745"] });
+    mocks.due.mockResolvedValue([event({ containerControlId: "79x999" })]);
+    mocks.manualDue.mockResolvedValue([{ id: 9, containerControlId: "79x999", containerControlNumber: "C999" }]);
+    mocks.assertScope.mockImplementation((_policy: any, id: string) => { if (id !== "79x489745") throw new Error("outside scope"); });
+    const result = await runAutomaticRecurringForHire("2026-11-01");
+    expect(result.xeroWritesAttempted).toBe(0);
+    expect(mocks.due).toHaveBeenCalledWith("2026-11-01", 10, 0, ["79x489745"]); expect(mocks.manualDue).toHaveBeenCalledWith("2026-11-01", 9, 0, ["79x489745"]);
+    expect(mocks.recurring).not.toHaveBeenCalled(); expect(mocks.execute).not.toHaveBeenCalled();
+  });
+  it("first mixed success passes only its signed AP anchor and closes within the Draft transaction", async () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_MANUAL_HANDOVER_ENABLED", "true");
+    mocks.manualGet.mockResolvedValue({ id: 7, planHash: "a".repeat(64), plan: { priorApAnchor: { id: 120001 } } });
+    await processAutomaticManualForHireOpening("24x901", 7, "2026-11-01");
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ priorEventId: 120001, manualOpeningPoint: { id: 7, planHash: "a".repeat(64), token: expect.any(String) } }));
+    expect(mocks.manualComplete).not.toHaveBeenCalled(); expect(mocks.clearDue).not.toHaveBeenCalled(); expect(mocks.execute).toHaveBeenCalledOnce();
   });
 });

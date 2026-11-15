@@ -1,5 +1,10 @@
 import { Temporal } from "@js-temporal/polyfill";
 import type { FinancialLineItem, ProposedFinancialDocument } from "./financialWorkflowEngine";
+import { forHireExtensionReference, forHireInitialReference } from "./financialForHireNumbering";
+import type { ForHireNumberingConvention } from "./financialForHireNumbering";
+
+export { forHireExtensionReference, forHireInitialReference, parseForHireReferenceSuffix } from "./financialForHireNumbering";
+export type { ForHireNumberingConvention } from "./financialForHireNumbering";
 
 export type ForHireContainerControlFacts = {
   recordId: string;
@@ -84,20 +89,6 @@ export function formatForHireDate(value: string): string {
   const parsed = plainDate(value);
   if (!parsed) return "Invalid date";
   return `${String(parsed.day).padStart(2, "0")}/${String(parsed.month).padStart(2, "0")}/${String(parsed.year % 100).padStart(2, "0")}`;
-}
-
-export function forHireInitialReference(controlNumber: string): string {
-  const safe = text(controlNumber);
-  if (!safe) throw new Error("A Container Control number is required for the initial For Hire reference.");
-  return `H${safe}`;
-}
-
-/** Returns the only consecutive extension reference; callers must preflight this exact number. */
-export function forHireExtensionReference(controlNumber: string, lastVerifiedExtensionSuffix: number | null): string {
-  const initial = forHireInitialReference(controlNumber);
-  const next = lastVerifiedExtensionSuffix === null ? 2 : lastVerifiedExtensionSuffix + 1;
-  if (!Number.isInteger(next) || next < 2) throw new Error("For Hire extension sequence is invalid.");
-  return `${initial}-${next}`;
 }
 
 function commonEligibility(facts: ForHireContainerControlFacts): { feet: 20 | 40 | null; collection: Temporal.PlainDate | null; reason: string | null } {
@@ -200,6 +191,8 @@ export function buildRecurringForHirePo(input: {
   facts: ForHireContainerControlFacts;
   priorPeriodEnd: string | null;
   lastVerifiedExtensionSuffix: number | null;
+  /** Legacy suffix-zero numbering is opt-in; existing AP numbering is the default. */
+  numberingConvention?: ForHireNumberingConvention;
   purchaseRate: number | null;
   itemNativeDescription?: string | null;
   now?: string;
@@ -222,7 +215,7 @@ export function buildRecurringForHirePo(input: {
   if (now && Temporal.PlainDate.compare(start, now) > 0) return { kind: "recurring", eligible: false, holdReason: "The next consecutive extension period is not due.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: null };
   if (now && Temporal.PlainDate.compare(start, now.subtract({ days: 30 })) < 0) return { kind: "recurring", eligible: false, holdReason: "The next extension is historical; no catch-up or bulk extension is allowed.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: null };
   if (input.purchaseRate === null || !Number.isFinite(input.purchaseRate) || input.purchaseRate <= 0) return { kind: "recurring", eligible: false, holdReason: "Current Xero HC extension purchase rate is unavailable.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: input.itemNativeDescription ?? null };
-  const poNumber = forHireExtensionReference(input.facts.controlNumber, input.lastVerifiedExtensionSuffix);
+  const poNumber = forHireExtensionReference(input.facts.controlNumber, input.lastVerifiedExtensionSuffix, input.numberingConvention);
   const itemCode = eligibility.feet === 20 ? "HC 20 E" : "HC 40 E";
   const rate = money(input.purchaseRate);
   const period = `${formatForHireDate(start.toString())} to ${formatForHireDate(end.toString())}`;

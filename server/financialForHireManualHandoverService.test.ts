@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Temporal } from "@js-temporal/polyfill";
 import { buildInitialForHirePo, buildRecurringForHirePo, formatForHireDate, type ForHireContainerControlFacts } from "./financialForHireDrafts";
 import { buildManualForHireHandoverPlan, type ManualForHireEvidence } from "./financialForHireManualHandoverRules";
+import { offlineMixedFixture } from "./financialForHireMixedTestSupport";
+import { bindManualForHireMixedHistory } from "./financialForHireMixedAnchor";
 import { financialSha256 } from "./financialProposalIntegrity";
 import type { FinancialDraftPayload } from "./financialProductionWriter";
 
@@ -44,7 +46,7 @@ function fixture(suffix = 1) {
     relatedPurchaseOrders: [], supplierContactId: "contact-44", tenantId: "tenant-1", complete: false,
   };
   const evidence = { ...raw, coverageAttestation: { confirmedLatestCoverage: true as const, confirmedNoOtherFutureCoverage: true as const, reviewedBy: 7 } };
-  const plan = buildManualForHireHandoverPlan({ facts, evidence, ...input, now: "2026-11-15" });
+  const plan = bindManualForHireMixedHistory(buildManualForHireHandoverPlan({ facts, evidence, ...input, now: "2026-11-15" }), null, evidence.manualPo.Contact);
   const row = { id: 9, containerControlId: facts.recordId, containerControlNumber: facts.controlNumber, manualPoId: plan.manualPoId, manualPoNumber: plan.manualPoNumber, coveredThrough: plan.coveredThrough, nextBillingDate: plan.nextPeriodStart, status: "approved", processingToken: null, firstApEventId: null, plan, planHash: plan.planHash, evidence, approvedBy: 7, manualCreationStopped: true, acknowledgement: "FUTURE_ONLY_MANUAL_PO_HANDOVER" };
   const approval = { ...input, expectedPlanHash: plan.planHash, approvedBy: 7, manualCreationStopped: true as const, acknowledgement: "FUTURE_ONLY_MANUAL_PO_HANDOVER" as const };
   return { facts, input, raw, evidence, plan, row, approval };
@@ -55,7 +57,7 @@ function install(f = fixture()) {
   return f;
 }
 function reserved() {
-  const f = install(); Object.assign(f.row, { status: "reserved", processingToken: "claim-token", firstApEventId: 41 });
+  const f = install(); m.events.mockResolvedValue([{ id: 41, status: "reserved", processingToken: "claim-token", containerControlId: f.facts.recordId, eventKind: "recurring", proposedPoNumber: f.plan.nextPoNumber, billingPeriodStart: f.plan.nextPeriodStart, billingPeriodEnd: f.plan.nextPeriodEnd }]); Object.assign(f.row, { status: "reserved", processingToken: "claim-token", firstApEventId: 41 });
   m.existing.mockResolvedValue(f.row); vi.setSystemTime(new Date(`${f.plan.nextPeriodStart}T01:00:00Z`));
   const payload: FinancialDraftPayload = { method: "POST", endpoint: "/PurchaseOrders", documentFamily: "purchase_order", documentNumber: f.plan.nextPoNumber, expectedXeroDocumentId: null, idempotencyKey: "offline-first-po", body: { PurchaseOrders: [{ PurchaseOrderID: undefined, PurchaseOrderNumber: f.plan.nextPoNumber, Reference: f.facts.controlNumber, Status: "DRAFT", CurrencyCode: "AUD", Contact: { ContactID: f.plan.supplierContactId }, Date: f.plan.nextPeriodStart, LineAmountTypes: "Exclusive", LineItems: [{ ItemCode: "HC 40 E", Quantity: 30, UnitAmount: 17.25, AccountCode: "312", TaxType: "INPUT", Description: `${f.facts.containerNumber}, ${f.facts.containerType} Extended Hire @ $17.25 per day from ${formatForHireDate(f.plan.nextPeriodStart)} to ${formatForHireDate(f.plan.nextPeriodEnd)}` }] }] } };
   return { ...f, write: { recordId: f.facts.recordId, handoverId: 9, planHash: f.plan.planHash, eventId: 41, token: "claim-token", payload } };
@@ -99,7 +101,7 @@ describe("manual handover read-only preview and exact approval", () => {
     for (const suffix of [1, 2, 7]) {
       const f = install(fixture(suffix)); const result = await previewManualForHireHandover(f.input);
       expect(result.state).toBe("ready"); expect(result.plan).toEqual(f.plan);
-      expect(result.proposal).toMatchObject({ documentType: "recurring_for_hire", proposedDocumentNumber: `HC1929-${suffix + 1}`, issueDate: new Date(`${f.plan.nextPeriodStart}T00:00:00Z`), partySourceId: "contact-44", lineItems: [{ quantity: 30, unitAmount: 17.25, itemCode: "HC 40 E" }] });
+      expect(result.proposal).toMatchObject({ documentType: "recurring_for_hire", proposedDocumentNumber: f.plan.nextPoNumber, issueDate: new Date(`${f.plan.nextPeriodStart}T00:00:00Z`), partySourceId: "contact-44", lineItems: [{ quantity: 30, unitAmount: 17.25, itemCode: "HC 40 E" }] });
       expect(result.proposal?.lineItems[0].description).toContain(`from ${formatForHireDate(f.plan.nextPeriodStart)} to ${formatForHireDate(f.plan.nextPeriodEnd)}`);
     }
     noWrites();
@@ -138,7 +140,7 @@ describe("manual handover read-only preview and exact approval", () => {
     await enrollManualForHireHandover({ ...f.approval, expectedPlanHash: result.plan!.planHash });
     expect(m.evidence).toHaveBeenCalledTimes(2); expect(m.preflight).toHaveBeenCalledTimes(2);
     expect(m.approve).toHaveBeenCalledTimes(1);
-    expect(m.approve).toHaveBeenCalledWith({ plan: f.plan, evidence: { ...refreshed, coverageAttestation: f.evidence.coverageAttestation }, approvedBy: 7, manualCreationStopped: true, acknowledgement: "FUTURE_ONLY_MANUAL_PO_HANDOVER" });
+    expect(m.approve).toHaveBeenCalledWith({ plan: f.plan, evidence: { ...refreshed, coverageAttestation: f.evidence.coverageAttestation, lumpSumManual: undefined }, approvedBy: 7, manualCreationStopped: true, acknowledgement: "FUTURE_ONLY_MANUAL_PO_HANDOVER" });
     expect(m.createEvent).not.toHaveBeenCalled(); expect(m.xeroWrite).not.toHaveBeenCalled(); expect(m.sourceWrite).not.toHaveBeenCalled();
   });
   it("stale plan hash, changed source/manual coverage and canonical-number mismatch never reach approval", async () => {
@@ -214,7 +216,7 @@ describe("immutable approved opening point and first-write verification", () => 
     await expect(revalidateManualForHireOpeningPoint({ recordId: f.facts.recordId, handoverId: 9, now: f.plan.nextPeriodStart })).rejects.toThrow(/reconstruct|exact approved/i); noWrites();
   });
   it("only the exact reserved event and token can verify the next AUD Draft PO, without writing it", async () => {
-    const f = reserved(); m.events.mockResolvedValue([{ id: 41, status: "reserved" }]);
+    const f = reserved(); m.events.mockResolvedValue([{ id: 41, status: "reserved", processingToken: "claim-token", containerControlId: f.facts.recordId, eventKind: "recurring", proposedPoNumber: f.plan.nextPoNumber, billingPeriodStart: f.plan.nextPeriodStart, billingPeriodEnd: f.plan.nextPeriodEnd }]);
     await expect(verifyManualForHireFirstWrite(f.write)).resolves.toBeUndefined();
     for (const change of [{ token: "wrong" }, { eventId: 42 }, { handoverId: 10 }, { planHash: "0".repeat(64) }]) await expect(verifyManualForHireFirstWrite({ ...f.write, ...change })).rejects.toThrow();
     m.events.mockResolvedValue([{ id: 41, status: "reserved" }, { id: 42, status: "drafts_created" }]);
@@ -258,5 +260,48 @@ describe("immutable approved opening point and first-write verification", () => 
       await expect(verifyManualForHireFirstWrite({ ...f.write, payload: p }), kind).rejects.toThrow();
     }
     noWrites();
+  });
+});
+
+
+describe("controlled legacy lump-sum and prior AP service integration", () => {
+  function installMixed() {
+    const f = offlineMixedFixture();
+    m.source.mockResolvedValue(f.facts); m.evidence.mockResolvedValue({ ...f.evidence, coverageAttestation: undefined, lumpSumManual: undefined });
+    m.events.mockResolvedValue([f.ap]);
+    m.preflight.mockResolvedValue([{ duplicateState: "not_found", contactCheck: { found: true, contactId: "offline-contact" }, itemChecks: [{ found: true, itemCode: "HC 20 E", purchaseUnitPrice: 4.5, nativeDescription: "Current daily item" }] }]);
+    const input = { recordId: f.facts.recordId, manualPoNumber: f.plan.manualPoNumber, coveredThrough: "15/12/26", effectiveFrom: f.plan.effectiveFrom,
+      confirmedLatestCoverage: true, confirmedNoOtherFutureCoverage: true, confirmedCoveredThrough: true, reviewedBy: 7, lumpSumManual: { confirmed: true as const, lineIndex: 0, amount: 139.5 } };
+    return { ...f, input };
+  }
+  it("binds the exact AP initial plus normalized Accounts coveredThrough without importing a manual AP receipt", async () => {
+    const f = installMixed(); const result = await previewManualForHireHandover(f.input);
+    expect(result).toMatchObject({ state: "ready", plan: { coverageSource: "accounts_attested", manualPeriodStart: null, manualSuffix: 1, nextPoNumber: "HC1920-2", priorApAnchor: { id: f.ap.id } }, evidence: { complete: false, coverageAttestation: { coveredThrough: "2026-12-15", confirmedCoveredThrough: true, reviewedBy: 7 }, lumpSumManual: { confirmed: true, reviewedBy: 7, amount: 139.5, lineIndex: 0 } } });
+    expect(result.proposal?.lineItems[0]).toMatchObject({ unitAmount: 4.5, quantity: 30, itemCode: "HC 20 E" });
+    expect(result.plan).toEqual(f.plan);
+    await enrollManualForHireHandover({ ...f.input, expectedPlanHash: result.plan!.planHash, approvedBy: 7, manualCreationStopped: true, acknowledgement: "FUTURE_ONLY_MANUAL_PO_HANDOVER" });
+    expect(m.approve).toHaveBeenCalledWith(expect.objectContaining({ plan: f.plan })); expect(m.createEvent).not.toHaveBeenCalled(); expect(m.xeroWrite).not.toHaveBeenCalled();
+  });
+  it("does not fabricate lump-sum approval from API evidence or quantity, nor accept wrong amount/index", async () => {
+    const f = installMixed(); m.evidence.mockResolvedValue(f.evidence);
+    for (const patch of [{ confirmedCoveredThrough: false }, { lumpSumManual: undefined }, { lumpSumManual: { confirmed: true as const, lineIndex: 0, amount: 135 } }, { lumpSumManual: { confirmed: true as const, lineIndex: 1, amount: 139.5 } }, { confirmedNoOtherFutureCoverage: false }])
+      expect((await previewManualForHireHandover({ ...f.input, ...patch })).state).toBe("held");
+    noWrites();
+  });
+  it("rejects a later AP completion or uncertain receipt before approval and rejects stale anchor evidence on revalidation", async () => {
+    const f = installMixed();
+    m.events.mockResolvedValue([f.ap, { ...f.first, status: "drafts_created", executionId: 101, xeroPurchaseOrderId: "other" }]);
+    expect((await previewManualForHireHandover(f.input)).state).toBe("held");
+    m.events.mockResolvedValue([f.ap]); m.existing.mockResolvedValue(f.opening);
+    expect((await revalidateManualForHireOpeningPoint({ recordId: f.facts.recordId, handoverId: 9, now: f.plan.nextPeriodStart })).plan).toEqual(f.plan);
+    m.events.mockResolvedValue([{ ...f.ap, executionId: 102 }]);
+    await expect(revalidateManualForHireOpeningPoint({ recordId: f.facts.recordId, handoverId: 9, now: f.plan.nextPeriodStart })).rejects.toThrow(/anchor/);
+    noWrites();
+  });
+  it("retains strict current supplier lookup and does not override historical supplier mismatch", async () => {
+    const f = installMixed(); m.evidence.mockRejectedValue(new Error("Manual PO supplier ContactID differs from current exact VTiger supplier"));
+    const result = await previewManualForHireHandover(f.input);
+    expect(result.state).toBe("held"); expect(m.evidence).toHaveBeenCalledWith({ manualPoNumber: "HC1920-1", controlNumber: "C1920", supplierName: "Offline Same Supplier" });
+    expect(m.preflight).not.toHaveBeenCalled(); noWrites();
   });
 });

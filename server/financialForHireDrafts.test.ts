@@ -3,6 +3,7 @@ import {
   buildInitialForHirePo,
   buildRecurringForHirePo,
   forHireExtensionReference,
+  parseForHireReferenceSuffix,
 } from "./financialForHireDrafts";
 
 const base = (overrides: Record<string, unknown> = {}) => ({
@@ -128,6 +129,58 @@ describe("For Hire Container Control PO drafts", () => {
   it("retains the historical-period guard instead of rolling HC1929 forward to today's date", () => {
     const result = buildRecurringForHirePo({ facts: hc1929({ containerType: "40 FOOT" }), priorPeriodEnd: "2026-09-30", lastVerifiedExtensionSuffix: 2, purchaseRate: 16.5, now: "2026-12-14" });
     expect(result).toMatchObject({ eligible: false, holdReason: expect.stringContaining("historical"), periodStart: "2026-10-01", periodEnd: "2026-10-30", proposedPoNumber: null, document: null });
+  });
+
+  describe("explicit legacy suffix-zero numbering (owner-confirmed HC1920 only)", () => {
+    // The owner confirmed HC1920 -> HC1920-1 -> HC1920-2. This opt-in
+    // convention does not change the existing AP HC1929 -> HC1929-2 tests.
+    it("changes only the extension number, retaining initial +30-day coverage and all recurring financial facts", () => {
+      const facts = base({ controlNumber: "C1920", status: "ON HIRE", monthlyCostInclusive: 132, liftAndBookingFeesInclusive: 55 });
+      const initial = buildInitialForHirePo(facts);
+      expect(initial).toMatchObject({ proposedPoNumber: "HC1920", periodStart: "2026-10-01", periodEnd: "2026-10-31" });
+      expect(initial.document?.lineItems[0]).toMatchObject({ quantity: 1, unitAmount: 120 });
+      const input = { facts, priorPeriodEnd: initial.periodEnd, lastVerifiedExtensionSuffix: null, purchaseRate: 8.25, now: "2026-11-01" };
+      const apDefault = buildRecurringForHirePo(input);
+      const legacy = buildRecurringForHirePo({ ...input, numberingConvention: "legacy_suffix_zero_initial" });
+      expect(apDefault.proposedPoNumber).toBe("HC1920-2");
+      expect(legacy.proposedPoNumber).toBe("HC1920-1");
+      expect(legacy.document).toEqual({ ...apDefault.document, proposedDocumentNumber: "HC1920-1" });
+      expect({ ...legacy, document: null, proposedPoNumber: null }).toEqual({ ...apDefault, document: null, proposedPoNumber: null });
+      expect(initial.proposedPoNumber).toBe("HC1920");
+      expect(input.lastVerifiedExtensionSuffix).toBeNull();
+      expect(facts.controlNumber).toBe("C1920");
+    });
+
+    it.each([
+      { predecessor: "HC1920", priorEnd: "2026-12-13", next: "HC1920-1", start: "2026-12-14", end: "2027-01-12", rate: 16.5 },
+      { predecessor: "HC1920-1", priorEnd: "2027-01-12", next: "HC1920-2", start: "2027-01-13", end: "2027-02-11", rate: 17.25 },
+      { predecessor: "HC1920-2", priorEnd: "2026-11-30", next: "HC1920-3", start: "2026-12-01", end: "2026-12-30", rate: 18.5 },
+    ])("uses verified $predecessor for $next without changing period, quantity or current daily rate", ({ predecessor, priorEnd, next, start, end, rate }) => {
+      const suffix = parseForHireReferenceSuffix("C1920", predecessor);
+      const input = {
+        facts: hc1929({ controlNumber: "C1920", monthlyCostInclusive: 999, liftAndBookingFeesInclusive: 55 }),
+        priorPeriodEnd: priorEnd, lastVerifiedExtensionSuffix: suffix,
+        numberingConvention: "legacy_suffix_zero_initial" as const, purchaseRate: rate,
+        itemNativeDescription: "Native text is not the verified coverage period",
+      };
+      expect(buildRecurringForHirePo({ ...input, now: priorEnd })).toMatchObject({ eligible: false, holdReason: expect.stringContaining("not due"), document: null });
+      const result = buildRecurringForHirePo({ ...input, now: start });
+      expect(result).toMatchObject({ eligible: true, holdReason: null, proposedPoNumber: next, periodStart: start, periodEnd: end, itemNativeDescription: input.itemNativeDescription });
+      expect(result.document).toMatchObject({ proposedDocumentNumber: next, issueDate: new Date(`${start}T00:00:00.000Z`), gstTreatment: "GST_EXCLUSIVE", currency: "AUD", accountCode: "312" });
+      expect(result.document?.lineItems).toEqual([expect.objectContaining({ itemCode: "HC 40 E", quantity: 30, unitAmount: rate, accountCode: "312" })]);
+      expect(result.document?.lineItems[0].description).toContain(`Extended Hire @ $${rate.toFixed(2)} per day`);
+      expect(result.document?.lineItems[0].lineAmount).toBe(rate * 30);
+      expect(buildRecurringForHirePo({ ...input, now: start })).toEqual(result);
+      expect(input.lastVerifiedExtensionSuffix).toBe(suffix);
+      expect(input.priorPeriodEnd).toBe(priorEnd);
+      expect(predecessor).toBe(suffix === 0 ? "HC1920" : `HC1920-${suffix}`);
+    });
+
+    it("still requires verified coverage and a current rate in explicit legacy mode", () => {
+      const input = { facts: hc1929({ controlNumber: "C1920" }), priorPeriodEnd: "2026-12-13", lastVerifiedExtensionSuffix: 1, numberingConvention: "legacy_suffix_zero_initial" as const, purchaseRate: 16.5, now: "2026-12-14" };
+      expect(buildRecurringForHirePo({ ...input, priorPeriodEnd: null })).toMatchObject({ eligible: false, holdReason: expect.stringContaining("No verified AP"), proposedPoNumber: null, document: null });
+      expect(buildRecurringForHirePo({ ...input, purchaseRate: null })).toMatchObject({ eligible: false, holdReason: expect.stringContaining("purchase rate is unavailable"), proposedPoNumber: null, document: null });
+    });
   });
 
   describe("Sydney calendar date without an explicit now", () => {
