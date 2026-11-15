@@ -1,3 +1,5 @@
+import { FOR_HIRE_RECURRING_CRON } from "./financialForHireSchedule";
+
 export type FinancialAutomationRules = {
   accounts: {
     acquisition: string;
@@ -101,7 +103,7 @@ export const DEFAULT_FINANCIAL_AUTOMATION_RULES: FinancialAutomationRules = {
     gstRatePercent: 10,
     recurringHireDays: 30,
     extraHireWeeks: 4.286,
-    recurringHireCadence: "0 0 0 1 * *",
+    recurringHireCadence: FOR_HIRE_RECURRING_CRON,
     recurringStorageCadence: "0 0 0 1 * *",
   },
   warranty: { supplierName: "Aviso Broking Pty Ltd", accountCode: "313" },

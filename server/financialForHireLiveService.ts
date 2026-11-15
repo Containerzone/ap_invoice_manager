@@ -135,11 +135,11 @@ export async function processAutomaticRecurringForHire(recordId: string, priorEv
   return executeCurrentPreview({ kind: "recurring", recordId, now, expectedPriorEventId: priorEventId });
 }
 
-/** Bounded scheduled selector; only locally verified For Hire roots due at the Sydney run date are considered. */
-export async function runAutomaticRecurringForHire(now = sydneyToday()) {
+/** Daily check, not daily billing: only AP-owned predecessors due on/before the Sydney business date are selected. */
+export async function runAutomaticRecurringForHire(now = sydneyToday(), afterEventId = 0) {
   const policy = await getForHireReleasePolicy();
   assertForHireRelease(policy, "recurring");
-  const roots = await dueForHireRecurringRoots(now, 10);
+  const roots = await dueForHireRecurringRoots(now, 10, afterEventId);
   const results: Array<Record<string, unknown>> = [];
   for (const root of roots) {
     try {
@@ -157,5 +157,10 @@ export async function runAutomaticRecurringForHire(now = sydneyToday()) {
       results.push({ control: root.containerControlNumber, ok: false, status: "held", warning: "For Hire extension held; inspect the AP lifecycle ledger." });
     }
   }
-  return { ok: true, considered: roots.length, results, xeroWritesAttempted: results.filter((row) => row.xeroWritesAttempted === 1).length };
+  // Held receipts keep their billing markers and immutable claims. Traverse
+  // beyond them using task-owned AP metadata, so they cannot starve other due
+  // containers or be repeatedly attempted in one daily traversal.
+  const lastVisitedEventId = roots.reduce((last, root) => Math.max(last, root.id), afterEventId);
+  const retryRemainingBatch = roots.length === 10 && (await dueForHireRecurringRoots(now, 1, lastVisitedEventId)).length > 0;
+  return { ok: true, considered: roots.length, results, lastVisitedEventId, retryRemainingBatch, xeroWritesAttempted: results.filter((row) => row.xeroWritesAttempted === 1).length };
 }

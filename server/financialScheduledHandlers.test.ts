@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   writerEnabled: vi.fn(),
   recurring: vi.fn(),
   forHireRecurring: vi.fn(),
+  recordTraversal: vi.fn(),
 }));
 
 vi.mock("./_core/sdk", () => ({ sdk: { authenticateRequest: mocks.authenticate } }));
@@ -25,8 +26,10 @@ vi.mock("./financialProductionWriter", () => ({ isFinancialLiveWriteEnvironmentE
 vi.mock("./financialStorageLifecycleService", () => ({ runAutomaticRecurringStorage: mocks.recurring }));
 vi.mock("./financialForHireLiveService", () => ({ runAutomaticRecurringForHire: mocks.forHireRecurring }));
 vi.mock("./financialForHireRelease", () => ({ getForHireReleasePolicy: vi.fn(async () => ({})), assertForHireRelease: vi.fn() }));
+vi.mock("./financialForHireDailyTraversalDb", () => ({ recordForHireDailyTraversal: mocks.recordTraversal }));
 
 import { financialPostSuccessRetryHandler, financialRecurringProposalHandler, isFirstSydneyCalendarDay } from "./financialScheduledHandlers";
+import { FOR_HIRE_RECURRING_CRON } from "./financialForHireSchedule";
 
 function response() {
   const res = { status: vi.fn(), json: vi.fn() };
@@ -38,6 +41,7 @@ describe("inactive financial scheduled handlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("FINANCIAL_STORAGE_AUTOMATIC_ENABLED", "false");
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "false");
     mocks.authenticate.mockResolvedValue({ isCron: true, taskUid: "financial-task" });
     mocks.getSchedule.mockResolvedValue(undefined);
     mocks.shadow.mockReturnValue(true);
@@ -72,13 +76,66 @@ describe("inactive financial scheduled handlers", () => {
 
   it("executes only the registered enabled For Hire schedule through its isolated release processor", async () => {
     vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
-    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", enabled: true });
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-12-13T20:05:00Z"));
+    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", taskUid: "financial-task", enabled: true, cronExpression: FOR_HIRE_RECURRING_CRON });
     mocks.forHireRecurring.mockResolvedValue({ ok: true, considered: 1, results: [], xeroWritesAttempted: 0 });
     const res = response();
     await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" } } as any, res as any);
     expect(mocks.forHireRecurring).toHaveBeenCalledOnce();
     expect(mocks.recurring).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ considered: 1 }));
+  });
+
+  it("refuses a stale first-of-month For Hire schedule before invoking the selector or writer", async () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", taskUid: "financial-task", enabled: true, cronExpression: "0 0 0 1 * *" });
+    const res = response();
+    await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" } } as any, res as any);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "for-hire-daily-schedule-required", xeroWritesAttempted: 0 }));
+    expect(mocks.forHireRecurring).not.toHaveBeenCalled();
+  });
+
+  it("uses managed retry for another due For Hire batch, never an in-process timer", async () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", taskUid: "financial-task", enabled: true, cronExpression: FOR_HIRE_RECURRING_CRON });
+    mocks.forHireRecurring.mockResolvedValue({ ok: true, considered: 10, retryRemainingBatch: true, xeroWritesAttempted: 10 });
+    const res = response();
+    await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" } } as any, res as any);
+    expect(res.status).toHaveBeenCalledWith(429);
+    expect(mocks.forHireRecurring).toHaveBeenCalledOnce();
+  });
+
+  it("uses only server-owned daily traversal metadata and persists it before requesting another batch", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-12-13T20:05:00Z"));
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", taskUid: "financial-task", enabled: true, cronExpression: FOR_HIRE_RECURRING_CRON, auditData: { forHireDailyTraversal: { businessDate: "2026-12-14", afterEventId: 10, complete: false } } });
+    mocks.forHireRecurring.mockResolvedValue({ ok: true, lastVisitedEventId: 20, retryRemainingBatch: true });
+    const res = response();
+    await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" }, body: { afterEventId: 999999, now: "2099-01-01" } } as any, res as any);
+    expect(mocks.forHireRecurring).toHaveBeenCalledWith("2026-12-14", 10);
+    expect(mocks.recordTraversal).toHaveBeenCalledWith("financial-task", "2026-12-14", 20, false);
+    expect(res.status).toHaveBeenCalledWith(429);
+    expect(mocks.recordTraversal.mock.invocationCallOrder[0]).toBeLessThan(res.status.mock.invocationCallOrder[0]);
+  });
+
+  it("resets a completed traversal for the next Sydney day without clearing financial holds", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-12-14T20:05:00Z"));
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", taskUid: "financial-task", enabled: true, cronExpression: FOR_HIRE_RECURRING_CRON, auditData: { forHireDailyTraversal: { businessDate: "2026-12-14", afterEventId: 20, complete: true } } });
+    mocks.forHireRecurring.mockResolvedValue({ ok: true, lastVisitedEventId: 12, retryRemainingBatch: false });
+    const res = response();
+    await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" } } as any, res as any);
+    expect(mocks.forHireRecurring).toHaveBeenCalledWith("2026-12-15", 0);
+    expect(mocks.recordTraversal).toHaveBeenCalledWith("financial-task", "2026-12-15", 12, true);
+  });
+
+  it("does not run a daily For Hire callback when the family gate remains off", async () => {
+    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", taskUid: "financial-task", enabled: true, cronExpression: FOR_HIRE_RECURRING_CRON });
+    const res = response();
+    await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" } } as any, res as any);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(mocks.forHireRecurring).not.toHaveBeenCalled();
   });
 
   it("uses the Australia/Sydney calendar boundary for recurring storage", () => {

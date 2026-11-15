@@ -12,6 +12,8 @@ import { runAutomaticRecurringStorage } from "./financialStorageLifecycleService
 import { getStorageReleasePolicy, assertStorageRelease } from "./financialStorageRelease";
 import { runAutomaticRecurringForHire } from "./financialForHireLiveService";
 import { getForHireReleasePolicy, assertForHireRelease } from "./financialForHireRelease";
+import { FOR_HIRE_RECURRING_CRON, forHireDailyTraversalCursor, forHireSydneyToday, isForHireDailySchedule } from "./financialForHireSchedule";
+import { recordForHireDailyTraversal } from "./financialForHireDailyTraversalDb";
 
 async function verifyFinancialSchedule(req: Request, expectedWorkflowType: string) {
   const user = await sdk.authenticateRequest(req);
@@ -91,10 +93,20 @@ export async function financialRecurringProposalHandler(req: Request, res: Respo
       });
     }
     if (workflowType === "recurring_for_hire" && process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true") {
+      if (!isForHireDailySchedule(verified.schedule)) {
+        await recordFinancialWorkflowScheduleOutcome({ workflowType, taskUid, outcome: "blocked_for_hire_daily_schedule_mismatch" });
+        return res.status(409).json({ error: "for-hire-daily-schedule-required", expectedCron: FOR_HIRE_RECURRING_CRON, xeroWritesAttempted: 0 });
+      }
       const policy = await getForHireReleasePolicy();
       assertForHireRelease(policy, "recurring");
-      const result = await runAutomaticRecurringForHire();
+      const businessDate = forHireSydneyToday();
+      const cursor = forHireDailyTraversalCursor(verified.schedule.auditData, businessDate);
+      const result = await runAutomaticRecurringForHire(businessDate, cursor);
+      if (result.lastVisitedEventId > cursor || (cursor > 0 && !result.retryRemainingBatch)) {
+        await recordForHireDailyTraversal(taskUid, businessDate, result.lastVisitedEventId, !result.retryRemainingBatch);
+      }
       await recordFinancialWorkflowScheduleOutcome({ workflowType, taskUid, outcome: "for_hire_lifecycle_completed" });
+      if (result.retryRemainingBatch) return res.status(429).json({ ...result, message: "More due For Hire periods remain; retry the same managed callback. Completed periods are not replayed." });
       return res.json(result);
     }
     if (workflowType === "recurring_storage" && process.env.FINANCIAL_STORAGE_AUTOMATIC_ENABLED === "true") {

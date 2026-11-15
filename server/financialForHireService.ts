@@ -16,11 +16,12 @@ import { financialSha256, rulesSnapshotHash, sourceSnapshotHash } from "./financ
 import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
 import { getFinancialWorkflowSchedules } from "./financialWorkflowDb";
 import { getForHireReleasePolicy } from "./financialForHireRelease";
+import { FOR_HIRE_RECURRING_CRON, FOR_HIRE_RECURRING_CADENCE, FOR_HIRE_RECURRING_TIMEZONE, FOR_HIRE_RECURRING_CHECK_TIME, isForHireDailySchedule } from "./financialForHireSchedule";
+export { FOR_HIRE_RECURRING_CRON } from "./financialForHireSchedule";
 
 export const FOR_HIRE_VTIGER_MODULE = "vtcmcontainercontrols" as const;
 export const FOR_HIRE_FUTURE_WEBHOOK_PATH = "/api/webhooks/vtiger/container-control-for-hire" as const;
 export const FOR_HIRE_RECURRING_PATH = "/api/scheduled/financial-writer/recurring_for_hire" as const;
-export const FOR_HIRE_RECURRING_CRON = "0 0 0 1 * *" as const;
 export const FOR_HIRE_RULES_VERSION = "for-hire-container-control-v1-readiness" as const;
 export const FOR_HIRE_RULES_HASH = createHash("sha256").update(FOR_HIRE_RULES_VERSION).digest("hex");
 
@@ -220,7 +221,7 @@ export async function previewRecurringForHirePo(recordId: string, now?: string):
   // Ask Xero for the current extension item only after the source and an AP
   // previous receipt make a single next period meaningful. No broad source scan.
   if (prior && itemCode) {
-    const stub = buildRecurringForHirePo({ facts, priorPeriodEnd: prior.periodEnd, lastVerifiedExtensionSuffix: prior.suffix, purchaseRate: 1 });
+    const stub = buildRecurringForHirePo({ facts, priorPeriodEnd: prior.periodEnd, lastVerifiedExtensionSuffix: prior.suffix, purchaseRate: 1, now });
     if (stub.document) {
       try {
         const [preflight] = await preflightFinancialXeroIntents([stub.document]);
@@ -245,7 +246,8 @@ export async function getForHireReadiness() {
   ]);
   const schedule = schedules.find((item) => item.workflowType === "recurring_for_hire");
   const writerEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true" && policy.initialEnabled;
-  const recurringEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true" && policy.recurringEnabled && Boolean(schedule?.enabled && schedule.taskUid);
+  const recurringScheduleMatchesCadence = isForHireDailySchedule(schedule);
+  const recurringEnabled = process.env.FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED === "true" && policy.recurringEnabled && policy.recurringOperationsHandoff && recurringScheduleMatchesCadence;
   return {
     module: FOR_HIRE_VTIGER_MODULE,
     futureWebhookPath: FOR_HIRE_FUTURE_WEBHOOK_PATH,
@@ -253,6 +255,10 @@ export async function getForHireReadiness() {
     webhookAuthenticationConfigured: Boolean(process.env.FINANCIAL_AP_WEBHOOK_SECRET?.trim()),
     recurringPath: FOR_HIRE_RECURRING_PATH,
     recurringCron: FOR_HIRE_RECURRING_CRON,
+    recurringCadence: FOR_HIRE_RECURRING_CADENCE,
+    recurringTimezone: FOR_HIRE_RECURRING_TIMEZONE,
+    recurringCheckTime: FOR_HIRE_RECURRING_CHECK_TIME,
+    recurringScheduleMatchesCadence,
     heartbeatRegistered: Boolean(schedule?.enabled && schedule.taskUid),
     writerEnabled,
     recurringEnabled,

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
   financialForHirePoEvents,
@@ -9,6 +9,7 @@ import {
 import { getDb } from "./db";
 import { assertForHireRelease, getForHireReleasePolicy } from "./financialForHireRelease";
 import type { FinancialDraftPayload } from "./financialProductionWriter";
+import { FOR_HIRE_RECURRING_CRON, FOR_HIRE_RECURRING_CADENCE, FOR_HIRE_RECURRING_TIMEZONE } from "./financialForHireSchedule";
 
 export type ForHireEventKind = "initial" | "recurring";
 export type ForHireEventStatus = "previewed" | "held" | "reserved" | "drafts_created" | "reconciliation_required" | "dehired";
@@ -88,9 +89,20 @@ export async function recordForHirePreview(input: {
     proposal: input.proposal as any,
     xeroPreflight: input.xeroPreflight as any,
   };
+  // The initial read is only an optimisation, not the safety boundary. A
+  // concurrent callback can claim/complete the receipt after that read. The
+  // duplicate insert is therefore a no-op; preview refresh is a separate
+  // conditional update checked atomically against the CURRENT row state.
   await db.insert(financialForHirePoEvents).values(values).onDuplicateKeyUpdate({
-    set: { ...values, updatedAt: new Date() },
+    set: { id: sql`${financialForHirePoEvents.id}` },
   });
+  await db.update(financialForHirePoEvents).set({ ...values, updatedAt: new Date() }).where(and(
+    eq(financialForHirePoEvents.containerControlId, input.containerControlId),
+    eq(financialForHirePoEvents.eventKind, input.eventKind),
+    eq(financialForHirePoEvents.billingPeriodStart, input.billingPeriodStart),
+    inArray(financialForHirePoEvents.status, ["previewed", "held", "dehired"]),
+    isNull(financialForHirePoEvents.processingToken),
+  ));
   const row = await getForHireEventForPeriod({
     containerControlId: input.containerControlId,
     eventKind: input.eventKind,
@@ -123,13 +135,15 @@ export async function latestVerifiedForHireEvent(containerControlId: string): Pr
   )).orderBy(desc(financialForHirePoEvents.billingPeriodEnd), desc(financialForHirePoEvents.id)).limit(1))[0] ?? null;
 }
 
-/** Bounded AP-owned recurring selector: only locally verified predecessors due today. */
-export async function dueForHireRecurringRoots(dueDate: string, limit = 10): Promise<FinancialForHirePoEvent[]> {
+/** Bounded daily traversal: only verified AP predecessors due by Sydney date, after a server-owned cursor. */
+export async function dueForHireRecurringRoots(dueDate: string, limit = 10, afterEventId = 0): Promise<FinancialForHirePoEvent[]> {
   const db = await getDb();
   if (!db) throw new Error("AP For Hire lifecycle ledger is unavailable.");
+  if (!Number.isSafeInteger(afterEventId) || afterEventId < 0) throw new Error("Invalid AP-owned For Hire traversal cursor.");
   return db.select().from(financialForHirePoEvents).where(and(
     eq(financialForHirePoEvents.status, "drafts_created"),
     lte(financialForHirePoEvents.nextBillingDate, dueDate),
+    afterEventId > 0 ? gt(financialForHirePoEvents.id, afterEventId) : undefined,
   )).orderBy(asc(financialForHirePoEvents.id)).limit(Math.max(1, Math.min(limit, 10)));
 }
 
@@ -222,9 +236,9 @@ export async function bindApprovedForHireSchedule(taskUid: string, approvedBy: n
     workflowType: "recurring_for_hire",
     taskUid,
     enabled: true,
-    cronExpression: "0 0 0 1 * *",
+    cronExpression: FOR_HIRE_RECURRING_CRON,
     lastOutcome: "approved_for_hire_release",
-    auditData: { releaseKey: policy.releaseKey, approvedBy },
+    auditData: { releaseKey: policy.releaseKey, approvedBy, cadence: FOR_HIRE_RECURRING_CADENCE, businessTimezone: FOR_HIRE_RECURRING_TIMEZONE },
   };
   await db.insert(workflowSchedules).values(values).onDuplicateKeyUpdate({ set: { ...values, updatedAt: new Date() } });
 }
