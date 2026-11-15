@@ -113,8 +113,8 @@ describe("inactive financial scheduled handlers", () => {
     mocks.forHireRecurring.mockResolvedValue({ ok: true, lastVisitedEventId: 20, retryRemainingBatch: true });
     const res = response();
     await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" }, body: { afterEventId: 999999, now: "2099-01-01" } } as any, res as any);
-    expect(mocks.forHireRecurring).toHaveBeenCalledWith("2026-12-14", 10);
-    expect(mocks.recordTraversal).toHaveBeenCalledWith("financial-task", "2026-12-14", 20, false);
+    expect(mocks.forHireRecurring).toHaveBeenCalledWith("2026-12-14", 10, 0);
+    expect(mocks.recordTraversal).toHaveBeenCalledWith("financial-task", "2026-12-14", 20, false, 0);
     expect(res.status).toHaveBeenCalledWith(429);
     expect(mocks.recordTraversal.mock.invocationCallOrder[0]).toBeLessThan(res.status.mock.invocationCallOrder[0]);
   });
@@ -126,8 +126,18 @@ describe("inactive financial scheduled handlers", () => {
     mocks.forHireRecurring.mockResolvedValue({ ok: true, lastVisitedEventId: 12, retryRemainingBatch: false });
     const res = response();
     await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" } } as any, res as any);
-    expect(mocks.forHireRecurring).toHaveBeenCalledWith("2026-12-15", 0);
-    expect(mocks.recordTraversal).toHaveBeenCalledWith("financial-task", "2026-12-15", 12, true);
+    expect(mocks.forHireRecurring).toHaveBeenCalledWith("2026-12-15", 0, 0);
+    expect(mocks.recordTraversal).toHaveBeenCalledWith("financial-task", "2026-12-15", 12, true, 0);
+  });
+
+  it("uses the task-owned manual cursor and ignores manual IDs or dates supplied in the callback body", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-12-13T20:05:00Z"));
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    mocks.getSchedule.mockResolvedValue({ workflowType: "recurring_for_hire", taskUid: "financial-task", enabled: true, cronExpression: FOR_HIRE_RECURRING_CRON, auditData: { forHireDailyTraversal: { businessDate: "2026-12-14", afterEventId: 20, afterManualHandoverId: 7, complete: false } } });
+    mocks.forHireRecurring.mockResolvedValue({ ok: true, lastVisitedEventId: 20, lastVisitedManualHandoverId: 17, retryRemainingBatch: true });
+    await financialRecurringProposalHandler({ params: { workflowType: "recurring_for_hire" }, body: { afterManualHandoverId: 99999, now: "2099-01-01" } } as any, response() as any);
+    expect(mocks.forHireRecurring).toHaveBeenCalledWith("2026-12-14", 20, 7);
+    expect(mocks.recordTraversal).toHaveBeenCalledWith("financial-task", "2026-12-14", 20, false, 17);
   });
 
   it("does not run a daily For Hire callback when the family gate remains off", async () => {

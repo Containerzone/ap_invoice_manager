@@ -16,6 +16,7 @@ import { financialSha256, rulesSnapshotHash, sourceSnapshotHash } from "./financ
 import { retrieveCurrentVtigerFinancialRecord } from "./vtigerFinancialReadService";
 import { getFinancialWorkflowSchedules } from "./financialWorkflowDb";
 import { getForHireReleasePolicy } from "./financialForHireRelease";
+import { revalidateManualForHireOpeningPoint } from "./financialForHireManualHandoverService";
 import { FOR_HIRE_RECURRING_CRON, FOR_HIRE_RECURRING_CADENCE, FOR_HIRE_RECURRING_TIMEZONE, FOR_HIRE_RECURRING_CHECK_TIME, isForHireDailySchedule } from "./financialForHireSchedule";
 export { FOR_HIRE_RECURRING_CRON } from "./financialForHireSchedule";
 
@@ -209,10 +210,15 @@ export async function previewInitialForHirePo(recordId: string): Promise<ForHire
 }
 
 /** Administrator-invoked, current-source, GET-only next extension preview. */
-export async function previewRecurringForHirePo(recordId: string, now?: string): Promise<ForHirePreviewResult> {
+export async function previewRecurringForHirePo(recordId: string, now?: string, manualHandoverId?: number): Promise<ForHirePreviewResult> {
   const facts = await readForHireContainerControl(recordId);
   const sourceHash = sourceSnapshotHash({ ...facts, rulesVersion: FOR_HIRE_RULES_VERSION });
-  const prior = await lastVerifiedForHirePeriod(recordId);
+  let prior = await lastVerifiedForHirePeriod(recordId);
+  if (manualHandoverId !== undefined) {
+    if (prior) throw new Error("A verified AP predecessor already exists; manual history cannot replace it.");
+    const { plan } = await revalidateManualForHireOpeningPoint({ recordId, handoverId: manualHandoverId, facts, now });
+    prior = { periodEnd: plan.coveredThrough, suffix: plan.manualSuffix === 1 ? null : plan.manualSuffix };
+  }
   const rules = resolveFinancialAutomationRules();
   const feet = /\b20\b/.test(facts.containerType) ? 20 : /\b40\b/.test(facts.containerType) ? 40 : null;
   const itemCode = feet === 20 ? rules.itemCodes.recurringHire20 : feet === 40 ? rules.itemCodes.recurringHire40 : "";

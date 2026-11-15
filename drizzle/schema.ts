@@ -1936,3 +1936,42 @@ export const financialBillingPartySyncAudits = mysqlTable("financial_billing_par
 }));
 
 export type FinancialBillingPartySyncAudit = typeof financialBillingPartySyncAudits.$inferSelect;
+
+/** Verified manual PO coverage: a future-only opening point, never an AP-created Draft receipt. */
+export const financialForHireManualHandovers = mysqlTable("financial_for_hire_manual_handovers", {
+  id: int("id").autoincrement().primaryKey(),
+  containerControlId: varchar("containerControlId", { length: 128 }).notNull(),
+  containerControlNumber: varchar("containerControlNumber", { length: 64 }).notNull(),
+  manualPoId: varchar("manualPoId", { length: 64 }).notNull(),
+  manualPoNumber: varchar("manualPoNumber", { length: 128 }).notNull(),
+  coveredThrough: varchar("coveredThrough", { length: 10 }).notNull(),
+  nextBillingDate: varchar("nextBillingDate", { length: 10 }),
+  status: mysqlEnum("status", ["approved", "reserved", "completed", "reconciliation_required", "dehired"]).default("approved").notNull(),
+  plan: json("plan").notNull(),
+  planHash: varchar("planHash", { length: 64 }).notNull(),
+  evidence: json("evidence").notNull(),
+  approvedBy: int("approvedBy").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  manualCreationStopped: boolean("manualCreationStopped").notNull(),
+  acknowledgement: varchar("acknowledgement", { length: 80 }).notNull(),
+  processingToken: varchar("processingToken", { length: 64 }),
+  firstApEventId: int("firstApEventId"),
+  holdReason: text("holdReason"),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  manualHandoverControlUnique: uniqueIndex("manual_hire_handover_control_unique").on(table.containerControlId),
+  manualHandoverPoUnique: uniqueIndex("manual_hire_handover_po_unique").on(table.manualPoId),
+}));
+export type FinancialForHireManualHandover = typeof financialForHireManualHandovers.$inferSelect;
+
+/** Append-only AP handover outcomes; no old Xero document is changed by these actions. */
+export const financialForHireManualHandoverAudits = mysqlTable("financial_for_hire_manual_handover_audits", {
+  id: int("id").autoincrement().primaryKey(),
+  handoverId: int("handoverId"),
+  containerControlId: varchar("containerControlId", { length: 128 }).notNull(),
+  action: varchar("action", { length: 80 }).notNull(),
+  planHash: varchar("planHash", { length: 64 }),
+  actorId: int("actorId"),
+  details: json("details"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});

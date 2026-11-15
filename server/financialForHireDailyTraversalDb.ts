@@ -8,21 +8,22 @@ import { getDb } from "./db";
  * The cursor advances monotonically within a Sydney business date; a later
  * date supersedes an earlier one. Concurrent callbacks cannot rewind it.
  */
-export async function recordForHireDailyTraversal(taskUid: string, businessDate: string, afterEventId: number, complete: boolean): Promise<void> {
-  if (!taskUid.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(businessDate) || !Number.isSafeInteger(afterEventId) || afterEventId <= 0) {
+export async function recordForHireDailyTraversal(taskUid: string, businessDate: string, afterEventId: number, complete: boolean, afterManualHandoverId = 0): Promise<void> {
+  if (!taskUid.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(businessDate) || !Number.isSafeInteger(afterEventId) || afterEventId < 0 || !Number.isSafeInteger(afterManualHandoverId) || afterManualHandoverId < 0 || (afterEventId === 0 && afterManualHandoverId === 0)) {
     throw new Error("Invalid AP-owned For Hire daily traversal metadata.");
   }
   const db = await getDb();
   if (!db) throw new Error("AP For Hire daily traversal ledger is unavailable.");
   const priorDay = sql`JSON_UNQUOTE(JSON_EXTRACT(${workflowSchedules.auditData}, '$.forHireDailyTraversal.businessDate'))`;
   const priorId = sql`COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(${workflowSchedules.auditData}, '$.forHireDailyTraversal.afterEventId')) AS UNSIGNED), 0)`;
+  const priorManualId = sql`COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(${workflowSchedules.auditData}, '$.forHireDailyTraversal.afterManualHandoverId')) AS UNSIGNED), 0)`;
   await db.update(workflowSchedules).set({
-    auditData: sql`JSON_SET(COALESCE(${workflowSchedules.auditData}, JSON_OBJECT()), '$.forHireDailyTraversal', JSON_EXTRACT(${JSON.stringify({ businessDate, afterEventId, complete })}, '$'))`,
+    auditData: sql`JSON_SET(COALESCE(${workflowSchedules.auditData}, JSON_OBJECT()), '$.forHireDailyTraversal', JSON_EXTRACT(${JSON.stringify({ businessDate, afterEventId, complete, ...(afterManualHandoverId > 0 ? { afterManualHandoverId } : {}) })}, '$'))`,
     updatedAt: new Date(),
   }).where(and(
     eq(workflowSchedules.taskUid, taskUid),
     eq(workflowSchedules.workflowType, "recurring_for_hire"),
     eq(workflowSchedules.enabled, true),
-    sql`(${priorDay} IS NULL OR ${priorDay} < ${businessDate} OR (${priorDay} = ${businessDate} AND (${priorId} < ${afterEventId} OR (${priorId} = ${afterEventId} AND ${complete}))))`,
+    sql`(${priorDay} IS NULL OR ${priorDay} < ${businessDate} OR (${priorDay} = ${businessDate} AND ${priorId} <= ${afterEventId} AND ${priorManualId} <= ${afterManualHandoverId} AND (${priorId} < ${afterEventId} OR ${priorManualId} < ${afterManualHandoverId} OR ${complete})))`,
   ));
 }

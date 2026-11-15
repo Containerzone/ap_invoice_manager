@@ -55,7 +55,20 @@ describe("AP-owned For Hire daily traversal metadata", () => {
     await recordForHireDailyTraversal("authenticated-task", "2026-12-15", 40, true);
     const jsonUpdate = new MySqlDialect().sqlToQuery(set.mock.calls[0][0].auditData);
     expect(JSON.parse(String(jsonUpdate.params[0])).complete).toBe(true);
-    expect(new MySqlDialect().sqlToQuery(where.mock.calls[0][0]).sql).toContain(" = ? AND ?");
+    expect(new MySqlDialect().sqlToQuery(where.mock.calls[0][0]).sql).toContain(" <= ?");
+  });
+
+  it("records manual-only traversal and guards both independent counters against rewind", async () => {
+    const where = vi.fn(async (_condition: any) => [{ affectedRows: 1 }]);
+    const set = vi.fn((_values: any) => ({ where }));
+    mocks.getDb.mockResolvedValue({ update: () => ({ set }) });
+    await recordForHireDailyTraversal("task", "2026-12-14", 0, false, 10);
+    const dialect = new MySqlDialect();
+    const update = dialect.sqlToQuery(set.mock.calls[0][0].auditData);
+    expect(JSON.parse(String(update.params[0]))).toMatchObject({ afterEventId: 0, afterManualHandoverId: 10, complete: false });
+    const condition = dialect.sqlToQuery(where.mock.calls[0][0]);
+    expect(condition.sql).toContain("$.forHireDailyTraversal.afterManualHandoverId");
+    expect((condition.sql.match(/<= \?/g) ?? []).length).toBe(2);
   });
 
   it("rejects invalid cursor input without accessing the database", async () => {

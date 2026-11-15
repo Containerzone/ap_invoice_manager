@@ -579,3 +579,89 @@ export async function previewHistoricalXeroReferences(references: string[]): Pro
   }
   return rows;
 }
+
+/**
+ * GET-only evidence for a manually issued For Hire PO. This is not permission
+ * to import a handover or write an extension: callers MUST require complete.
+ *
+ * Capability checked against official Xero docs / OpenAPI on 2026-11-15:
+ * https://developer.xero.com/documentation/api/accounting/purchaseorders
+ * https://developer.xero.com/documentation/api/accounting/requests-and-responses
+ * https://developer.xero.com/documentation/best-practices/api-call-efficiencies/filtering
+ * https://github.com/XeroAPI/Xero-OpenAPI/blob/master/xero_accounting.yaml
+ *
+ * StartsWith() is legal in Xero's general where syntax, but GET PurchaseOrders
+ * does NOT document/support where: its list filters are Status, DateFrom,
+ * DateTo, order, page and pageSize (plus If-Modified-Since). Neither the number
+ * series (HC123 / HC123-*) nor Reference == C123 can be reliably scoped through
+ * those filters. A status/date restriction would miss number collisions and
+ * overlaps, including deleted history. Sending an undocumented where risks an
+ * ignored filter and a tenant-wide read; trying two or three such pages cannot
+ * establish completeness. Therefore this helper makes ZERO list/page calls,
+ * returns complete:false, and relatedPurchaseOrders:[] means UNKNOWN, not none.
+ * Official paged PO responses do contain LineItems, but that does not solve
+ * the missing scoped-search capability. No suffix guessing or 404-as-absence.
+ */
+export async function readManualForHireHandoverXeroEvidence(input: {
+  manualPoNumber: string;
+  controlNumber: string;
+  supplierName: string;
+}): Promise<{
+  manualPo: Record<string, any>;
+  relatedPurchaseOrders: Record<string, any>[];
+  supplierContactId: string;
+  tenantId: string;
+  complete: boolean;
+}> {
+  // Canonical references are validated BEFORE authentication or any reads.
+  // Do not trim/case-fold business numbers into a different requested resource.
+  if (!input || typeof input.controlNumber !== "string" || input.controlNumber !== input.controlNumber.trim() || !/^C\d+$/.test(input.controlNumber)) {
+    throw new Error("Manual For Hire handover requires an exact C-digits control number.");
+  }
+  if (typeof input.manualPoNumber !== "string" || input.manualPoNumber !== input.manualPoNumber.trim() ||
+      !new RegExp(`^H${input.controlNumber}(?:-[1-9]\\d*)?$`).test(input.manualPoNumber)) {
+    throw new Error("Manual For Hire PO number must be canonical H + control number, optionally followed by a positive integer suffix.");
+  }
+  if (typeof input.supplierName !== "string" || !input.supplierName.trim()) {
+    throw new Error("Manual For Hire handover requires an exact supplier name.");
+  }
+
+  const auth = await readOnlyAuth();
+  await assertExpectedFinancialTenant(auth);
+  if (!auth.tenantId?.trim()) throw new Error("Manual For Hire handover requires a verified Xero tenant ID.");
+
+  const byNumber = await xeroRead<any>(auth, `manual-for-hire-number:${input.manualPoNumber}`,
+    `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(input.manualPoNumber)}`);
+  const numberRows = Array.isArray(byNumber?.PurchaseOrders) ? byNumber.PurchaseOrders : [];
+  const numberPo = numberRows.length === 1 ? numberRows[0] : null;
+  const purchaseOrderId = numberPo?.PurchaseOrderID;
+  if (!numberPo || numberPo.PurchaseOrderNumber !== input.manualPoNumber ||
+      typeof purchaseOrderId !== "string" || !purchaseOrderId.trim() || purchaseOrderId !== purchaseOrderId.trim()) {
+    throw new Error("Manual For Hire exact-number GET must return one exact PO number with an immutable ID; otherwise hold.");
+  }
+
+  const byId = await xeroRead<any>(auth, `manual-for-hire-id:${purchaseOrderId}`,
+    `${XERO_API_BASE}/PurchaseOrders/${encodeURIComponent(purchaseOrderId)}`);
+  const idRows = Array.isArray(byId?.PurchaseOrders) ? byId.PurchaseOrders : [];
+  const manualPo = idRows.length === 1 ? idRows[0] : null;
+  if (!manualPo || manualPo.PurchaseOrderID !== purchaseOrderId || manualPo.PurchaseOrderNumber !== input.manualPoNumber ||
+      !Array.isArray(manualPo.LineItems) || manualPo.LineItems.some((line: any) => !line || typeof line !== "object" || Array.isArray(line)) ||
+      typeof manualPo.Status !== "string" || !manualPo.Status.trim()) {
+    throw new Error("Manual For Hire ID read must return one exact ID/number full PO record with line items and status; otherwise hold.");
+  }
+
+  const contact = await preflightContact(auth, input.supplierName);
+  if (!contact.found || contact.count !== 1 || !contact.contactId || contact.contactId !== contact.contactId.trim()) {
+    throw new Error("Manual For Hire supplier must resolve to one exact current Xero contact; otherwise hold.");
+  }
+  const activeContact = await preflightContactId(auth, contact.contactId, input.supplierName, true);
+  if (!activeContact.found || activeContact.contactId !== contact.contactId ||
+      manualPo.Contact?.ContactID !== contact.contactId ||
+      typeof manualPo.Contact?.Name !== "string" || normalCustomerName(manualPo.Contact.Name) !== normalCustomerName(input.supplierName)) {
+    throw new Error("Manual For Hire PO supplier name/ID must match the exact active current Xero contact; otherwise hold.");
+  }
+
+  // Preserve the full ID read, including every status. Unsupported list scope
+  // leaves overlap/collision evidence incomplete, even when the manual PO is valid.
+  return { manualPo, relatedPurchaseOrders: [], supplierContactId: contact.contactId, tenantId: auth.tenantId, complete: false };
+}

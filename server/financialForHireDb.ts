@@ -156,12 +156,12 @@ export async function claimForHirePreview(eventId: number, token: string): Promi
   return Number(result?.[0]?.affectedRows ?? result?.rowsAffected ?? 0) === 1;
 }
 
-export async function bindForHirePayload(eventId: number, releaseKey: string, payload: FinancialDraftPayload): Promise<void> {
+export async function bindForHirePayload(eventId: number, releaseKey: string, payload: FinancialDraftPayload, manualOpeningPoint?: { id: number; planHash: string }): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("AP For Hire lifecycle ledger is unavailable.");
   await db.update(financialForHirePoEvents).set({
     releaseKey,
-    authorisedPayload: { hash: forHirePayloadHash(payload), number: payload.documentNumber, bodyHash: createHash("sha256").update(JSON.stringify(payload.body)).digest("hex") },
+    authorisedPayload: { hash: forHirePayloadHash(payload), number: payload.documentNumber, bodyHash: createHash("sha256").update(JSON.stringify(payload.body)).digest("hex"), ...(manualOpeningPoint ? { manualHandoverId: manualOpeningPoint.id, manualHandoverPlanHash: manualOpeningPoint.planHash } : {}) },
   }).where(eq(financialForHirePoEvents.id, eventId));
 }
 
@@ -179,13 +179,22 @@ export async function verifyForHireAutomaticWriteAccess(input: {
   const db = await getDb();
   if (!db) throw new Error("AP For Hire lifecycle ledger is unavailable.");
   const event = (await db.select().from(financialForHirePoEvents).where(eq(financialForHirePoEvents.id, input.eventId)).limit(1))[0];
-  const auth = event?.authorisedPayload as { hash?: string; number?: string } | null;
+  const auth = event?.authorisedPayload as { hash?: string; number?: string; manualHandoverId?: number; manualHandoverPlanHash?: string } | null;
   if (!event || event.status !== "reserved" || !event.processingToken || event.releaseKey !== policy.releaseKey || input.releaseKey !== policy.releaseKey ||
     input.preparedBy !== policy.approvedBy || !auth || auth.hash !== forHirePayloadHash(input.payload) || auth.number !== input.payload.documentNumber) {
     throw new Error("For Hire event has no current release-backed, exact-payload reservation.");
   }
   if (input.payload.method !== "POST" || input.payload.documentFamily !== "purchase_order" || input.payload.expectedXeroDocumentId) {
     throw new Error("For Hire automatic release permits only a new Draft Purchase Order POST.");
+  }
+  if (auth.manualHandoverId !== undefined) {
+    if (input.workflowType !== "recurring_for_hire" || !auth.manualHandoverPlanHash) throw new Error("Manual opening points may authorize only the first recurring hire Draft.");
+    const { verifyManualForHireFirstWrite } = await import("./financialForHireManualHandoverService");
+    await verifyManualForHireFirstWrite({ recordId: event.containerControlId, handoverId: auth.manualHandoverId, planHash: auth.manualHandoverPlanHash, eventId: event.id, token: event.processingToken, payload: input.payload });
+  } else {
+    const { getManualForHireHandover } = await import("./financialForHireManualHandoverDb");
+    const opening = await getManualForHireHandover(event.containerControlId);
+    if (opening && (opening.status !== "completed" || input.workflowType !== "recurring_for_hire")) throw new Error("This control's manual opening point requires its exact first-period authorization; only verified AP recurring successors may continue after completion.");
   }
 }
 

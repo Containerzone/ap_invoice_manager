@@ -12,7 +12,7 @@ import { runAutomaticRecurringStorage } from "./financialStorageLifecycleService
 import { getStorageReleasePolicy, assertStorageRelease } from "./financialStorageRelease";
 import { runAutomaticRecurringForHire } from "./financialForHireLiveService";
 import { getForHireReleasePolicy, assertForHireRelease } from "./financialForHireRelease";
-import { FOR_HIRE_RECURRING_CRON, forHireDailyTraversalCursor, forHireSydneyToday, isForHireDailySchedule } from "./financialForHireSchedule";
+import { FOR_HIRE_RECURRING_CRON, forHireDailyTraversalCursor, forHireDailyManualTraversalCursor, forHireSydneyToday, isForHireDailySchedule } from "./financialForHireSchedule";
 import { recordForHireDailyTraversal } from "./financialForHireDailyTraversalDb";
 
 async function verifyFinancialSchedule(req: Request, expectedWorkflowType: string) {
@@ -101,9 +101,11 @@ export async function financialRecurringProposalHandler(req: Request, res: Respo
       assertForHireRelease(policy, "recurring");
       const businessDate = forHireSydneyToday();
       const cursor = forHireDailyTraversalCursor(verified.schedule.auditData, businessDate);
-      const result = await runAutomaticRecurringForHire(businessDate, cursor);
-      if (result.lastVisitedEventId > cursor || (cursor > 0 && !result.retryRemainingBatch)) {
-        await recordForHireDailyTraversal(taskUid, businessDate, result.lastVisitedEventId, !result.retryRemainingBatch);
+      const manualCursor = forHireDailyManualTraversalCursor(verified.schedule.auditData, businessDate);
+      const result = await runAutomaticRecurringForHire(businessDate, cursor, manualCursor);
+      const nextManualCursor = result.lastVisitedManualHandoverId ?? manualCursor;
+      if (result.lastVisitedEventId > cursor || nextManualCursor > manualCursor || ((cursor > 0 || manualCursor > 0) && !result.retryRemainingBatch)) {
+        await recordForHireDailyTraversal(taskUid, businessDate, result.lastVisitedEventId, !result.retryRemainingBatch, nextManualCursor);
       }
       await recordFinancialWorkflowScheduleOutcome({ workflowType, taskUid, outcome: "for_hire_lifecycle_completed" });
       if (result.retryRemainingBatch) return res.status(429).json({ ...result, message: "More due For Hire periods remain; retry the same managed callback. Completed periods are not replayed." });

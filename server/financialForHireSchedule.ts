@@ -27,6 +27,13 @@ export function forHireDailyTraversalCursor(auditData: unknown, businessDate: st
     ? Number(traversal.afterEventId) : 0;
 }
 
+export function forHireDailyManualTraversalCursor(auditData: unknown, businessDate: string): number {
+  const raw = auditData && typeof auditData === "object" ? auditData as Record<string, unknown> : {};
+  const traversal = raw.forHireDailyTraversal as { businessDate?: unknown; afterManualHandoverId?: unknown; complete?: unknown } | undefined;
+  const continues = traversal?.businessDate === businessDate || (typeof traversal?.businessDate === "string" && traversal.businessDate < businessDate && traversal.complete === false);
+  return continues && Number.isSafeInteger(traversal?.afterManualHandoverId) && Number(traversal?.afterManualHandoverId) >= 0 ? Number(traversal!.afterManualHandoverId) : 0;
+}
+
 export function isForHireDailySchedule(schedule: {
   enabled?: boolean;
   taskUid?: string | null;

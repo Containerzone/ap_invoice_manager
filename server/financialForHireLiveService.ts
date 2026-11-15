@@ -15,6 +15,7 @@ import { assertForHireRelease, getForHireReleasePolicy } from "./financialForHir
 import { prepareFinancialDraftPayload } from "./financialProductionWriter";
 import { executeGuardedFinancialWriterCommand } from "./financialWriterExecutionService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
+import { getManualForHireHandover, isManualForHireHandoverEnabled, dueManualForHireHandovers, claimManualForHireHandover, completeManualForHireHandover, holdManualForHireHandover } from "./financialForHireManualHandoverDb";
 
 function sydneyToday(): string {
   return Temporal.Now.zonedDateTimeISO("Australia/Sydney").toPlainDate().toString();
@@ -33,12 +34,22 @@ async function executeCurrentPreview(input: {
   recordId: string;
   now: string;
   expectedPriorEventId?: number | null;
+  expectedManualHandoverId?: number;
 }) {
   const policy = await getForHireReleasePolicy();
   assertForHireRelease(policy, input.kind === "initial" ? "initial" : "recurring");
+  if (input.expectedManualHandoverId !== undefined && (input.kind !== "recurring" || !isManualForHireHandoverEnabled())) throw new Error("Manual opening-point execution is not enabled for this flow.");
+  if (input.expectedManualHandoverId !== undefined) {
+    const { readForHireContainerControl } = await import("./financialForHireService");
+    const current = await readForHireContainerControl(input.recordId);
+    if (current.status.trim().toUpperCase() === "DEHIRED") {
+      await holdManualForHireHandover({ id: input.expectedManualHandoverId, containerControlId: input.recordId, reason: "Container is DEHIRED; no future hire PO.", dehired: true });
+      return { ok: true, status: "dehired" as const, recordId: input.recordId, xeroWritesAttempted: 0 };
+    }
+  }
   const preview = input.kind === "initial"
     ? await previewInitialForHirePo(input.recordId)
-    : await previewRecurringForHirePo(input.recordId, input.now);
+    : await previewRecurringForHirePo(input.recordId, input.now, input.expectedManualHandoverId);
 
   if (preview.state === "dehired") {
     if (input.expectedPriorEventId) await clearForHireNextBillingDate(input.expectedPriorEventId);
@@ -73,13 +84,23 @@ async function executeCurrentPreview(input: {
     return { ok: false, status: "held" as const, recordId: input.recordId, eventId: event.id, warning: "For Hire period is already being processed or was not freshly preflighted.", xeroWritesAttempted: 0 };
   }
 
+  let manualOpening: { id: number; planHash: string } | undefined;
+  let manualClaimed = false;
+  let writerInvoked = false;
   try {
+    if (input.expectedManualHandoverId !== undefined) {
+      const row = await getManualForHireHandover(input.recordId);
+      if (!row || row.id !== input.expectedManualHandoverId || !(await claimManualForHireHandover({ id: row.id, planHash: row.planHash, token, eventId: event.id }))) throw new Error("Manual opening point is already claimed, changed or awaiting reconciliation.");
+      manualOpening = { id: row.id, planHash: row.planHash };
+      manualClaimed = true;
+    }
     const payload = prepareFinancialDraftPayload(preview.preview.document, `${input.recordId}:${input.kind}:${preview.preview.periodStart}`);
     const first = (payload.body.PurchaseOrders as Record<string, unknown>[] | undefined)?.[0];
     if (!first) throw new Error("For Hire transport payload is missing its Purchase Order.");
     first.CurrencyCode = "AUD";
-    await bindForHirePayload(event.id, policy.releaseKey, payload);
+    await bindForHirePayload(event.id, policy.releaseKey, payload, manualOpening);
 
+    writerInvoked = true;
     const outcome = await executeGuardedFinancialWriterCommand({
       workflowType: input.kind === "initial" ? "initial_for_hire" : "recurring_for_hire",
       proposedAction: "create_draft",
@@ -104,10 +125,12 @@ async function executeCurrentPreview(input: {
     });
     if (outcome.outcome === "reconciliation_required") {
       await holdForHireExecution(event.id, "Xero response is ambiguous; reconcile the exact AP execution before retrying.", true);
+      if (manualOpening) await holdManualForHireHandover({ id: manualOpening.id, containerControlId: input.recordId, token, reason: "First AP Draft writer result is uncertain; no manual opening replay is allowed." });
       return { ok: false, status: "reconciliation_required" as const, recordId: input.recordId, eventId: event.id, warning: "Xero result is ambiguous; no blind retry will occur.", xeroWritesAttempted: 1 };
     }
     if (outcome.outcome === "duplicate") {
       await holdForHireExecution(event.id, "An existing AP execution reservation requires reconciliation before a further For Hire write.", true);
+      if (manualOpening) await holdManualForHireHandover({ id: manualOpening.id, containerControlId: input.recordId, token, reason: "Existing first AP execution reservation requires reconciliation." });
       return { ok: false, status: "reconciliation_required" as const, recordId: input.recordId, eventId: event.id, warning: "Existing For Hire execution is awaiting reconciliation.", xeroWritesAttempted: 0 };
     }
 
@@ -118,10 +141,16 @@ async function executeCurrentPreview(input: {
       nextBillingDate: nextDay(preview.preview.periodEnd),
       priorEventId: input.expectedPriorEventId ?? null,
     });
+    if (manualOpening) await completeManualForHireHandover({ containerControlId: input.recordId, id: manualOpening.id, token, eventId: event.id });
     return { ok: true, status: "drafts_created" as const, recordId: input.recordId, eventId: event.id, poNumber: outcome.result.documentNumber, xeroPurchaseOrderId: outcome.result.xeroDocumentId, xeroWritesAttempted: 1 };
   } catch (error) {
-    await holdForHireExecution(event.id, holdReason(error));
-    throw error;
+    // Once the guarded writer has been invoked, even a thrown local/readback
+    // error must not turn a potentially submitted POST into a retryable preview.
+    await holdForHireExecution(event.id, holdReason(error), writerInvoked);
+    if (manualClaimed && manualOpening) await holdManualForHireHandover({ id: manualOpening.id, containerControlId: input.recordId, token, reason: holdReason(error) });
+    const reported = error instanceof Error ? error : new Error(holdReason(error));
+    Object.assign(reported, { forHireFinancialWriteAttempted: writerInvoked });
+    throw reported;
   }
 }
 
@@ -135,8 +164,13 @@ export async function processAutomaticRecurringForHire(recordId: string, priorEv
   return executeCurrentPreview({ kind: "recurring", recordId, now, expectedPriorEventId: priorEventId });
 }
 
+/** First AP Draft after one separately approved manual coverage opening point. */
+export async function processAutomaticManualForHireOpening(recordId: string, handoverId: number, now = sydneyToday()) {
+  return executeCurrentPreview({ kind: "recurring", recordId, now, expectedManualHandoverId: handoverId });
+}
+
 /** Daily check, not daily billing: only AP-owned predecessors due on/before the Sydney business date are selected. */
-export async function runAutomaticRecurringForHire(now = sydneyToday(), afterEventId = 0) {
+export async function runAutomaticRecurringForHire(now = sydneyToday(), afterEventId = 0, afterManualHandoverId = 0) {
   const policy = await getForHireReleasePolicy();
   assertForHireRelease(policy, "recurring");
   const roots = await dueForHireRecurringRoots(now, 10, afterEventId);
@@ -154,13 +188,28 @@ export async function runAutomaticRecurringForHire(now = sydneyToday(), afterEve
         details: { containerControlId: root.containerControlId, periodStart: root.billingPeriodStart },
         severity: "error",
       });
-      results.push({ control: root.containerControlNumber, ok: false, status: "held", warning: "For Hire extension held; inspect the AP lifecycle ledger." });
+      const potentiallyWritten = (error as any)?.forHireFinancialWriteAttempted === true;
+      results.push({ control: root.containerControlNumber, ok: false, status: potentiallyWritten ? "reconciliation_required" : "held", xeroWritesAttempted: potentiallyWritten ? 1 : 0, warning: "For Hire extension held; inspect the AP lifecycle ledger." });
+    }
+  }
+  const manualEnabled = isManualForHireHandoverEnabled();
+  const manualRoots = manualEnabled && roots.length < 10 ? await dueManualForHireHandovers(now, 10 - roots.length, afterManualHandoverId) : [];
+  for (const opening of manualRoots) {
+    try {
+      results.push({ control: opening.containerControlNumber, origin: "manual_opening_point", ...await processAutomaticManualForHireOpening(opening.containerControlId, opening.id, now) });
+    } catch (error) {
+      await holdManualForHireHandover({ id: opening.id, containerControlId: opening.containerControlId, reason: holdReason(error) });
+      reportWorkflowFailureSafely({ workflowType: "recurring_for_hire", recordKey: `manual-hire:${opening.id}`, title: "Manual hire opening point held", errorMessage: holdReason(error), details: { containerControlId: opening.containerControlId }, severity: "error" });
+      const potentiallyWritten = (error as any)?.forHireFinancialWriteAttempted === true;
+      results.push({ control: opening.containerControlNumber, origin: "manual_opening_point", ok: false, status: potentiallyWritten ? "reconciliation_required" : "held", xeroWritesAttempted: potentiallyWritten ? 1 : 0 });
     }
   }
   // Held receipts keep their billing markers and immutable claims. Traverse
   // beyond them using task-owned AP metadata, so they cannot starve other due
   // containers or be repeatedly attempted in one daily traversal.
   const lastVisitedEventId = roots.reduce((last, root) => Math.max(last, root.id), afterEventId);
-  const retryRemainingBatch = roots.length === 10 && (await dueForHireRecurringRoots(now, 1, lastVisitedEventId)).length > 0;
-  return { ok: true, considered: roots.length, results, lastVisitedEventId, retryRemainingBatch, xeroWritesAttempted: results.filter((row) => row.xeroWritesAttempted === 1).length };
+  const lastVisitedManualHandoverId = manualRoots.reduce((last, row) => Math.max(last, row.id), afterManualHandoverId);
+  const considered = roots.length + manualRoots.length;
+  const retryRemainingBatch = considered === 10 && ((await dueForHireRecurringRoots(now, 1, lastVisitedEventId)).length > 0 || (manualEnabled && (await dueManualForHireHandovers(now, 1, lastVisitedManualHandoverId)).length > 0));
+  return { ok: true, considered, results, lastVisitedEventId, lastVisitedManualHandoverId, retryRemainingBatch, xeroWritesAttempted: results.filter((row) => row.xeroWritesAttempted === 1).length };
 }

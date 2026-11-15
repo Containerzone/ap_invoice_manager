@@ -1,6 +1,7 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
+import { manualForHireHandoverRouter } from "./manualForHireHandoverRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod/v4";
@@ -544,6 +545,7 @@ async function requireFinancialCandidateTestReadiness(actorId: number) {
 
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
+  manualForHireHandover: manualForHireHandoverRouter,
   // ─── Financial trigger migration — phase-one shadow mode ───────────────────
   // This router persists calculations and audit data only. It deliberately has
   // no Xero write operation and cannot enable a financial target schedule.

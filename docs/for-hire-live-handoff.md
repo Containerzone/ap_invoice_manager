@@ -68,3 +68,13 @@ The initial receiver remains `POST /api/webhooks/vtiger/container-control-for-hi
 - TypeScript, production build and diff checks passed.
 - Read-only application state check confirmed initial For Hire and customer Extra Hire writers remain enabled; recurring policy, recurring Operations handover and Heartbeat remain disabled/unregistered; HC1929 event 180001 / writer 3150001 / next due 14/12/26 are unchanged.
 - No Xero/VTiger document or source write, schema migration, live policy or gate update, scheduler create/enable, Operations pause or historical import occurred. Publication and recurring activation are separate pending steps.
+
+## Step 5 implementation — future-only manual opening points (15/11/26)
+
+The owner approved implementing the manual-to-automated handover while leaving older manual POs untouched. A separate administrator panel and immutable opening-point/audit ledgers are now prepared; this does not relabel an old PO as an AP-created receipt. Details and the pilot checklist are in [Manual For Hire handover](manual-for-hire-handover.md).
+
+Accounts supplies the exact last manual PO and covered-through/effective dates, makes two separate latest-coverage/no-future-overlap confirmations, and separately confirms manual creation has stopped. Exact-current preview/approval verifies the current source, vendor, selected Xero PO, native period, next ordinal and current daily purchase rate. Saving is AP metadata only. The PurchaseOrders API cannot reliably scope full container history; it stays `complete:false`, so Accounts—not an inferred empty list—attests the complete coverage review.
+
+When separately activated, the daily callback can select both verified AP predecessors and approved manual opening points. The first manual-based period is exclusively claimed and freshly revalidated by the existing Draft-only writer; after verified completion only the new AP Draft becomes a normal predecessor. Rolled-back enrollment does not remove existing opening-point locks. Completed openings cannot create another initial PO; uncertain writes remain reconciliation-required and are never blindly replayed.
+
+Additive migration 0057 created only the two empty handover/audit tables. Final step-5 validation passed **16 files / 451 focused tests** and **157 files / 2,170 offline application tests**, plus TypeScript, build and diff checks. Read-only verification found **zero enrollments/audit rows**, manual enrollment disabled, recurring release/handover disabled and no registered AP For Hire Heartbeat. No real pilot or financial document was written. Publication, a real manual-history pilot, per-container enrollment/legacy handover and recurring activation remain pending and separate.
