@@ -18,7 +18,7 @@ const control = { id: "24x901", vtcmcontainercontrolsnumber: "C1860", cf_vtcmcon
   cf_vtcmcontainercontrols_suppliername: "18x44", cf_vtcmcontainercontrols_costpermonth: "132", modifiedtime: "2026-11-01T00:00:00.000Z" };
 beforeEach(() => {
   vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-01T02:00:00Z"));
-  current = { ...control }; m.policy.mockResolvedValue({ releaseKey: "offline-release", approvedBy: 7 });
+  current = { ...control }; m.policy.mockResolvedValue({ releaseKey: "offline-release", approvedBy: 7, recurringControlIds: ["24x901"] });
   m.retrieve.mockImplementation(async id => id === control.id ? { ...current } : { id, vendorname: "Offline supplier" });
   m.preflight.mockImplementation(async () => [structuredClone(evidence)]);
 });

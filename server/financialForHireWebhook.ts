@@ -4,6 +4,7 @@ import { FOR_HIRE_FUTURE_WEBHOOK_PATH } from "./financialForHireService";
 import { reportWorkflowFailureSafely } from "./workflowAlertService";
 import { hasFinancialWebhookSecret } from "./financialWebhookAuthentication";
 import { findExactFinancialCandidate } from "./vtigerFinancialCandidateService";
+import { AUTHENTICATED_INITIAL_FOR_HIRE_ORIGIN } from "./financialForHireFutureEligibilityDb";
 
 export const FOR_HIRE_WEBHOOK_SECRET_HEADER = "x-financial-webhook-secret" as const;
 export const FOR_HIRE_WEBHOOK_EVENT = "container-control.for-hire-request" as const;
@@ -78,7 +79,7 @@ export function registerForHireWebhook(app: Express): void {
     }
     try {
       const resolvedRecordId = await resolveForHireRecordId(envelope.recordId);
-      const result = await processAutomaticInitialForHire(resolvedRecordId);
+      const result = await processAutomaticInitialForHire(resolvedRecordId, { origin: AUTHENTICATED_INITIAL_FOR_HIRE_ORIGIN, receivedAt: new Date() });
       if (!result.ok) reportWorkflowFailureSafely({
         workflowType: "initial_for_hire",
         recordKey: `for-hire:${resolvedRecordId}`,

@@ -4,6 +4,7 @@ import { offlineDb, offlineMixedFixture, offlinePreviewClaim } from "./financial
 import { financialSha256 } from "./financialProposalIntegrity";
 const mocks = vi.hoisted(() => ({ getDb: vi.fn() }));
 vi.mock("./db", () => ({ getDb: mocks.getDb }));
+vi.mock("./financialForHireRelease", () => ({ getForHireReleasePolicy: async () => ({ recurringControlIds: ["test-control", "79x489745"] }), assertForHireRelease: () => undefined, assertForHireRecurringControlAllowed: () => undefined }));
 import { claimForHirePreview, recordForHirePreview } from "./financialForHireDb";
 
 const proposal = {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./financialWorkflowDb", () => ({ getFinancialWorkflowConfig: vi.fn(), upsertFinancialWorkflowConfig: vi.fn() }));
-import { FOR_HIRE_RELEASE_KEY, FOR_HIRE_RULES_HASH, FOR_HIRE_RECURRING_RULES_HASH, assertForHireRelease, assertForHireRecurringControlAllowed, approveForHireReleasePolicy, approveRecurringForHireRelease, getForHireReleasePolicy, prepareForHireReleasePolicy, resolveForHireRelease, type ForHireReleasePolicy } from "./financialForHireRelease";
+import { FOR_HIRE_RELEASE_KEY, FOR_HIRE_RULES_HASH, FOR_HIRE_RECURRING_RULES_HASH, FOR_HIRE_RECURRING_RULES_VERSION, assertForHireRelease, assertForHireRecurringControlAllowed, approveForHireReleasePolicy, approveRecurringForHireRelease, approveRecurringFutureForHireRelease, buildRecurringFutureForHireReleasePolicy, getForHireReleasePolicy, prepareForHireReleasePolicy, resolveForHireRelease, type ForHireReleasePolicy } from "./financialForHireRelease";
 import * as workflowDb from "./financialWorkflowDb";
 const control = "79x489745";
 function released(overrides: Partial<ForHireReleasePolicy> = {}): ForHireReleasePolicy {
@@ -10,6 +10,7 @@ function released(overrides: Partial<ForHireReleasePolicy> = {}): ForHireRelease
     approvedAt: "2026-10-01T00:00:00.000Z", effectiveFrom: "2026-10-02T00:00:00.000Z",
     forHireOnlyVtigerBranch: true, initialOperationsHandoff: true, recurringOperationsHandoff: true,
     migrationScope: "new_events_only", recurringRulesHash: FOR_HIRE_RECURRING_RULES_HASH,
+    recurringFutureInitialsEnabled: false, recurringFutureInitialsFrom: null, recurringFutureExcludedControlIds: [],
     recurringControlIds: [control], recurringApprovedAt: "2026-11-15T10:00:00.000Z", recurringEffectiveFrom: "2026-11-15T10:00:00.000Z", ...overrides,
   };
 }
@@ -89,5 +90,95 @@ describe("For Hire scoped standing release", () => {
     vi.mocked(workflowDb.getFinancialWorkflowConfig).mockResolvedValue([{configKey:FOR_HIRE_RELEASE_KEY,configValue:released({recurringEnabled:false})}] as any);
     await expect(approveRecurringForHireRelease({approvedBy:9,effectiveFrom:"2026-11-15T11:00:00.000Z",approvedControlIds:[control],recurringOperationsHandoff:true,...patch} as any)).rejects.toThrow(/approval requires/i);
     expect(workflowDb.upsertFinancialWorkflowConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("v4 future-initial recurring policy", () => {
+  const exclusions = Array.from({ length: 17 }, (_, n) => `79x${500000 + n}`);
+  const cutoff = "2026-11-15T10:30:00.000Z";
+  const future = (patch: Partial<ForHireReleasePolicy> = {}) => released({ recurringControlIds: [],
+    recurringFutureInitialsEnabled: true, recurringFutureInitialsFrom: cutoff, recurringFutureExcludedControlIds: exclusions,
+    recurringEffectiveFrom: cutoff, ...patch });
+  it("versions recurring authority independently without modifying the initial hash/key", () => {
+    expect(FOR_HIRE_RECURRING_RULES_VERSION).toContain("v4");
+    expect(FOR_HIRE_RULES_HASH).not.toBe(FOR_HIRE_RECURRING_RULES_HASH);
+  });
+  it("old policy inputs resolve future fields safely disabled", () => {
+    expect(resolveForHireRelease({ ...released(), recurringFutureInitialsEnabled: undefined,
+      recurringFutureInitialsFrom: undefined, recurringFutureExcludedControlIds: undefined })).toMatchObject({
+        recurringFutureInitialsEnabled: false, recurringFutureInitialsFrom: null, recurringFutureExcludedControlIds: [] });
+  });
+  it("future-only authority has no named wildcard and still requires proof for each control", () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    expect(() => assertForHireRelease(future(), "recurring")).not.toThrow();
+    expect(() => assertForHireRecurringControlAllowed(future(), control)).toThrow(/outside/);
+    expect(() => assertForHireRecurringControlAllowed(future(), control, true as any)).toThrow(/outside/);
+  });
+  it.each([undefined, null, [], "*", ["C1920"], ["79x500000", null], ["79x500000 "], ["79x500000", "*"],
+    Array.from({ length: 201 }, (_, n) => `79x${n + 1}`)])("malformed/unknown exclusion scope disables future authority rather than empty all-control scope %j", value => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    const p = resolveForHireRelease({ ...future(), recurringFutureExcludedControlIds: value });
+    expect(p.recurringFutureInitialsEnabled).toBe(false);
+    expect(() => assertForHireRelease(p, "recurring")).toThrow(/scoped release/);
+  });
+  it.each([undefined, null, "invalid", "2026-11-31T10:30:00Z", "2026-11-15T10:30:00Z ", "2026-11-15", "2026-09-30T00:00:00Z", "2026-11-15T11:01:00Z", "2026-11-15T10:31:00Z"])("invalid cutoff cannot grant future scope %s", from => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    expect(() => assertForHireRelease(future({ recurringFutureInitialsFrom: from as any }), "recurring")).toThrow(/scoped release/);
+  });
+  it("malformed future authority does not revoke separately valid exact named authority", () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    expect(() => assertForHireRecurringControlAllowed(future({ recurringControlIds: [control], recurringFutureExcludedControlIds: ["bad"] }), control)).not.toThrow();
+    expect(() => assertForHireRecurringControlAllowed(released({ recurringControlIds: [control, "bad"] }), control)).toThrow(/scoped release/);
+  });
+  it("constructs explicit future approval purely and preserves initial authority and any reviewed exact controls", () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    const current = released({ recurringEnabled: false, recurringRulesHash: null });
+    const p = buildRecurringFutureForHireReleasePolicy(current, { approvedBy: 9, effectiveFrom: cutoff, futureInitialsFrom: cutoff,
+      excludedControlIds: exclusions, recurringOperationsHandoff: true });
+    expect(p).toMatchObject({ releaseKey: current.releaseKey, rulesHash: current.rulesHash, approvedBy: current.approvedBy,
+      approvedAt: current.approvedAt, effectiveFrom: current.effectiveFrom, initialEnabled: current.initialEnabled,
+      recurringControlIds: current.recurringControlIds, recurringFutureInitialsEnabled: true, recurringFutureInitialsFrom: cutoff,
+      recurringRulesHash: FOR_HIRE_RECURRING_RULES_HASH });
+    expect(p.recurringFutureExcludedControlIds).toHaveLength(17);
+    expect(workflowDb.upsertFinancialWorkflowConfig).not.toHaveBeenCalled();
+    expect(() => assertForHireRelease(p, "recurring")).not.toThrow();
+  });
+  it("preserves the production initial Sydney-offset timestamp while enabling only a later UTC future cutover", () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    const current = released({ recurringEnabled: false, recurringRulesHash: null, effectiveFrom: "2026-10-11T20:20:52+11:00" });
+    const p = buildRecurringFutureForHireReleasePolicy(current, { approvedBy: 9, effectiveFrom: cutoff, futureInitialsFrom: cutoff,
+      excludedControlIds: exclusions, recurringOperationsHandoff: true });
+    expect(p.effectiveFrom).toBe("2026-10-11T20:20:52+11:00");
+    expect(p.releaseKey).toBe(current.releaseKey);
+    expect(p.approvedAt).toBe(current.approvedAt);
+    expect(() => assertForHireRelease(p, "recurring")).not.toThrow();
+    expect(workflowDb.upsertFinancialWorkflowConfig).not.toHaveBeenCalled();
+  });
+  it("compares the preserved initial offset chronologically and never accepts an offset future cutoff", () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    const current = released({ recurringEnabled: false, recurringRulesHash: null, effectiveFrom: "2026-10-11T20:20:52+11:00" });
+    const input = { approvedBy: 9, effectiveFrom: cutoff, futureInitialsFrom: "2026-10-11T09:20:51Z", excludedControlIds: exclusions, recurringOperationsHandoff: true as const };
+    expect(() => buildRecurringFutureForHireReleasePolicy(current, input)).toThrow(/cutoff/);
+    expect(() => buildRecurringFutureForHireReleasePolicy(current, { ...input, futureInitialsFrom: "2026-11-15T21:30:00+11:00" })).toThrow(/approval requires/);
+    expect(workflowDb.upsertFinancialWorkflowConfig).not.toHaveBeenCalled();
+  });
+  it.each([{ approvedBy: 8 }, { excludedControlIds: [] }, { excludedControlIds: exclusions.slice(1) },
+    { excludedControlIds: [...exclusions, "79x900"] }, { excludedControlIds: [...exclusions.slice(1), exclusions[1]] },
+    { excludedControlIds: [...exclusions.slice(1), "C1911"] }, { excludedControlIds: [...exclusions.slice(1), "79x900 "] },
+    { futureInitialsFrom: "invalid" }, { futureInitialsFrom: "2026-09-01T00:00:00Z" }, { futureInitialsFrom: "2026-11-15T10:31:00Z" },
+    { effectiveFrom: "2026-11-15T11:01:00Z" }, { recurringOperationsHandoff: false }])("invalid future approval performs no configuration write %j", async patch => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    vi.mocked(workflowDb.getFinancialWorkflowConfig).mockResolvedValue([{ configKey: FOR_HIRE_RELEASE_KEY, configValue: released() }] as any);
+    await expect(approveRecurringFutureForHireRelease({ approvedBy: 9, effectiveFrom: cutoff, futureInitialsFrom: cutoff,
+      excludedControlIds: exclusions, recurringOperationsHandoff: true, ...patch } as any)).rejects.toThrow(/approval requires/);
+    expect(workflowDb.upsertFinancialWorkflowConfig).not.toHaveBeenCalled();
+  });
+  it("explicitly invoked valid future helper persists one approval without calling or creating a schedule", async () => {
+    vi.stubEnv("FINANCIAL_FOR_HIRE_AUTOMATIC_ENABLED", "true");
+    vi.mocked(workflowDb.getFinancialWorkflowConfig).mockResolvedValue([{ configKey: FOR_HIRE_RELEASE_KEY, configValue: released() }] as any);
+    const p = await approveRecurringFutureForHireRelease({ approvedBy: 9, effectiveFrom: cutoff, futureInitialsFrom: cutoff,
+      excludedControlIds: exclusions, recurringOperationsHandoff: true });
+    expect(workflowDb.upsertFinancialWorkflowConfig).toHaveBeenCalledTimes(1);
+    expect(workflowDb.upsertFinancialWorkflowConfig).toHaveBeenCalledWith(FOR_HIRE_RELEASE_KEY, p, expect.stringMatching(/17 old Accounts controls excluded/), 9);
   });
 });

@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
+import { Temporal } from "@js-temporal/polyfill";
 import { getFinancialWorkflowConfig, upsertFinancialWorkflowConfig } from "./financialWorkflowDb";
+import { FOR_HIRE_FUTURE_INITIAL_EVENT_RULES_HASH, isVerifiedForHireFutureChainProof, type VerifiedForHireFutureChainProof } from "./financialForHireFutureEligibility";
 
 export const FOR_HIRE_RELEASE_KEY = "financial-automation.for-hire-release" as const;
 export const FOR_HIRE_RULES_VERSION = "for-hire-container-control-v2-standing-release" as const;
 export const FOR_HIRE_RULES_HASH = createHash("sha256").update(FOR_HIRE_RULES_VERSION).digest("hex");
 /** Separate recurring authority: changing it never invalidates initial Request POs. */
-export const FOR_HIRE_RECURRING_RULES_HASH = createHash("sha256").update("for-hire-recurring-v3-scoped-mixed-history-opening").digest("hex");
+export const FOR_HIRE_RECURRING_RULES_VERSION = "for-hire-recurring-v4-authenticated-future-initials-exact-handover" as const;
+export const FOR_HIRE_RECURRING_RULES_HASH = createHash("sha256").update(FOR_HIRE_RECURRING_RULES_VERSION).digest("hex");
 
 export type ForHireReleasePolicy = {
   releaseKey: string;
@@ -25,16 +28,38 @@ export type ForHireReleasePolicy = {
   recurringControlIds: string[];
   recurringApprovedAt: string | null;
   recurringEffectiveFrom: string | null;
+  /** Optional in persisted legacy input; resolved policies always expose safe defaults. */
+  recurringFutureInitialsEnabled: boolean;
+  recurringFutureInitialsFrom: string | null;
+  recurringFutureExcludedControlIds: string[];
 };
 
 function validControlScope(value: unknown): string[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > 200 || value.some(id => typeof id !== "string" || !/^\d+x\d+$/.test(id))) return [];
   return Array.from(new Set<string>(value)).sort();
 }
+/** Strict UTC timestamps for new future authority; impossible calendar dates and whitespace fail closed. */
+function futureTimestamp(value: unknown): number | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return null;
+  try { Temporal.Instant.from(value); const result = Date.parse(value); return Number.isFinite(result) ? result : null; } catch { return null; }
+}
+/** Existing initial authority may use its original Sydney offset; never rewrite that approval. */
+function initialAuthorityTimestamp(value: unknown): number | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return null;
+  try { return Temporal.Instant.from(value).epochMilliseconds; } catch { return null; }
+}
+function validFutureScope(policy: ForHireReleasePolicy, now = Date.now()): boolean {
+  const cutoff = futureTimestamp(policy.recurringFutureInitialsFrom);
+  const initial = initialAuthorityTimestamp(policy.effectiveFrom), recurring = futureTimestamp(policy.recurringEffectiveFrom);
+  return policy.recurringFutureInitialsEnabled === true && validControlScope(policy.recurringFutureExcludedControlIds).length > 0
+    && cutoff !== null && initial !== null && recurring !== null && cutoff >= initial && cutoff <= now && cutoff <= recurring;
+}
 export function resolveForHireRelease(value: unknown): ForHireReleasePolicy {
   const raw = value && typeof value === "object" ? value as Partial<ForHireReleasePolicy> : {};
   const initialEnabled = raw.initialEnabled === true || (raw.initialEnabled === undefined && raw.enabled === true);
   const recurringEnabled = raw.recurringEnabled === true || (raw.recurringEnabled === undefined && raw.enabled === true && raw.recurringOperationsHandoff === true);
+  const exclusions = validControlScope(raw.recurringFutureExcludedControlIds);
+  const futureFrom = futureTimestamp(raw.recurringFutureInitialsFrom) !== null ? raw.recurringFutureInitialsFrom! : null;
   return {
     releaseKey: typeof raw.releaseKey === "string" ? raw.releaseKey : "",
     rulesHash: typeof raw.rulesHash === "string" ? raw.rulesHash : FOR_HIRE_RULES_HASH,
@@ -51,6 +76,10 @@ export function resolveForHireRelease(value: unknown): ForHireReleasePolicy {
     recurringControlIds: validControlScope(raw.recurringControlIds),
     recurringApprovedAt: typeof raw.recurringApprovedAt === "string" ? raw.recurringApprovedAt : null,
     recurringEffectiveFrom: typeof raw.recurringEffectiveFrom === "string" ? raw.recurringEffectiveFrom : null,
+    // Invalid exclusions disable this branch, not turn it into a wildcard/all-control scope.
+    recurringFutureInitialsEnabled: raw.recurringFutureInitialsEnabled === true && exclusions.length > 0 && futureFrom !== null,
+    recurringFutureInitialsFrom: futureFrom,
+    recurringFutureExcludedControlIds: exclusions,
   };
 }
 export async function getForHireReleasePolicy(): Promise<ForHireReleasePolicy> {
@@ -68,16 +97,27 @@ export function assertForHireRelease(policy: ForHireReleasePolicy, phase: "initi
   if (phase === "initial" && !policy.initialEnabled) throw new Error("Initial For Hire Draft PO release is not enabled.");
   if (phase === "recurring") {
     if (!policy.recurringEnabled || !policy.recurringOperationsHandoff) throw new Error("Operations For Hire recurring schedule handover and recurring AP release are required.");
-    if (policy.recurringRulesHash !== FOR_HIRE_RECURRING_RULES_HASH || validControlScope(policy.recurringControlIds).length === 0 ||
+    if (policy.recurringRulesHash !== FOR_HIRE_RECURRING_RULES_HASH ||
+        (validControlScope(policy.recurringControlIds).length === 0 && !validFutureScope(policy)) ||
         !policy.recurringApprovedAt || !policy.recurringEffectiveFrom || !Number.isFinite(Date.parse(policy.recurringApprovedAt)) ||
         !Number.isFinite(Date.parse(policy.recurringEffectiveFrom)) || Date.parse(policy.recurringApprovedAt) > Date.now() || Date.parse(policy.recurringEffectiveFrom) > Date.now()) {
-      throw new Error("Recurring For Hire requires a current scoped release, explicit controls and effective handover approval.");
+      throw new Error("Recurring For Hire requires a current scoped release, exact controls or verified future-initial scope, and effective handover approval.");
     }
   }
 }
-export function assertForHireRecurringControlAllowed(policy: ForHireReleasePolicy, recordId: string): void {
+export function assertForHireRecurringControlAllowed(policy: ForHireReleasePolicy, recordId: string, futureProof?: VerifiedForHireFutureChainProof): void {
   assertForHireRelease(policy, "recurring");
-  if (!/^\d+x\d+$/.test(recordId) || !policy.recurringControlIds.includes(recordId)) throw new Error("This Container Control is outside the explicitly approved recurring For Hire scope.");
+  if (typeof recordId !== "string" || !/^\d+x\d+$/.test(recordId)) throw new Error("This Container Control is outside the explicitly approved recurring For Hire scope.");
+  // Explicit later manual reviews may include historical exclusions; future exclusions affect only the future branch.
+  if (validControlScope(policy.recurringControlIds).includes(recordId)) return;
+  if (!validFutureScope(policy) || validControlScope(policy.recurringFutureExcludedControlIds).includes(recordId)
+    || !isVerifiedForHireFutureChainProof(futureProof) || futureProof.containerControlId !== recordId
+    || futureProof.initialReleaseKey !== policy.releaseKey || futureProof.initialRulesHash !== FOR_HIRE_FUTURE_INITIAL_EVENT_RULES_HASH
+    || futureProof.initialApprovedBy !== policy.approvedBy
+    || Date.parse(futureProof.initialCreatedAt) < futureTimestamp(policy.recurringFutureInitialsFrom)!
+    || Date.parse(futureProof.initialCreatedAt) > Date.now()) {
+    throw new Error("This Container Control is outside the explicitly approved recurring For Hire scope or lacks verified authenticated future-initial provenance.");
+  }
 }
 /** Local preparation only, never activation or scheduler creation. */
 export async function prepareForHireReleasePolicy(preparedBy: number): Promise<ForHireReleasePolicy> {
@@ -110,6 +150,36 @@ export async function approveRecurringForHireRelease(input: { approvedBy: number
     recurringRulesHash: FOR_HIRE_RECURRING_RULES_HASH, recurringControlIds: controls,
     recurringApprovedAt: new Date().toISOString(), recurringEffectiveFrom: input.effectiveFrom,
   };
+  if (policy.recurringFutureInitialsEnabled && !validFutureScope(policy)) throw new Error("Recurring approval requires preserving the valid future-initial cutoff and exclusions.");
   await upsertFinancialWorkflowConfig(FOR_HIRE_RELEASE_KEY, policy, "Scoped future-only recurring For Hire handover approved; initial cutover preserved. Separate published daily Heartbeat and exact container opening evidence required.", input.approvedBy);
+  return policy;
+}
+export type ApproveRecurringFutureForHireInput = {
+  approvedBy: number;
+  effectiveFrom: string;
+  futureInitialsFrom: string;
+  /** Exact reviewed current 17 Accounts controls, resolved to WS IDs by the approval owner. */
+  excludedControlIds: string[];
+  recurringOperationsHandoff: true;
+};
+/** Pure approval construction only. The caller must separately confirm publication and stopped legacy future creation. */
+export function buildRecurringFutureForHireReleasePolicy(current: ForHireReleasePolicy, input: ApproveRecurringFutureForHireInput): ForHireReleasePolicy {
+  assertForHireRelease(current, "initial");
+  const exclusions = validControlScope(input.excludedControlIds), cutoff = futureTimestamp(input.futureInitialsFrom), effective = futureTimestamp(input.effectiveFrom);
+  if (input.approvedBy !== current.approvedBy || input.recurringOperationsHandoff !== true
+    || !Array.isArray(input.excludedControlIds) || input.excludedControlIds.length !== 17 || exclusions.length !== 17
+    || cutoff === null || effective === null || effective > Date.now()) {
+    throw new Error("Future recurring approval requires the existing release administrator, exact activation cutoff, explicit 17 reviewed old-control WS IDs and future Operations handover.");
+  }
+  const policy: ForHireReleasePolicy = { ...current, enabled: true, recurringEnabled: true, recurringOperationsHandoff: true,
+    recurringRulesHash: FOR_HIRE_RECURRING_RULES_HASH, recurringApprovedAt: new Date().toISOString(), recurringEffectiveFrom: input.effectiveFrom,
+    recurringFutureInitialsEnabled: true, recurringFutureInitialsFrom: input.futureInitialsFrom, recurringFutureExcludedControlIds: exclusions };
+  if (!validFutureScope(policy)) throw new Error("Future recurring approval requires cutoff at or after the initial release, no later than now or the recurring effective time.");
+  return policy;
+}
+/** Explicit future-only approval helper; defining it neither calls it nor creates/enables any schedule. */
+export async function approveRecurringFutureForHireRelease(input: ApproveRecurringFutureForHireInput): Promise<ForHireReleasePolicy> {
+  const policy = buildRecurringFutureForHireReleasePolicy(await getForHireReleasePolicy(), input);
+  await upsertFinancialWorkflowConfig(FOR_HIRE_RELEASE_KEY, policy, "Authenticated new-initial future recurring For Hire scope approved; 17 old Accounts controls excluded, exact reviewed handovers and original initial authority preserved. No historical provenance adoption or schedule creation.", input.approvedBy);
   return policy;
 }

@@ -294,6 +294,17 @@ describe("For Hire AP-only previews", () => {
     expect(mocks.preflight).not.toHaveBeenCalled();
     expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ status: "held", proposal: null }));
   });
+
+  it("holds the first fully expired day without a rate lookup, Draft proposal or catch-up period", async () => {
+    freezeBusinessDay("2027-01-13");
+    useControl({ ...hc1929, cf_vtcmcontainercontrols_containertype: "40 FOOT" });
+    mocks.last.mockResolvedValue({ periodEnd: "2026-12-13", suffix: null });
+    const result = await previewRecurringForHirePo(hc1929.id, "2027-01-13");
+    expect(result).toMatchObject({ state: "held", holdReason: expect.stringContaining("fully expired"), noWrites: true });
+    expect(result.preview).toMatchObject({ periodStart: "2026-12-14", periodEnd: "2027-01-12", document: null, proposedPoNumber: null });
+    expect(mocks.preflight).not.toHaveBeenCalled();
+    expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ status: "held", proposal: null }));
+  });
 });
 
 

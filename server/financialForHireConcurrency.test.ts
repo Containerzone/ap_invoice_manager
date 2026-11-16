@@ -27,7 +27,7 @@ async function persist(result: ReturnType<typeof preview>) {
     sourceSnapshotHash: result.sourceSnapshotHash, rulesSnapshotHash: result.rulesSnapshotHash, xeroPreflightHash: result.xeroPreflightHash,
     proposal: result.preview.document, xeroPreflight: preflight, status: "previewed", holdReason: null });
 }
-beforeEach(() => { vi.resetAllMocks(); vi.stubEnv("FINANCIAL_FOR_HIRE_MANUAL_HANDOVER_ENABLED", "false"); m.policy.mockResolvedValue({ releaseKey: "offline-release", approvedBy: 7 }); });
+beforeEach(() => { vi.resetAllMocks(); vi.stubEnv("FINANCIAL_FOR_HIRE_MANUAL_HANDOVER_ENABLED", "false"); m.policy.mockResolvedValue({ releaseKey: "offline-release", approvedBy: 7, recurringControlIds: ["24x901"] }); });
 afterEach(() => vi.unstubAllEnvs());
 
 describe("caller preview / refreshed ledger concurrency boundary", () => {

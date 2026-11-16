@@ -1975,3 +1975,24 @@ export const financialForHireManualHandoverAudits = mysqlTable("financial_for_hi
   details: json("details"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
+
+/** Authenticated new-initial origin only; never backfilled from historical or manual POs. */
+export const financialForHireInitialProvenance = mysqlTable("financial_for_hire_initial_provenance", {
+  id: int("id").autoincrement().primaryKey(),
+  containerControlId: varchar("containerControlId", { length: 128 }).notNull(),
+  initialEventId: int("initialEventId").notNull(),
+  origin: varchar("origin", { length: 80 }).notNull(),
+  initialCreatedAt: timestamp("initialCreatedAt").notNull(),
+  initialWriterExecutionId: int("initialWriterExecutionId").notNull(),
+  initialXeroPurchaseOrderId: varchar("initialXeroPurchaseOrderId", { length: 128 }).notNull(),
+  initialReleaseKey: varchar("initialReleaseKey", { length: 128 }).notNull(),
+  initialRulesHash: varchar("initialRulesHash", { length: 64 }).notNull(),
+  initialSourceSnapshotHash: varchar("initialSourceSnapshotHash", { length: 64 }).notNull(),
+  initialReceiptHash: varchar("initialReceiptHash", { length: 64 }).notNull(),
+  initialReceipt: json("initialReceipt").notNull(),
+  recordedAt: timestamp("recordedAt").defaultNow().notNull(),
+}, (table) => ({
+  provenanceControlUnique: uniqueIndex("for_hire_initial_provenance_control_unique").on(table.containerControlId),
+  provenanceEventUnique: uniqueIndex("for_hire_initial_provenance_event_unique").on(table.initialEventId),
+}));
+export type FinancialForHireInitialProvenance = typeof financialForHireInitialProvenance.$inferSelect;

@@ -96,6 +96,24 @@ describe("For Hire Container Control PO drafts", () => {
     expect(input.lastVerifiedExtensionSuffix).toBeNull();
   });
 
+  it.each([
+    { now: "2026-12-16", eligible: false, reason: "not due" },
+    { now: "2026-12-17", eligible: true, reason: null },
+    { now: "2027-01-01", eligible: true, reason: null },
+    { now: "2027-01-15", eligible: true, reason: null },
+    { now: "2027-01-16", eligible: false, reason: "fully expired" },
+    { now: "2027-01-17", eligible: false, reason: "fully expired" },
+    { now: "invalid", eligible: false, reason: "valid Sydney business date" },
+  ])("checks $now without historical catch-up or period substitution", ({ now, eligible, reason }) => {
+    const input = { facts: base({ controlNumber: "C2001", status: "ON HIRE", collectionDate: "2026-11-16" }), priorPeriodEnd: "2026-12-16", lastVerifiedExtensionSuffix: null, purchaseRate: 8 };
+    const result = buildRecurringForHirePo({ ...input, now });
+    expect(result).toMatchObject({ eligible, periodStart: "2026-12-17", periodEnd: "2027-01-15" });
+    if (eligible) expect(result).toMatchObject({ proposedPoNumber: "HC2001-2", document: expect.any(Object) });
+    else expect(result).toMatchObject({ holdReason: expect.stringContaining(reason!), proposedPoNumber: null, document: null });
+    expect(input.priorPeriodEnd).toBe("2026-12-16");
+    expect(input.lastVerifiedExtensionSuffix).toBeNull();
+  });
+
   it("uses verified suffix 2 and its end date to make suffix 3 due on 13 January, not before", () => {
     const input = { facts: hc1929(), priorPeriodEnd: "2027-01-12", lastVerifiedExtensionSuffix: 2, purchaseRate: 17.25 };
     expect(buildRecurringForHirePo({ ...input, now: "2027-01-12" })).toMatchObject({ eligible: false, holdReason: expect.stringContaining("not due"), document: null });

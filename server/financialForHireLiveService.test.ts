@@ -14,6 +14,7 @@ vi.mock("./financialForHireDb", () => ({
   bindForHirePayload: mocks.bind, claimForHirePreview: mocks.claim, clearForHireNextBillingDate: mocks.clearDue,
   completeForHireDraft: mocks.complete, dueForHireRecurringRoots: mocks.due, getForHireEventForPeriod: mocks.getEvent,
   holdForHireExecution: mocks.hold, latestVerifiedForHireEvent: mocks.latest,
+  assertForHireRecurringScopeForControl: async (policy: any, id: string) => { mocks.assertScope(policy, id); return { branch: "explicit" }; },
 }));
 vi.mock("./financialWriterExecutionService", () => ({ executeGuardedFinancialWriterCommand: mocks.execute }));
 vi.mock("./workflowAlertService", () => ({ reportWorkflowFailureSafely: mocks.report }));

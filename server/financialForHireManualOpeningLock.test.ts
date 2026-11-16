@@ -26,7 +26,7 @@ function request(workflowType: "initial_for_hire" | "recurring_for_hire" = "recu
 }
 beforeEach(() => {
   vi.resetAllMocks(); vi.stubEnv("FINANCIAL_FOR_HIRE_MANUAL_HANDOVER_ENABLED", "false");
-  m.policy.mockResolvedValue({ releaseKey: "release", approvedBy: 7 }); m.assert.mockReturnValue(undefined);
+  m.policy.mockResolvedValue({ releaseKey: "release", approvedBy: 7, recurringControlIds: ["24x1929"] }); m.assert.mockReturnValue(undefined);
   m.getDb.mockResolvedValue({ select: () => ({ from: () => ({ where: () => ({ limit: async () => [event] }) }) }) });
   m.opening.mockResolvedValue(null); m.ordinary.mockResolvedValue(undefined);
 });

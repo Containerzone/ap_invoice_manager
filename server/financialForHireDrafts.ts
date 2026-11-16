@@ -212,8 +212,9 @@ export function buildRecurringForHirePo(input: {
   // that behavior here so the midnight UTC boundary cannot create an early or
   // deferred monthly extension. Explicit test input remains a plain date.
   const now = plainDate(input.now ?? Temporal.Now.zonedDateTimeISO("Australia/Sydney").toPlainDate().toString());
+  if (!now) return { kind: "recurring", eligible: false, holdReason: "A valid Sydney business date is required for recurring For Hire eligibility.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: null };
   if (now && Temporal.PlainDate.compare(start, now) > 0) return { kind: "recurring", eligible: false, holdReason: "The next consecutive extension period is not due.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: null };
-  if (now && Temporal.PlainDate.compare(start, now.subtract({ days: 30 })) < 0) return { kind: "recurring", eligible: false, holdReason: "The next extension is historical; no catch-up or bulk extension is allowed.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: null };
+  if (Temporal.PlainDate.compare(end, now) < 0) return { kind: "recurring", eligible: false, holdReason: "The next extension is historical and fully expired; no catch-up or bulk extension is allowed.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: null };
   if (input.purchaseRate === null || !Number.isFinite(input.purchaseRate) || input.purchaseRate <= 0) return { kind: "recurring", eligible: false, holdReason: "Current Xero HC extension purchase rate is unavailable.", periodStart: start.toString(), periodEnd: end.toString(), proposedPoNumber: null, document: null, itemNativeDescription: input.itemNativeDescription ?? null };
   const poNumber = forHireExtensionReference(input.facts.controlNumber, input.lastVerifiedExtensionSuffix, input.numberingConvention);
   const itemCode = eligibility.feet === 20 ? "HC 20 E" : "HC 40 E";

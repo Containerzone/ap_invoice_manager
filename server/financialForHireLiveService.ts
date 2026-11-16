@@ -9,6 +9,7 @@ import {
   getForHireEventForPeriod,
   holdForHireExecution,
   latestVerifiedForHireEvent,
+  assertForHireRecurringScopeForControl,
 } from "./financialForHireDb";
 import { previewInitialForHirePo, previewRecurringForHirePo, type ForHirePreviewResult } from "./financialForHireService";
 import { assertForHireRelease, assertForHireRecurringControlAllowed, getForHireReleasePolicy } from "./financialForHireRelease";
@@ -18,6 +19,7 @@ import { reportWorkflowFailureSafely } from "./workflowAlertService";
 import { getManualForHireHandover, isManualForHireHandoverEnabled, dueManualForHireHandovers, claimManualForHireHandover, holdManualForHireHandover } from "./financialForHireManualHandoverDb";
 import type { MixedManualForHireHandoverPlan } from "./financialForHireMixedAnchor";
 import { financialSha256 } from "./financialProposalIntegrity";
+import { withForHireInitialServerContext, type ForHireInitialServerContext } from "./financialForHireFutureEligibilityDb";
 
 function sydneyToday(): string {
   return Temporal.Now.zonedDateTimeISO("Australia/Sydney").toPlainDate().toString();
@@ -40,7 +42,7 @@ async function executeCurrentPreview(input: {
 }) {
   const policy = await getForHireReleasePolicy();
   assertForHireRelease(policy, input.kind === "initial" ? "initial" : "recurring");
-  if (input.kind === "recurring") assertForHireRecurringControlAllowed(policy, input.recordId);
+  let recurringScope = input.kind === "recurring" ? await assertForHireRecurringScopeForControl(policy, input.recordId, input.expectedManualHandoverId === undefined ? input.expectedPriorEventId : undefined) : undefined;
   if (input.expectedManualHandoverId !== undefined && (input.kind !== "recurring" || !isManualForHireHandoverEnabled())) throw new Error("Manual opening-point execution is not enabled for this flow.");
   if (input.expectedManualHandoverId !== undefined) {
     const { readForHireContainerControl } = await import("./financialForHireService");
@@ -93,7 +95,10 @@ async function executeCurrentPreview(input: {
   if (input.expectedManualHandoverId !== undefined && preview.manualOpeningPoint?.id !== input.expectedManualHandoverId) {
     return { ok: false, status: "held" as const, recordId: input.recordId, eventId: event.id, warning: "The preview has no exact verified manual opening identity.", xeroWritesAttempted: 0 };
   }
-  if (!(await claimForHirePreview(event.id, token, { expectedPreview, priorEventId: input.expectedPriorEventId, manualHandoverId: input.expectedManualHandoverId, manualHandoverPlanHash: preview.manualOpeningPoint?.planHash }))) {
+  if (input.kind === "recurring") recurringScope = await assertForHireRecurringScopeForControl(await getForHireReleasePolicy(), input.recordId, input.expectedManualHandoverId === undefined ? input.expectedPriorEventId : undefined,
+    { currentEvent: event, expectedProofHash: recurringScope?.branch === "future" ? recurringScope.proofHash : undefined });
+  const futureProofHash = recurringScope?.branch === "future" ? recurringScope.proofHash : undefined;
+  if (!(await claimForHirePreview(event.id, token, { expectedPreview, priorEventId: input.expectedPriorEventId, manualHandoverId: input.expectedManualHandoverId, manualHandoverPlanHash: preview.manualOpeningPoint?.planHash, ...(futureProofHash ? { futureProofHash } : {}) }))) {
     return { ok: false, status: "held" as const, recordId: input.recordId, eventId: event.id, warning: "For Hire period is already being processed or was not freshly preflighted.", xeroWritesAttempted: 0 };
   }
 
@@ -113,7 +118,7 @@ async function executeCurrentPreview(input: {
     const first = (payload.body.PurchaseOrders as Record<string, unknown>[] | undefined)?.[0];
     if (!first) throw new Error("For Hire transport payload is missing its Purchase Order.");
     first.CurrencyCode = "AUD";
-    await bindForHirePayload(event.id, policy.releaseKey, payload, { token, expectedPreview, preparedDocument: preview.preview.document }, manualOpening, priorEventId);
+    await bindForHirePayload(event.id, policy.releaseKey, payload, { token, expectedPreview, preparedDocument: preview.preview.document, ...(futureProofHash ? { futureProofHash } : {}) }, manualOpening, priorEventId);
 
     writerInvoked = true;
     const outcome = await executeGuardedFinancialWriterCommand({
@@ -171,8 +176,8 @@ async function executeCurrentPreview(input: {
 }
 
 /** Called only by the protected, independent FOR HIRE VTiger Request branch. */
-export async function processAutomaticInitialForHire(recordId: string) {
-  return executeCurrentPreview({ kind: "initial", recordId, now: sydneyToday() });
+export async function processAutomaticInitialForHire(recordId: string, trustedServerContext?: ForHireInitialServerContext) {
+  return withForHireInitialServerContext(trustedServerContext, () => executeCurrentPreview({ kind: "initial", recordId, now: sydneyToday() }));
 }
 
 /** Processes exactly one AP-created due predecessor. It never imports Operations history. */
@@ -190,11 +195,12 @@ export async function runAutomaticRecurringForHire(now = sydneyToday(), afterEve
   const policy = await getForHireReleasePolicy();
   assertForHireRelease(policy, "recurring");
   const approvedControlIds = policy.recurringControlIds ?? [];
-  const roots = await dueForHireRecurringRoots(now, 10, afterEventId, approvedControlIds);
+  const policyScope = policy.recurringFutureInitialsEnabled ? policy : approvedControlIds;
+  const roots = await dueForHireRecurringRoots(now, 10, afterEventId, policyScope);
   const results: Array<Record<string, unknown>> = [];
   for (const root of roots) {
     try {
-      assertForHireRecurringControlAllowed(policy, root.containerControlId);
+      await assertForHireRecurringScopeForControl(policy, root.containerControlId, root.id);
       results.push({ control: root.containerControlNumber, ...await processAutomaticRecurringForHire(root.containerControlId, root.id, now) });
     } catch (error) {
       const message = holdReason(error);
@@ -229,6 +235,6 @@ export async function runAutomaticRecurringForHire(now = sydneyToday(), afterEve
   const lastVisitedEventId = roots.reduce((last, root) => Math.max(last, root.id), afterEventId);
   const lastVisitedManualHandoverId = manualRoots.reduce((last, row) => Math.max(last, row.id), afterManualHandoverId);
   const considered = roots.length + manualRoots.length;
-  const retryRemainingBatch = considered === 10 && ((await dueForHireRecurringRoots(now, 1, lastVisitedEventId, approvedControlIds)).length > 0 || (manualEnabled && (await dueManualForHireHandovers(now, 1, lastVisitedManualHandoverId, approvedControlIds)).length > 0));
+  const retryRemainingBatch = considered === 10 && ((await dueForHireRecurringRoots(now, 1, lastVisitedEventId, policyScope)).length > 0 || (manualEnabled && (await dueManualForHireHandovers(now, 1, lastVisitedManualHandoverId, approvedControlIds)).length > 0));
   return { ok: true, considered, results, lastVisitedEventId, lastVisitedManualHandoverId, retryRemainingBatch, xeroWritesAttempted: results.filter((row) => row.xeroWritesAttempted === 1).length };
 }

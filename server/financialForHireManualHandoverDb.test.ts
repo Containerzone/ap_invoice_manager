@@ -4,6 +4,7 @@ import { financialForHireManualHandovers as openings, financialForHirePoEvents a
 import { offlineDb, offlineMixedFixture, offlinePreviewClaim } from "./financialForHireMixedTestSupport";
 const m = vi.hoisted(() => ({ db: vi.fn() }));
 vi.mock("./db", () => ({ getDb: m.db }));
+vi.mock("./financialForHireRelease", () => ({ getForHireReleasePolicy: async () => ({ recurringControlIds: ["79x489745"] }), assertForHireRelease: () => undefined, assertForHireRecurringControlAllowed: () => undefined }));
 import { approveManualForHireHandover, claimManualForHireHandover, completeManualForHireHandover, dueManualForHireHandovers, holdManualForHireHandover, isManualForHireHandoverEnabled } from "./financialForHireManualHandoverDb";
 import { claimForHirePreview } from "./financialForHireDb";
 beforeEach(() => { vi.resetAllMocks(); vi.stubEnv("FINANCIAL_FOR_HIRE_MANUAL_HANDOVER_ENABLED", "true"); });

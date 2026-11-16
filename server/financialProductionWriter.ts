@@ -9,7 +9,7 @@ import { runXeroRequest } from "./xeroRequestManager";
 import { financialSha256 } from "./financialProposalIntegrity";
 import { verifyInitialStoragePilotWriteAccess } from "./financialInitialStorageDb";
 import { verifyStorageAutomaticWriteAccess } from "./financialStorageLifecycleDb";
-import { verifyForHireAutomaticWriteAccess } from "./financialForHireDb";
+import { verifyForHireAutomaticWriteAccess, verifyForHireQueuedWriteAccess, type ForHireQueuedReservation } from "./financialForHireDb";
 import { verifyAssetPurchaseAutomaticWriteAccess } from "./financialAssetPurchaseDb";
 import { verifyCustomerSalePurchaseAutomaticWriteAccess } from "./financialCustomerSalePurchaseDb";
 import { verifyMainCustomerInvoiceAutomaticWriteAccess } from "./financialMainCustomerInvoiceDb";
@@ -659,6 +659,7 @@ export async function executeFinancialDraftWrite(
   context: FinancialWriteAuthorisation,
 ): Promise<FinancialDraftWriteResult> {
   assertFinancialDraftWriteAuthorised(context);
+  let forHireReservation: ForHireQueuedReservation | undefined;
   const guardedRows = payload.body.Invoices;
   if (payload.documentNumber === "INV-702959" && Array.isArray(guardedRows) && guardedRows.some(row => d702959AuthorisedDepositExistingDeductions(row).length) &&
     context.d702959AuthorisedDepositMainDeductionRecoveryEventId === undefined)
@@ -888,7 +889,7 @@ export async function executeFinancialDraftWrite(
       preparedBy: context.forHireApprovedBy!,
       payload,
       workflowType: context.workflowType as "initial_for_hire" | "recurring_for_hire",
-    });
+    }, reservation => { forHireReservation = reservation; });
   }
   if (context.storagePilotEventId !== undefined && (payload.method !== "POST" || payload.expectedXeroDocumentId
     || !["/Invoices", "/PurchaseOrders"].includes(payload.endpoint))) {
@@ -976,6 +977,13 @@ export async function executeFinancialDraftWrite(
       "Idempotency-Key": payload.idempotencyKey,
     };
     const url = `${XERO_API_BASE}${payload.endpoint}`;
+    if (context.forHireAutomaticEventId !== undefined && ["initial_for_hire", "recurring_for_hire"].includes(context.workflowType)) {
+      assertFinancialDraftWriteAuthorised(context);
+      if (!forHireReservation) throw new FinancialWriteDisabledError("For Hire queued transport requires its exact pre-wait verified reservation.");
+      await verifyForHireQueuedWriteAccess({ eventId: context.forHireAutomaticEventId, releaseKey: context.forHireReleaseKey!,
+        preparedBy: context.forHireApprovedBy!, payload, workflowType: context.workflowType as "initial_for_hire" | "recurring_for_hire",
+        reservation: forHireReservation });
+    }
     return payload.method === "POST"
       ? axios.post(url, payload.body, { headers })
       : axios.put(url, payload.body, { headers });
